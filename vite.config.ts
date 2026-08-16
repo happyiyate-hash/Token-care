@@ -2,11 +2,10 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
-import {keepAliveMobileView} from './build/keepAliveMobileView';
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss(), keepAliveMobileView()],
+    plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
