@@ -1532,3 +1532,6 @@ print("TokenCare Response:", data)`;
     </div>
   );
 }
+
+export { DeveloperView };
+
