@@ -17,6 +17,7 @@ import {
   ExternalLink,
   ArrowUpRight,
   Bell,
+  Code2,
   Terminal,
 } from 'lucide-react';
 
@@ -89,9 +90,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'api-console',
-      label: t('nav.workerApi'),
-      icon: Terminal,
-      description: t('sidebar.workerApiDesc'),
+      label: t('nav.developerApi', 'Developer API'),
+      icon: Code2,
+      description: t('sidebar.developerApiDesc', 'API keys, endpoints & test console'),
     },
     {
       id: 'payouts',

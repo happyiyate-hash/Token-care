@@ -47,6 +47,7 @@ import { SupportLiveChatView } from './SupportLiveChatView';
 import { TermsAndPrivacyView } from './TermsAndPrivacyView';
 import { LogoVerificationReport } from '../services/logoVerificationEngine';
 import { MfaManagementView } from './MfaManagementView';
+import DeveloperView from '../views/DeveloperView';
 import { TokenCareLogo } from './TokenCareLogo';
 import { NotificationBell } from './NotificationBell';
 import { CompactBalanceCard } from './CompactBalanceCard';
@@ -138,16 +139,16 @@ export const MobileView: React.FC<MobileViewProps> = ({
   // Set mobile top status bar color to match top header background (#090C13)
   useStatusBarColor('#090C13');
 
-  // Mobile navigation tabs: 'overview', 'explore', 'donate', 'tokens', 'profile', 'withdrawals', 'notifications', 'mfa', 'help-center', 'contact-support', 'terms-privacy', 'privacy-policy', 'preferences'
+  // Mobile navigation tabs: 'overview', 'explore', 'donate', 'tokens', 'profile', 'withdrawals', 'notifications', 'mfa', 'help-center', 'contact-support', 'terms-privacy', 'privacy-policy', 'preferences', 'developer'
   const [mobileTab, setMobileTab] = useState<
-    'overview' | 'explore' | 'donate' | 'tokens' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences'
+    'overview' | 'explore' | 'donate' | 'tokens' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences' | 'developer' | 'api-console'
   >('overview');
   const [showBalance, setShowBalance] = useState<boolean>(true);
   const [dbWithdrawals, setDbWithdrawals] = useState<WithdrawalRequest[]>([]);
 
   // Sync mobile tab selection
   const handleTabChange = (
-    tab: 'overview' | 'explore' | 'donate' | 'tokens' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences'
+    tab: 'overview' | 'explore' | 'donate' | 'tokens' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences' | 'developer' | 'api-console'
   ) => {
     setMobileTab(tab);
     if (tab === 'overview') setActiveTab('dashboard');
@@ -162,6 +163,7 @@ export const MobileView: React.FC<MobileViewProps> = ({
     else if (tab === 'contact-support') setActiveTab('contact-support');
     else if (tab === 'terms-privacy' || tab === 'privacy-policy') setActiveTab('terms-privacy');
     else if (tab === 'preferences') setActiveTab('preferences');
+    else if (tab === 'developer' || tab === 'api-console') setActiveTab('developer');
   };
 
   // Sync from parent activeTab if changed externally
@@ -176,6 +178,7 @@ export const MobileView: React.FC<MobileViewProps> = ({
     else if (activeTab === 'contact-support' && mobileTab !== 'contact-support') setMobileTab('contact-support');
     else if ((activeTab === 'terms-privacy' || activeTab === 'privacy-policy') && mobileTab !== 'terms-privacy') setMobileTab('terms-privacy');
     else if (activeTab === 'preferences' && mobileTab !== 'preferences') setMobileTab('preferences');
+    else if ((activeTab === 'developer' || activeTab === 'api-console') && mobileTab !== 'developer') setMobileTab('developer');
     else if (activeTab === 'dashboard' && mobileTab !== 'overview' && mobileTab !== 'tokens') {
       setMobileTab('overview');
     }
@@ -300,7 +303,9 @@ export const MobileView: React.FC<MobileViewProps> = ({
         mobileTab !== 'live-chat' &&
         mobileTab !== 'terms-privacy' &&
         mobileTab !== 'privacy-policy' &&
-        mobileTab !== 'preferences' && (
+        mobileTab !== 'preferences' &&
+        mobileTab !== 'developer' &&
+        mobileTab !== 'api-console' && (
           <header className="shrink-0 z-40 bg-[#090C12] backdrop-blur-xl border-b border-emerald-500/30 rounded-b-2xl p-2.5 pt-safe-nav shadow-[0_4px_25px_rgba(0,0,0,0.7)] max-w-md mx-auto w-full transition-all flex items-center justify-between">
             {/* Left: TokenCare Logo (~42px) */}
             <div className="flex items-center space-x-2">
@@ -538,6 +543,17 @@ export const MobileView: React.FC<MobileViewProps> = ({
               onSignOut={handleSignOut}
               handleSignOut={handleSignOut}
               onNavigateTab={(tab) => handleTabChange(tab as any)}
+              onOpenApiConsole={() => handleTabChange('developer')}
+            />
+          </div>
+        )}
+
+        {/* DEVELOPER API TAB */}
+        {(mobileTab === 'developer' || mobileTab === 'api-console') && (
+          <div className="flex-1 min-h-0 w-full h-full flex flex-col overflow-hidden animate-in fade-in duration-200">
+            <DeveloperView
+              currentUser={currentUser}
+              onBack={() => handleTabChange('profile')}
             />
           </div>
         )}

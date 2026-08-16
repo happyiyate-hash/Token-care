@@ -51,6 +51,7 @@ import { WithdrawalView } from './components/WithdrawalView';
 import { NotificationCenterView } from './components/NotificationCenterView';
 import { MfaManagementView } from './components/MfaManagementView';
 import { ApiConsoleModal } from './components/ApiConsoleModal';
+import DeveloperView from './views/DeveloperView';
 import { HelpCenterView } from './components/HelpCenterView';
 import { ContactSupportView } from './components/ContactSupportView';
 import { SupportLiveChatView } from './components/SupportLiveChatView';
@@ -1454,6 +1455,13 @@ export default function App() {
               onBack={() => setActiveTab('settings')}
               onNavigateContactSupport={() => setActiveTab('contact-support')}
               initialTab="preferences"
+            />
+          </div>
+        ) : activeTab === 'developer' || activeTab === 'api-console' ? (
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden w-full h-full">
+            <DeveloperView
+              onBack={() => setActiveTab('settings')}
+              currentUser={currentUser}
             />
           </div>
         ) : (

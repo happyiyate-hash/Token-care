@@ -18,6 +18,7 @@ import {
   Wallet,
   Lock,
   Key,
+  Code2,
   Bell,
   Coins,
   TrendingUp,
@@ -775,24 +776,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
 
-          {/* API & Blockchain Settings */}
+          {/* Developer API & Console Settings */}
           <div
-            onClick={() => onOpenApiConsole && onOpenApiConsole()}
+            id="settings-developer-api-btn"
+            onClick={() => {
+              if (onNavigateTab) {
+                onNavigateTab('developer');
+              } else if (onOpenApiConsole) {
+                onOpenApiConsole();
+              }
+            }}
             className="p-2.5 flex items-center justify-between hover:bg-zinc-800/30 transition-colors cursor-pointer group"
           >
             <div className="flex items-center space-x-2.5">
-              <div className="w-7 h-7 rounded-full bg-[#0E2E21] border border-emerald-500/20 flex items-center justify-center text-[#00E575] shrink-0">
-                <Key className="w-3.5 h-3.5 text-[#00E575]" />
+              <div className="w-7 h-7 rounded-full bg-[#00E575]/15 border border-[#00E575]/30 flex items-center justify-center text-[#00E575] shrink-0">
+                <Code2 className="w-3.5 h-3.5 text-[#00E575]" />
               </div>
               <div>
-                <div className="text-[11.5px] font-bold text-white group-hover:text-emerald-300 transition-colors flex items-center gap-1.5">
-                  {t('settings.workerApiTester', 'Worker API Tester')}
-                  <span className="text-[8.5px] bg-[#22C55E]/20 text-[#4ADE80] border border-[#22C55E]/40 px-1.5 py-0.2 rounded font-mono font-bold">
-                    {t('settings.labConsole', 'Lab Console')}
+                <div className="text-[11.5px] font-bold text-white group-hover:text-[#00E575] transition-colors flex items-center gap-1.5">
+                  {t('settings.developerApi', 'Developer API')}
+                  <span className="text-[8.5px] bg-[#00E575]/20 text-[#00E575] border border-[#00E575]/40 px-1.5 py-0.2 rounded font-mono font-bold">
+                    {t('settings.apiConsole', 'API Console')}
                   </span>
                 </div>
                 <div className="text-[9.5px] text-zinc-400 font-normal">
-                  {t('settings.workerApiDesc', 'Test getTokenDetails, prices & inspectToken actions')}
+                  {t('settings.developerApiDesc', 'Manage API keys, rate limits, docs & interactive testing console')}
                 </div>
               </div>
             </div>
