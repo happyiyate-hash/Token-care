@@ -156,22 +156,22 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2.5">
-                  {token.metadata?.logoUrl ? (
+                  {token.metadata.logoUrl ? (
                     <img
                       src={token.metadata.logoUrl}
-                      alt={token.metadata?.symbol || 'Token'}
+                      alt={token.metadata.symbol}
                       className="w-8 h-8 rounded-xl object-cover shrink-0 border border-emerald-500/30 shadow-sm"
                     />
                   ) : (
                     <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center font-bold text-xs text-emerald-400 shrink-0">
-                      {String(token.metadata?.symbol || 'TOK').slice(0, 3)}
+                      {token.metadata.symbol.slice(0, 3)}
                     </div>
                   )}
                   <div>
                     <div className="font-bold text-white text-xs group-hover:text-emerald-400 transition-colors">
-                      {token.metadata?.name || 'Unknown Token'}
+                      {token.metadata.name}
                     </div>
-                    <div className="text-[10px] text-zinc-400 font-mono">${token.metadata?.symbol || 'TOK'}</div>
+                    <div className="text-[10px] text-zinc-400 font-mono">${token.metadata.symbol}</div>
                   </div>
                 </div>
 

@@ -66,13 +66,13 @@ export const TokenAnalysisCard: React.FC<TokenAnalysisCardProps> = ({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-800 pb-5">
         <div className="flex items-center space-x-4">
           <div className="w-14 h-14 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-center text-2xl font-bold text-blue-400 shadow-inner">
-            {String(token.metadata?.symbol || 'TOK').substring(0, 3)}
+            {token.metadata.symbol ? token.metadata.symbol.substring(0, 3) : 'TOK'}
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h1 className="text-2xl font-bold text-zinc-100">{token.metadata?.name || 'Token'}</h1>
+              <h1 className="text-2xl font-bold text-zinc-100">{token.metadata.name}</h1>
               <span className="text-sm font-semibold text-zinc-400 font-mono">
-                ${token.metadata?.symbol || 'TOK'}
+                ${token.metadata.symbol}
               </span>
               <span className="text-xs px-2.5 py-0.5 rounded-md bg-zinc-800 text-zinc-300 border border-zinc-700 flex items-center gap-1 font-medium">
                 {chainInfo?.icon || '⛓️'} {chainDisplayName}

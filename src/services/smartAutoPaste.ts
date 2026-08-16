@@ -2,6 +2,8 @@
  * Smart Auto-Paste & Contract Address Verification Service
  */
 
+import { Capacitor } from '@capacitor/core';
+import { Clipboard } from '@capacitor/clipboard';
 import { isXrplAddress, isTonAddress, isSolanaAddress, isTronAddress } from '../constants/chains';
 
 // Extract a valid crypto contract address or asset identifier from raw text or URLs
@@ -68,6 +70,23 @@ export interface SmartPasteResult {
 }
 
 /**
+ * Read clipboard through the native Capacitor Clipboard plugin in Android/iOS.
+ * Fall back to the browser clipboard API for the PWA/web version.
+ */
+async function readClipboardText(): Promise<string> {
+  if (Capacitor.isNativePlatform()) {
+    const { value } = await Clipboard.read();
+    return value || '';
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+    return await navigator.clipboard.readText();
+  }
+
+  throw new Error('Clipboard API unavailable');
+}
+
+/**
  * Core smart auto-paste function - operates completely silently without popup banners
  */
 export async function processClipboardAutoPaste(
@@ -77,11 +96,7 @@ export async function processClipboardAutoPaste(
   onFetchToken: (addr: string) => void
 ): Promise<SmartPasteResult> {
   try {
-    if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.readText !== 'function') {
-      return { status: 'PERMISSION_DENIED' };
-    }
-
-    const clipText = await navigator.clipboard.readText();
+    const clipText = await readClipboardText();
     if (!clipText || !clipText.trim()) {
       return { status: 'CLIPBOARD_EMPTY' };
     }

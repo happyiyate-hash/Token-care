@@ -627,7 +627,7 @@ export function registerDynamicChain(
     else formattedName = cleanKey.charAt(0).toUpperCase() + cleanKey.slice(1);
   }
 
-  const formattedSymbol = symbol ? String(symbol).toUpperCase() : (cleanKey.includes('bsc') || cleanKey === '56' ? 'BNB' : cleanKey ? cleanKey.toUpperCase().slice(0, 4) : 'EVM');
+  const formattedSymbol = symbol || (cleanKey.includes('bsc') || cleanKey === '56' ? 'BNB' : cleanKey.toUpperCase().slice(0, 4));
 
   RAW_EVM_CHAINS[cleanKey] = {
     name: formattedName,

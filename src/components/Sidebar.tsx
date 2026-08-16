@@ -18,7 +18,6 @@ import {
   ArrowUpRight,
   Bell,
   Terminal,
-  Code2,
 } from 'lucide-react';
 
 import { ChainId, UserRewardWallet } from '../types';
@@ -89,10 +88,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       description: t('sidebar.dashboardDesc'),
     },
     {
-      id: 'developer',
-      label: 'Developer API',
-      icon: Code2,
-      description: 'Manage projects, API keys, RPC endpoints & quotas',
+      id: 'api-console',
+      label: t('nav.workerApi'),
+      icon: Terminal,
+      description: t('sidebar.workerApiDesc'),
     },
     {
       id: 'payouts',

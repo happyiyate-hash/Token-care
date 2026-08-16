@@ -108,7 +108,7 @@ export async function fetchCoinGeckoData(address: string, chainId: ChainId) {
       return {
         status: 'verified' as const,
         name: data.name || '',
-        symbol: data.symbol ? String(data.symbol).toUpperCase() : '',
+        symbol: data.symbol?.toUpperCase() || '',
         marketCapUsd: data.market_data?.market_cap?.usd || 0,
         priceUsd: data.market_data?.current_price?.usd || 0,
         circulatingSupply: data.market_data?.circulating_supply || 0,
@@ -139,7 +139,7 @@ export async function fetchDexScreenerData(address: string, chainId: ChainId) {
           liquidityUsd: pair.liquidity?.usd || 0,
           volume24h: pair.volume?.h24 || 0,
           priceChange24h: pair.priceChange?.h24 || 0,
-          dexName: pair.dexId ? String(pair.dexId).toUpperCase() : 'DEX',
+          dexName: pair.dexId?.toUpperCase() || 'DEX',
           pairAddress: pair.pairAddress || '',
           pairUrl: pair.url || '',
         };

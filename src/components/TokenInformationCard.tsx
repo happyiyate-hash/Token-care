@@ -238,7 +238,7 @@ export const TokenInformationCard: React.FC<TokenInformationCardProps> = ({
                       </div>
                     ) : (
                       <div className="w-7 h-7 rounded-md bg-gradient-to-tr from-purple-600/30 via-emerald-600/30 to-teal-500/20 border border-purple-500/40 flex flex-col items-center justify-center font-bold text-[9px] text-purple-300 shadow-sm hover:border-emerald-400/80 transition-colors group">
-                        <span>{metadata.symbol ? String(metadata.symbol).slice(0, 3) : 'TOK'}</span>
+                        <span>{metadata.symbol ? metadata.symbol.slice(0, 3) : 'TOK'}</span>
                         <div className="absolute inset-0 bg-black/60 rounded-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                           <Upload className="w-3 h-3 text-emerald-400" />
                         </div>
@@ -259,16 +259,16 @@ export const TokenInformationCard: React.FC<TokenInformationCardProps> = ({
                   <div className="min-w-0">
                     <div className="flex items-center space-x-1">
                       <h3 className="text-xs font-extrabold text-white truncate">
-                        {metadata.name || 'Unknown Token'}
+                        {metadata.name}
                       </h3>
                       <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0 animate-in fade-in duration-500" />
                     </div>
 
                     <div className="flex items-center space-x-1.5 text-[10px] mt-0.5">
-                      <span className="font-mono font-bold text-zinc-300">${metadata.symbol || 'TOK'}</span>
+                      <span className="font-mono font-bold text-zinc-300">${metadata.symbol}</span>
                       <span className="text-zinc-600">•</span>
                       <span className="font-mono text-zinc-400 truncate max-w-[80px]">
-                        {metadata.address ? `${String(metadata.address).slice(0, 6)}...${String(metadata.address).slice(-4)}` : '0x...'}
+                        {metadata.address.slice(0, 6)}...{metadata.address.slice(-4)}
                       </span>
                       <button
                         type="button"

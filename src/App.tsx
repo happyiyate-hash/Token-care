@@ -55,7 +55,6 @@ import { HelpCenterView } from './components/HelpCenterView';
 import { ContactSupportView } from './components/ContactSupportView';
 import { SupportLiveChatView } from './components/SupportLiveChatView';
 import { TermsAndPrivacyView } from './components/TermsAndPrivacyView';
-import { DeveloperView } from './components/DeveloperView';
 
 import { uploadTokensToWorker, getTokenByAddressFromWorker } from './services/workerApi';
 import { initGlobalExploreDirectory } from './services/exploreDirectory';
@@ -1213,38 +1212,12 @@ export default function App() {
           onOpenHowItWorks={() => setIsHowItWorksOpen(true)}
           onOpenRewardModal={() => setIsRewardModalOpen(true)}
           onOpenWalletModal={() => setIsWalletModalOpen(true)}
-          onOpenApiConsole={() => setIsApiConsoleOpen(true)}
           onSwitchToDesktop={() => setViewMode('desktop')}
           unreadCount={unreadNotificationCount}
           onUnreadCountChange={(count) => setUnreadNotificationCount(count)}
           isVerifying={isVerifying}
           verificationStage={verificationStage}
         />
-
-        {/* Modals for Mobile View */}
-        <HowItWorksModal
-          isOpen={isHowItWorksOpen}
-          onClose={() => setIsHowItWorksOpen(false)}
-        />
-        <RewardWalletModal
-          isOpen={isRewardModalOpen}
-          onClose={() => setIsRewardModalOpen(false)}
-          wallet={wallet}
-          onUpdateWallet={setWallet}
-          userId={currentUser?.id}
-        />
-        <WalletConnectModal
-          isOpen={isWalletModalOpen}
-          onClose={() => setIsWalletModalOpen(false)}
-          wallet={wallet}
-          onUpdateWallet={setWallet}
-          userId={currentUser?.id}
-        />
-        <ApiConsoleModal
-          isOpen={isApiConsoleOpen}
-          onClose={() => setIsApiConsoleOpen(false)}
-        />
-        <PWAInstallBanner />
       </>
     );
   }
@@ -1296,9 +1269,7 @@ export default function App() {
           activeTab !== 'contact-support' &&
           activeTab !== 'terms-privacy' &&
           activeTab !== 'privacy-policy' &&
-          activeTab !== 'preferences' &&
-          activeTab !== 'developer' &&
-          activeTab !== 'api-console' && (
+          activeTab !== 'preferences' && (
           <header className="shrink-0 bg-[#090C13]/90 backdrop-blur-md border-b border-zinc-800/80 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3 z-30">
             <div className="flex items-center space-x-2.5 min-w-0">
               {/* Mobile Sidebar Hamburger Toggle */}
@@ -1332,7 +1303,7 @@ export default function App() {
                     ? 'Payouts & Backend Server Hub'
                     : activeTab === 'settings'
                     ? 'Blockchain & API Settings'
-                    : activeTab ? String(activeTab).toUpperCase() : ''}
+                    : activeTab.toUpperCase()}
                 </h1>
                 <p className="text-[11px] text-zinc-400 truncate hidden sm:block">
                   {activeTab === 'add-token'
@@ -1349,33 +1320,31 @@ export default function App() {
             {/* Right Header Controls */}
             <div className="flex items-center space-x-2 shrink-0">
               {/* User Account Pill & Sign Out */}
-              {currentUser && (
-                <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-xl p-1 space-x-1">
-                  <div className="flex items-center space-x-1.5 px-2 py-0.5 text-xs text-zinc-300 font-medium">
-                    {currentUser.user_metadata?.avatar_url || userProfile?.avatar_url ? (
-                      <img
-                        src={currentUser.user_metadata?.avatar_url || userProfile?.avatar_url}
-                        alt="Avatar"
-                        className="w-4 h-4 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[9px]">
-                        {String(currentUser.email || currentUser.user_metadata?.username || 'U').charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <span className="hidden sm:inline font-semibold text-emerald-400">
-                      {currentUser.email ? currentUser.email.split('@')[0] : 'Account'}
-                    </span>
-                  </div>
-                  <button
-                    onClick={handleSignOut}
-                    className="px-2 py-1 bg-zinc-800 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 rounded-lg text-xs font-medium transition-colors cursor-pointer"
-                    title="Sign Out"
-                  >
-                    Sign Out
-                  </button>
+              <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-xl p-1 space-x-1">
+                <div className="flex items-center space-x-1.5 px-2 py-0.5 text-xs text-zinc-300 font-medium">
+                  {currentUser.user_metadata?.avatar_url || userProfile?.avatar_url ? (
+                    <img
+                      src={currentUser.user_metadata?.avatar_url || userProfile?.avatar_url}
+                      alt="Avatar"
+                      className="w-4 h-4 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[9px]">
+                      {currentUser.email ? currentUser.email.charAt(0).toUpperCase() : 'U'}
+                    </div>
+                  )}
+                  <span className="hidden sm:inline font-semibold text-emerald-400">
+                    {currentUser.email?.split('@')[0]}
+                  </span>
                 </div>
-              )}
+                <button
+                  onClick={handleSignOut}
+                  className="px-2 py-1 bg-zinc-800 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                  title="Sign Out"
+                >
+                  Sign Out
+                </button>
+              </div>
 
               {/* How it works Button */}
               <button
@@ -1485,13 +1454,6 @@ export default function App() {
               onBack={() => setActiveTab('settings')}
               onNavigateContactSupport={() => setActiveTab('contact-support')}
               initialTab="preferences"
-            />
-          </div>
-        ) : activeTab === 'developer' || activeTab === 'api-console' ? (
-          <div className="flex-1 flex flex-col min-h-0 overflow-hidden w-full h-full">
-            <DeveloperView
-              onBack={() => setActiveTab('settings')}
-              currentUser={currentUser}
             />
           </div>
         ) : (

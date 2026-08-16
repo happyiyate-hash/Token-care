@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, copyFileSync, readdirSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, copyFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const icon = 'resources/icon.png';
@@ -20,8 +20,6 @@ const result = spawnSync(
     '@capacitor/assets',
     'generate',
     '--android',
-    '--assetPath',
-    'resources',
     '--iconBackgroundColor',
     '#030710',
     '--splashBackgroundColor',
@@ -37,16 +35,6 @@ if ((result.status ?? 1) !== 0) {
 const nativeResDir = 'android/app/src/main/res';
 const nativeSplashDir = `${nativeResDir}/drawable`;
 mkdirSync(nativeSplashDir, { recursive: true });
-
-// Remove stale default Android vector foreground in drawable-v24 if present
-const v24Foreground = `${nativeResDir}/drawable-v24/ic_launcher_foreground.xml`;
-if (existsSync(v24Foreground)) {
-  try {
-    unlinkSync(v24Foreground);
-  } catch (e) {
-    console.warn('Could not remove drawable-v24/ic_launcher_foreground.xml', e);
-  }
-}
 
 // Keep the exact user-supplied native assets at stable Android resource names.
 copyFileSync(splash, `${nativeSplashDir}/splash.png`);

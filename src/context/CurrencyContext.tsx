@@ -48,8 +48,7 @@ export const CurrencyProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   const setCurrency = useCallback((code: string) => {
-    if (!code) return;
-    const upper = String(code).toUpperCase();
+    const upper = code.toUpperCase();
     if (SUPPORTED_CURRENCIES[upper]) {
       setCurrencyState(upper);
       saveCurrencyPreference(upper);

@@ -143,9 +143,9 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
               ) : (
                 <div
                   className="w-full h-full rounded-sm flex items-center justify-center font-mono text-[8px] font-bold text-white"
-                  style={{ backgroundColor: currentRawDef?.themeColor || '#22C55E' }}
+                  style={{ backgroundColor: currentRawDef.themeColor }}
                 >
-                  {String(currentRawDef?.symbol || 'EVM').slice(0, 3)}
+                  {currentRawDef.symbol.slice(0, 3)}
                 </div>
               )}
             </div>

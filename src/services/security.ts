@@ -21,11 +21,10 @@ export async function analyzeTokenSafety(
       description: 'Owner privileges disabled. Owner cannot modify fees or block transfers.',
     });
   } else if (metadata.ownerAddress) {
-    const ownerAddr = String(metadata.ownerAddress || '');
     flags.push({
       type: 'warn',
       title: 'Active Contract Owner',
-      description: `Owner address (${ownerAddr.slice(0, 6)}...${ownerAddr.slice(-4)}) holds admin privileges.`,
+      description: `Owner address (${metadata.ownerAddress.slice(0, 6)}...${metadata.ownerAddress.slice(-4)}) holds admin privileges.`,
     });
   } else {
     flags.push({

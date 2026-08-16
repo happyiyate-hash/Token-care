@@ -373,7 +373,7 @@ export async function addTokenToUserInSupabase(
     const tStandard =
       meta.tokenStandard ||
       meta.token_standard ||
-      (bType === 'evm' ? 'ERC-20' : bType === 'solana' || bType === 'spl' ? 'SPL' : bType === 'tron' || bType === 'trc20' ? 'TRC-20' : (bType ? String(bType).toUpperCase() : 'ERC-20'));
+      (bType === 'evm' ? 'ERC-20' : bType === 'solana' || bType === 'spl' ? 'SPL' : bType === 'tron' || bType === 'trc20' ? 'TRC-20' : bType.toUpperCase());
 
     const enrichedMetadata = {
       ...token.metadata,
@@ -544,7 +544,7 @@ export async function saveTokenToSupabase(
     const tStandard =
       meta.tokenStandard ||
       meta.token_standard ||
-      (bType === 'evm' ? 'ERC-20' : bType === 'solana' || bType === 'spl' ? 'SPL' : bType === 'tron' || bType === 'trc20' ? 'TRC-20' : (bType ? String(bType).toUpperCase() : 'ERC-20'));
+      (bType === 'evm' ? 'ERC-20' : bType === 'solana' || bType === 'spl' ? 'SPL' : bType === 'tron' || bType === 'trc20' ? 'TRC-20' : bType.toUpperCase());
 
     const enrichedMetadata = {
       ...token.metadata,
@@ -658,7 +658,7 @@ export async function fetchTokensFromSupabase(userId?: string): Promise<Submitte
       const chainDetails = getChainInfo(item.chain_id);
       const bType = meta.blockchainType || meta.blockchain_type || item.blockchain_type || (isEvmChain(item.chain_id, meta.blockchainType) ? 'evm' : item.chain_id);
       const bName = meta.blockchainName || meta.blockchain_name || meta.blockchain || item.blockchain_name || meta.chainName || meta.network || chainDetails.name;
-      const tStandard = meta.tokenStandard || meta.token_standard || item.token_standard || (bType === 'evm' ? 'ERC-20' : (bType ? String(bType).toUpperCase() : 'ERC-20'));
+      const tStandard = meta.tokenStandard || meta.token_standard || item.token_standard || (bType === 'evm' ? 'ERC-20' : bType.toUpperCase());
 
       const fullMetadata = {
         ...meta,
@@ -693,7 +693,7 @@ export async function fetchTokensFromSupabase(userId?: string): Promise<Submitte
           rating: item.safety_rating || 'SAFE',
         },
         submittedAt: item.submitted_at || item.created_at,
-        submittedBy: item.user_id ? `${String(item.user_id).slice(0, 6)}...` : 'Community',
+        submittedBy: item.user_id ? `${item.user_id.slice(0, 6)}...` : 'Community',
         rewardEarnedTokens: item.reward_earned_tokens || 15,
         rewardEarnedUsd: (item.reward_earned_tokens || 15) * REWARD_RATE_USD,
         upvotes: item.upvotes || 1,
@@ -728,7 +728,7 @@ export async function fetchAllGlobalTokensFromSupabase(): Promise<SubmittedToken
       const chainDetails = getChainInfo(item.chain_id);
       const bType = meta.blockchainType || meta.blockchain_type || item.blockchain_type || (isEvmChain(item.chain_id, meta.blockchainType) ? 'evm' : item.chain_id);
       const bName = meta.blockchainName || meta.blockchain_name || meta.blockchain || item.blockchain_name || meta.chainName || meta.network || chainDetails.name;
-      const tStandard = meta.tokenStandard || meta.token_standard || item.token_standard || (bType === 'evm' ? 'ERC-20' : (bType ? String(bType).toUpperCase() : 'ERC-20'));
+      const tStandard = meta.tokenStandard || meta.token_standard || item.token_standard || (bType === 'evm' ? 'ERC-20' : bType.toUpperCase());
 
       const fullMetadata = {
         ...meta,
@@ -763,7 +763,7 @@ export async function fetchAllGlobalTokensFromSupabase(): Promise<SubmittedToken
           rating: item.safety_rating || 'SAFE',
         },
         submittedAt: item.submitted_at || item.created_at,
-        submittedBy: item.user_id ? `${String(item.user_id).slice(0, 6)}...` : 'Community',
+        submittedBy: item.user_id ? `${item.user_id.slice(0, 6)}...` : 'Community',
         rewardEarnedTokens: item.reward_earned_tokens || 15,
         rewardEarnedUsd: (item.reward_earned_tokens || 15) * REWARD_RATE_USD,
         upvotes: item.upvotes || 1,
@@ -803,7 +803,7 @@ export async function getUserProfile(userId: string, sessionUser?: any): Promise
     } else if (!error && userId) {
       // Profile row DOES NOT EXIST yet in Supabase! Automatically create row in profiles table.
       const email = sessionUser?.email || cachedProfile.email || '';
-      const defaultUsername = email ? email.split('@')[0] : `user_${String(userId || '').slice(0, 6)}`;
+      const defaultUsername = email ? email.split('@')[0] : `user_${userId.slice(0, 6)}`;
       const autoProfilePayload = {
         id: userId,
         email: email,
@@ -839,7 +839,7 @@ export async function getUserProfile(userId: string, sessionUser?: any): Promise
   // 3. Fallback to auth session metadata
   const meta = sessionUser?.user_metadata || {};
   const email = sessionUser?.email || dbProfile?.email || cachedProfile.email || '';
-  const defaultUsername = email ? email.split('@')[0] : `user_${String(userId || '').slice(0, 6)}`;
+  const defaultUsername = email ? email.split('@')[0] : `user_${userId.slice(0, 6)}`;
 
   const mergedProfile: SupabaseUserProfile = {
     id: userId,
@@ -1148,12 +1148,11 @@ export async function submitWithdrawalRequest(
 
   // 4. Trigger persistent notification in Supabase DB & LocalStorage
   try {
-    const wAddr = String(walletAddress || '');
     await createNotificationInSupabase({
       userId,
       type: 'withdrawal',
       title: 'Withdrawal Request Submitted',
-      message: `💸 Withdrawal request for ${amountTokens} REWARD ($${amountUsd.toFixed(2)}) sent to ${wAddr ? `${wAddr.slice(0, 6)}...${wAddr.slice(-4)}` : 'Wallet'}.`,
+      message: `💸 Withdrawal request for ${amountTokens} REWARD ($${amountUsd.toFixed(2)}) sent to ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}.`,
       icon: 'withdrawal',
       status: 'pending',
       actionUrl: '/withdrawals',

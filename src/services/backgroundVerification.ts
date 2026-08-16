@@ -1,6 +1,6 @@
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import { safePatchFetch } from '../utils/fetchBridge';
+import { safeOverrideFetch } from '../utils/safeFetchOverride';
 
 const PENDING_KEY = 'tokencare_pending_verification_v1';
 const RESUME_DELAY_MS = 20_000;
@@ -99,39 +99,38 @@ export function installVerificationLifecycle(): void {
   if (win[marker]) return;
   win[marker] = true;
 
-  const originalFetch = window.fetch.bind(window);
   let quietTimer: number | undefined;
 
-  const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const request = input instanceof Request ? input : null;
-    const url = request ? request.url : String(input);
+  safeOverrideFetch((originalFetch) => {
+    return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = input instanceof Request ? input : null;
+      const url = request ? request.url : String(input);
 
-    if (looksLikeVerificationRequest(url)) {
-      const address = extractAddress(url);
-      if (address) {
-        const existing = getPendingVerification();
-        markVerificationStarted(address, existing?.chainId || 'current');
-        window.clearTimeout(quietTimer);
+      if (looksLikeVerificationRequest(url)) {
+        const address = extractAddress(url);
+        if (address) {
+          const existing = getPendingVerification();
+          markVerificationStarted(address, existing?.chainId || 'current');
+          window.clearTimeout(quietTimer);
+        }
+
+        try {
+          const response = await originalFetch(input, init);
+          window.clearTimeout(quietTimer);
+          quietTimer = window.setTimeout(() => {
+            markVerificationFinished();
+          }, CLEAR_AFTER_QUIET_MS);
+          return response;
+        } catch (error) {
+          // Keep the marker: if Android/network interrupted the verification,
+          // returning to the app can retry it.
+          throw error;
+        }
       }
 
-      try {
-        const response = await originalFetch(input, init);
-        window.clearTimeout(quietTimer);
-        quietTimer = window.setTimeout(() => {
-          markVerificationFinished();
-        }, CLEAR_AFTER_QUIET_MS);
-        return response;
-      } catch (error) {
-        // Keep the marker: if Android/network interrupted the verification,
-        // returning to the app can retry it.
-        throw error;
-      }
-    }
-
-    return originalFetch(input, init);
-  };
-
-  safePatchFetch(customFetch);
+      return originalFetch(input, init);
+    };
+  });
 
   // Also capture the user's explicit Verify button in case the first provider
   // request is made by a non-HTTP/local adapter.

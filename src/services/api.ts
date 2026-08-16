@@ -131,7 +131,7 @@ export function parseXrplAssetIdentifier(address: string): {
       currency: currCode,
       issuer: issuerAddr || '',
       name: `${symbol} (XRPL Asset)`,
-      symbol: symbol ? String(symbol).toUpperCase() : 'XRPL',
+      symbol: symbol.toUpperCase(),
     };
   }
   return {
@@ -185,7 +185,7 @@ export async function discoverToken(
       return {
         address: bestPair.baseToken?.address || address,
         name: bestPair.baseToken?.name || 'Discovered Token',
-        symbol: String(bestPair.baseToken?.symbol || 'TOK').toUpperCase(),
+        symbol: (bestPair.baseToken?.symbol || 'TOK').toUpperCase(),
         decimals: 18,
         blockchainType: netInfo.blockchainType,
         blockchainName: netInfo.blockchainName,
@@ -203,7 +203,7 @@ export async function discoverToken(
           fdvUsd: bestPair.fdv || 0,
           marketCapUsd: bestPair.marketCap || bestPair.fdv || 0,
           pairAddress: bestPair.pairAddress,
-          dexName: String(bestPair.dexId || 'DEX').toUpperCase(),
+          dexName: (bestPair.dexId || 'DEX').toUpperCase(),
           pairUrl: bestPair.url,
         },
       };
@@ -217,11 +217,11 @@ export async function discoverToken(
     let extractedSymbol = 'TON';
     if (address.includes('__')) {
       const suffix = address.split('__')[1]?.trim();
-      if (suffix) extractedSymbol = String(suffix).toUpperCase();
+      if (suffix) extractedSymbol = suffix.toUpperCase();
     } else if (address.includes('_')) {
       const parts = address.split('_');
       const suffix = parts[parts.length - 1]?.trim();
-      if (suffix && suffix.length <= 10) extractedSymbol = String(suffix).toUpperCase();
+      if (suffix && suffix.length <= 10) extractedSymbol = suffix.toUpperCase();
     }
 
     const tokenName = extractedSymbol !== 'TON' ? `${extractedSymbol} (TON Jetton)` : 'TON Jetton Token';
@@ -374,7 +374,7 @@ export async function fetchDexScreenerData(
       marketCapUsd,
       fdvUsd,
       pairAddress: bestPair.pairAddress,
-      dexName: (bestPair.dexId ? String(bestPair.dexId).toUpperCase() : 'DEX'),
+      dexName: bestPair.dexId.toUpperCase(),
       pairUrl: bestPair.url,
       logoUrl: (bestPair as any).info?.imageUrl || (bestPair as any).info?.header || undefined,
     } as any;

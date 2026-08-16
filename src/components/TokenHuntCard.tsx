@@ -130,7 +130,7 @@ export const TokenHuntCard: React.FC<TokenHuntCardProps> = () => {
                 >
                   <div className="flex items-center space-x-2.5 min-w-0">
                     <div className="w-7 h-7 rounded-lg bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center shrink-0 text-xs font-bold font-mono text-zinc-300 group-hover:text-[#00E575] group-hover:border-[#00E575]/40 transition-colors">
-                      {String(platform?.name || 'TC').slice(0, 2).toUpperCase()}
+                      {platform.name.slice(0, 2).toUpperCase()}
                     </div>
                     <span className="text-xs font-bold text-white group-hover:text-[#00E575] transition-colors truncate">
                       {platform.name}

@@ -31,17 +31,12 @@ export const DirectoryTable: React.FC<DirectoryTableProps> = ({
 
   // Filter logic
   const filtered = tokens.filter((t) => {
-    const term = (searchTerm || '').toLowerCase();
-    const name = (t?.metadata?.name || '').toLowerCase();
-    const symbol = (t?.metadata?.symbol || '').toLowerCase();
-    const address = (t?.address || '').toLowerCase();
-
     const matchesSearch =
-      name.includes(term) ||
-      symbol.includes(term) ||
-      address.includes(term);
+      t.metadata.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.metadata.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.address.toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchesRating = filterRating === 'ALL' || t?.safety?.rating === filterRating;
+    const matchesRating = filterRating === 'ALL' || t.safety.rating === filterRating;
 
     return matchesSearch && matchesRating;
   });
@@ -175,21 +170,21 @@ export const DirectoryTable: React.FC<DirectoryTableProps> = ({
                     {/* Symbol & Name */}
                     <td className="py-3.5 px-4">
                       <div className="flex items-center space-x-3">
-                        {t.metadata?.logoUrl ? (
+                        {t.metadata.logoUrl ? (
                           <img
                             src={t.metadata.logoUrl}
-                            alt={t.metadata?.symbol || 'Token'}
+                            alt={t.metadata.symbol}
                             className="w-8 h-8 rounded-lg object-cover shrink-0 shadow-sm"
                           />
                         ) : (
                           <div className="w-8 h-8 rounded-lg bg-zinc-950 flex items-center justify-center font-bold text-xs text-blue-400 shrink-0">
-                            {String(t.metadata?.symbol || 'TOK').substring(0, 3)}
+                            {t.metadata.symbol ? t.metadata.symbol.substring(0, 3) : 'TOK'}
                           </div>
                         )}
                         <div>
                           <div className="font-bold text-zinc-100 flex items-center gap-1.5">
-                            <span>{t.metadata?.name || 'Token'}</span>
-                            <span className="text-zinc-500 font-mono text-[11px]">${t.metadata?.symbol || 'TOK'}</span>
+                            <span>{t.metadata.name}</span>
+                            <span className="text-zinc-500 font-mono text-[11px]">${t.metadata.symbol}</span>
                           </div>
                           <div className="text-[11px] text-zinc-400 flex items-center gap-1">
                             <span>{chainInfo?.icon || '⛓️'}</span>
@@ -203,21 +198,19 @@ export const DirectoryTable: React.FC<DirectoryTableProps> = ({
                     <td className="py-3.5 px-4">
                       <div className="flex items-center space-x-1.5 font-mono text-zinc-400 text-[11px]">
                         <span>
-                          {t.address ? `${String(t.address).slice(0, 6)}...${String(t.address).slice(-4)}` : 'N/A'}
+                          {t.address.slice(0, 6)}...{t.address.slice(-4)}
                         </span>
-                        {t.address && (
-                          <button
-                            onClick={(e) => handleCopy(t.address, t.id, e)}
-                            className="hover:text-zinc-100 transition-colors p-1"
-                            title="Copy Address"
-                          >
-                            {copiedId === t.id ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                        )}
+                        <button
+                          onClick={(e) => handleCopy(t.address, t.id, e)}
+                          className="hover:text-zinc-100 transition-colors p-1"
+                          title="Copy Address"
+                        >
+                          {copiedId === t.id ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
                       </div>
                     </td>
 

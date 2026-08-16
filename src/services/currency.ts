@@ -115,14 +115,14 @@ export function getSavedCurrency(): string {
   if (typeof window === 'undefined') return 'USD';
   try {
     const direct = localStorage.getItem(DIRECT_CURRENCY_STORAGE_KEY);
-    if (direct && SUPPORTED_CURRENCIES[String(direct).toUpperCase()]) {
-      return String(direct).toUpperCase();
+    if (direct && SUPPORTED_CURRENCIES[direct.toUpperCase()]) {
+      return direct.toUpperCase();
     }
     const raw = localStorage.getItem(PREFERENCES_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed.currency && SUPPORTED_CURRENCIES[String(parsed.currency).toUpperCase()]) {
-        return String(parsed.currency).toUpperCase();
+      if (parsed.currency && SUPPORTED_CURRENCIES[parsed.currency.toUpperCase()]) {
+        return parsed.currency.toUpperCase();
       }
     }
   } catch (e) {
@@ -136,8 +136,8 @@ export function getSavedCurrency(): string {
  * (matching existing preference schema) and dispatches a change event.
  */
 export function saveCurrencyPreference(currencyCode: string): void {
-  if (typeof window === 'undefined' || !currencyCode) return;
-  const upper = String(currencyCode).toUpperCase();
+  if (typeof window === 'undefined') return;
+  const upper = currencyCode.toUpperCase();
   if (!SUPPORTED_CURRENCIES[upper]) return;
 
   try {
@@ -169,7 +169,7 @@ export function convertUsdToCurrency(
   targetCurrencyCode?: string
 ): number {
   const num = parseCleanNumber(amountInUSD);
-  const code = String(targetCurrencyCode || getSavedCurrency() || 'USD').toUpperCase();
+  const code = (targetCurrencyCode || getSavedCurrency()).toUpperCase();
   const config = SUPPORTED_CURRENCIES[code] || SUPPORTED_CURRENCIES.USD;
   return num * config.rate;
 }
@@ -196,7 +196,7 @@ export function formatCurrency(
   amountInUSD: number | string | undefined | null,
   options: FormatCurrencyOptions = {}
 ): string {
-  const code = String(options.currencyCode || getSavedCurrency() || 'USD').toUpperCase();
+  const code = (options.currencyCode || getSavedCurrency()).toUpperCase();
   const config = SUPPORTED_CURRENCIES[code] || SUPPORTED_CURRENCIES.USD;
   const num = parseCleanNumber(amountInUSD);
   const converted = num * config.rate;

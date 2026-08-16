@@ -4,6 +4,13 @@ import App from './App.tsx';
 import './index.css';
 import { I18nProvider } from './context/I18nContext';
 import { CurrencyProvider } from './context/CurrencyContext';
+import { installNativeClipboardBridge } from './services/nativeClipboardBridge';
+import { installSupabaseDataCache } from './services/supabaseDataCache';
+import { installVerificationLifecycle } from './services/backgroundVerification';
+
+installNativeClipboardBridge();
+installSupabaseDataCache();
+installVerificationLifecycle();
 
 // Register Service Worker for PWA Offline & Installation Support
 if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
@@ -18,7 +25,6 @@ if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
       });
   });
 } else if ('serviceWorker' in navigator) {
-  // Register in dev mode too for testing
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/sw.js')

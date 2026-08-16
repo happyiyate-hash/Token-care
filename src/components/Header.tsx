@@ -62,11 +62,11 @@ export const Header: React.FC<HeaderProps> = ({
                   />
                 ) : (
                   <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] shrink-0">
-                    {String(userProfile?.username || userProfile?.display_name || currentUser?.email || 'U').charAt(0).toUpperCase()}
+                    {(userProfile?.username || currentUser.email || 'U').charAt(0).toUpperCase()}
                   </div>
                 )}
                 <span className="hidden sm:inline font-semibold text-emerald-300 text-xs">
-                  {userProfile?.username || userProfile?.display_name || currentUser?.user_metadata?.username || (currentUser?.email ? currentUser.email.split('@')[0] : 'Account')}
+                  {userProfile?.username || userProfile?.display_name || currentUser.user_metadata?.username || currentUser.email?.split('@')[0]}
                 </span>
               </div>
               <button
@@ -114,7 +114,7 @@ export const Header: React.FC<HeaderProps> = ({
             <Wallet className="w-3.5 h-3.5 text-zinc-400" />
             <span className="hidden md:inline">
               {wallet?.isConnected && wallet?.walletAddress
-                ? `${String(wallet.walletAddress).slice(0, 6)}...${String(wallet.walletAddress).slice(-4)}`
+                ? `${wallet.walletAddress.slice(0, 6)}...${wallet.walletAddress.slice(-4)}`
                 : t('nav.connectWallet')}
             </span>
             <span className="md:hidden">{t('nav.wallet')}</span>

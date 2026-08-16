@@ -35,7 +35,6 @@ import {
   QrCode,
   KeyRound,
   ShieldCheck,
-  Code2,
 } from 'lucide-react';
 import {
   beginMFAEnrollment,
@@ -561,7 +560,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full bg-gradient-to-tr from-[#15803D] via-[#16A34A] to-[#4ADE80] flex items-center justify-center text-black font-extrabold text-xs">
-                    {String(displayName || username || 'W').slice(0, 1).toUpperCase()}
+                    {(displayName || username || 'W').slice(0, 1).toUpperCase()}
                   </div>
                 )}
               </div>
@@ -696,7 +695,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   )}
                 </div>
                 <div className="text-[9.5px] text-zinc-400 font-mono truncate max-w-[200px]">
-                  {savedAddress ? `${String(savedAddress).slice(0, 8)}...${String(savedAddress).slice(-6)}` : t('settings.clickToAddAddress', 'Click to add single Polygon address')}
+                  {savedAddress ? `${savedAddress.slice(0, 8)}...${savedAddress.slice(-6)}` : t('settings.clickToAddAddress', 'Click to add single Polygon address')}
                 </div>
               </div>
             </div>
@@ -776,31 +775,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
 
-          {/* Developer API */}
+          {/* API & Blockchain Settings */}
           <div
-            id="developer-api-settings-btn"
-            onClick={() => {
-              if (onNavigateTab) {
-                onNavigateTab('developer');
-              } else if (onOpenApiConsole) {
-                onOpenApiConsole();
-              }
-            }}
+            onClick={() => onOpenApiConsole && onOpenApiConsole()}
             className="p-2.5 flex items-center justify-between hover:bg-zinc-800/30 transition-colors cursor-pointer group"
           >
             <div className="flex items-center space-x-2.5">
               <div className="w-7 h-7 rounded-full bg-[#0E2E21] border border-emerald-500/20 flex items-center justify-center text-[#00E575] shrink-0">
-                <Code2 className="w-3.5 h-3.5 text-[#00E575]" />
+                <Key className="w-3.5 h-3.5 text-[#00E575]" />
               </div>
               <div>
                 <div className="text-[11.5px] font-bold text-white group-hover:text-emerald-300 transition-colors flex items-center gap-1.5">
-                  Developer API
+                  {t('settings.workerApiTester', 'Worker API Tester')}
                   <span className="text-[8.5px] bg-[#22C55E]/20 text-[#4ADE80] border border-[#22C55E]/40 px-1.5 py-0.2 rounded font-mono font-bold">
-                    Console
+                    {t('settings.labConsole', 'Lab Console')}
                   </span>
                 </div>
                 <div className="text-[9.5px] text-zinc-400 font-normal">
-                  Manage projects, generate API keys, RPC endpoints & limits
+                  {t('settings.workerApiDesc', 'Test getTokenDetails, prices & inspectToken actions')}
                 </div>
               </div>
             </div>
@@ -1123,7 +1115,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                     ) : (
                       <span className="font-bold text-xs text-emerald-400 font-mono">
-                        {String(displayName || username || 'W').slice(0, 2).toUpperCase()}
+                        {(displayName || username || 'W').slice(0, 2).toUpperCase()}
                       </span>
                     )}
                   </div>

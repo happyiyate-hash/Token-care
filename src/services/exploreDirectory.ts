@@ -48,7 +48,7 @@ export function normalizeWorkerToken(item: any): SubmittedToken {
   const netInfo = getNetworkInfo(chainKey);
 
   const address = item.contractAddress || item.address || item.tokenAddress || '0x0000000000000000000000000000000000000000';
-  const symbol = String(item.symbol || item.tokenSymbol || 'TOK').toUpperCase();
+  const symbol = (item.symbol || 'TOK').toUpperCase();
   const name = item.name || item.tokenName || symbol;
   const logoUrl = item.logoUrl || item.logo || netInfo.logoUrl;
 

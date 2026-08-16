@@ -3,43 +3,100 @@
 :root {
   --sat: env(safe-area-inset-top, 0px);
   --sab: env(safe-area-inset-bottom, 0px);
+  --native-safe-top: 0px;
+  --native-safe-bottom: 0px;
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--native-safe-top));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--native-safe-bottom));
+  --system-top-bg: #06080E;
+  --system-bottom-bg: #090C12;
+  --status-bar-bg: #06080E;
 }
 
-/* Hide scrollbars globally across all browsers while retaining full scroll functionality */
 *, html, body {
-  scrollbar-width: none !important; /* Firefox */
-  -ms-overflow-style: none !important; /* IE and Edge */
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
 }
 
 *::-webkit-scrollbar,
 html::-webkit-scrollbar,
 body::-webkit-scrollbar {
-  display: none !important; /* Chrome, Safari, Opera */
+  display: none !important;
   width: 0 !important;
   height: 0 !important;
 }
 
 html {
-  background-color: #030710;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  background-color: #0C0E12;
   color-scheme: dark;
   transition: background-color 0.2s ease;
 }
 
 body {
-  background-color: #030710;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  background-color: #0C0E12;
   color: #f4f4f5;
   overscroll-behavior-y: none;
   -webkit-tap-highlight-color: transparent;
   transition: background-color 0.2s ease;
 }
 
-/* Safe area padding helper utilities for PWA navigation blending */
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+}
+
 .pt-safe-nav {
-  padding-top: calc(0.5rem + env(safe-area-inset-top, 0px));
+  padding-top: 0.625rem !important;
 }
 
 .pb-safe-nav {
-  padding-bottom: calc(0.625rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: 0.625rem !important;
+}
+
+#root > .h-screen > nav {
+  padding-top: 0.25rem !important;
+}
+
+#root > .h-screen > nav > div > button {
+  line-height: 1.05;
+}
+
+#root > .h-screen > nav > div > button > span,
+#root > .h-screen > nav > div > div > span {
+  font-size: 9px;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+#root > .h-screen > nav > div > button:nth-child(2) > span {
+  font-size: 0 !important;
+}
+
+#root > .h-screen > nav > div > button:nth-child(2) > span::after {
+  content: 'Explore';
+  font-size: 9px;
+  line-height: 1.05;
+}
+
+#root .text-\[9px\].text-zinc-400.font-mono.flex.items-center.gap-0\.5 > span:last-child {
+  display: none !important;
+}
+
+#root .text-\[9\.5px\].text-zinc-400.font-normal {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 185px;
+  line-height: 1.1;
 }
 
 @keyframes subtleBellTilt {
@@ -56,3 +113,132 @@ body {
   animation: subtleBellTilt 1.2s ease-in-out 3;
 }
 
+/* --------------------------------------------------------------------------
+ * TokenCare mobile shell
+ * --------------------------------------------------------------------------
+ * Android runs edge-to-edge. The WebView therefore occupies the complete
+ * physical window and the native status/navigation areas are transparent.
+ * Header/nav backgrounds extend underneath those areas; only their CONTENT
+ * receives safe-area padding. There are no fake system-bar strips.
+ */
+#root > .h-screen {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  position: relative;
+  isolation: isolate;
+  background: var(--system-top-bg) !important;
+}
+
+#root > .h-screen > header {
+  flex: 0 0 auto !important;
+  min-height: 0 !important;
+  box-sizing: border-box !important;
+  width: 100%;
+  margin-top: 0 !important;
+  padding-top: max(0.625rem, var(--safe-top)) !important;
+  background: #090C12 !important;
+}
+
+#root > .h-screen > main {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  height: auto !important;
+  max-height: 100% !important;
+  width: 100% !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+#root > .h-screen > main:first-child {
+  padding-top: var(--safe-top) !important;
+}
+
+#root > .h-screen > main > * {
+  min-height: 0 !important;
+  max-height: 100% !important;
+  box-sizing: border-box !important;
+}
+
+#root > .h-screen > nav {
+  flex: 0 0 auto !important;
+  min-height: 0 !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  position: relative !important;
+  inset: auto !important;
+  max-height: none !important;
+  margin-bottom: 0 !important;
+  padding-bottom: max(0.625rem, var(--safe-bottom)) !important;
+  background: #090C12 !important;
+}
+
+html.native-status-bar #root {
+  height: 100% !important;
+  min-height: 0 !important;
+  box-sizing: border-box;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+html.native-status-bar #root > .h-screen {
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  box-sizing: border-box !important;
+}
+
+html.native-status-bar #root > .h-screen > header.pt-safe-nav {
+  padding-top: max(0.625rem, var(--safe-top)) !important;
+}
+
+html.native-status-bar #root > .h-screen > nav.pb-safe-nav {
+  padding-bottom: max(0.625rem, var(--safe-bottom)) !important;
+}
+
+html.native-status-bar #root > .h-screen > main,
+html.native-status-bar #root > .h-screen > header,
+html.native-status-bar #root > .h-screen > nav {
+  max-width: 100% !important;
+}
+
+@supports (height: 100dvh) {
+  #root > .h-screen {
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+  }
+
+  html.native-status-bar #root > .h-screen {
+    height: 100% !important;
+    max-height: 100% !important;
+  }
+}
+
+/* Standalone views without the global header still begin below Android's
+ * status icons, but the app never paints a separate status-bar rectangle. */
+#root > .h-screen > main:first-child {
+  padding-top: var(--safe-top) !important;
+}
+
+/* Withdrawal and other fixed standalone views use the same edge-to-edge rule.
+ * Their own header background, when present, paints under the transparent bar. */
+#root .fixed.inset-0.z-\[100\] {
+  background: #06080E !important;
+  padding-top: 0 !important;
+}
+
+#root .fixed.inset-0.z-\[100\] > header {
+  padding-top: max(0.625rem, var(--safe-top)) !important;
+}
+
+/* --------------------------------------------------------------------------
+ * Important: do not reintroduce external system-bar gaps here.
+ * Android supplies the system icons/gesture handle; the app paints underneath.
+ * -------------------------------------------------------------------------- */

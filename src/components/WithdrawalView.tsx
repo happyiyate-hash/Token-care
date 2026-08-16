@@ -23,6 +23,7 @@ import { REWARD_RATE_USD } from '../constants/chains';
 import { TickerNumber } from './TickerNumber';
 import { formatSmartNumber, safeLocaleString, safeFractionDigits } from '../utils/numberFormatting';
 import { useTranslation } from '../utils/i18n';
+import { useCurrency } from '../context/CurrencyContext';
 
 interface WithdrawalViewProps {
   currentUser: any;
@@ -40,35 +41,33 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
   onBack,
 }) => {
   const { t } = useTranslation();
-  // Exchange Rate Constants: 1 Token = $0.00015 USD
-  // Minimum withdrawal: $1.00 USD (6,666.67 Tokens)
+  const { currency, activeCurrency, formatCurrency } = useCurrency();
+
+  // Base accounting remains USD internally. Display and user input follow the
+  // currency selected in Settings.
   const MIN_WITHDRAWAL_USD = 1.0;
-  const MIN_WITHDRAWAL_TOKENS = MIN_WITHDRAWAL_USD / REWARD_RATE_USD; // 6,666.67 tokens
+  const MIN_WITHDRAWAL_TOKENS = MIN_WITHDRAWAL_USD / REWARD_RATE_USD;
+  const currencyRate = activeCurrency.rate;
 
   const userId = currentUser?.id || 'demo-user';
 
-  // Available user balance (tokens from database or wallet)
   const rawTokens = userProfile?.unclaimed_reward_balance ?? wallet.unclaimedTokens ?? 0;
   const displayBalanceTokens = Math.max(0, rawTokens);
 
-  // Input states
   const [tokenAmount, setTokenAmount] = useState<string>('');
-  const [usdAmount, setUsdAmount] = useState<string>('');
-  const [inputMode, setInputMode] = useState<'TOKEN' | 'USD'>('TOKEN'); // toggle mode
+  const [fiatAmount, setFiatAmount] = useState<string>('');
+  const [inputMode, setInputMode] = useState<'TOKEN' | 'FIAT'>('TOKEN');
 
-  // Saved EVM address from DB
   const [savedAddress, setSavedAddress] = useState<string>('');
   const [isLoadingAddress, setIsLoadingAddress] = useState<boolean>(true);
   const [isEditingAddress, setIsEditingAddress] = useState<boolean>(false);
   const [newAddressInput, setNewAddressInput] = useState<string>('');
   const [isSavingAddress, setIsSavingAddress] = useState<boolean>(false);
 
-  // Status & Notifications
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
 
-  // Fetch saved payout address from Supabase DB on mount
   useEffect(() => {
     let isMounted = true;
     async function loadAddress() {
@@ -78,11 +77,8 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
           if (isMounted) setSavedAddress(userProfile.wallet_address.trim());
         } else if (userId) {
           const fetched = await getUserWithdrawalAddress(userId);
-          if (isMounted && fetched) {
-            setSavedAddress(fetched);
-          } else if (isMounted) {
-            setSavedAddress('');
-          }
+          if (isMounted && fetched) setSavedAddress(fetched);
+          else if (isMounted) setSavedAddress('');
         }
       } catch (err) {
         console.warn('Error fetching saved address from DB:', err);
@@ -97,7 +93,6 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
     };
   }, [userId, userProfile]);
 
-  // Handle saving new payout address
   const handleSavePayoutAddress = async () => {
     if (!newAddressInput || !/^0x[a-fA-F0-9]{40}$/.test(newAddressInput.trim())) {
       setSubmitError('Please enter a valid EVM address (starts with 0x followed by 40 hexadecimal characters).');
@@ -124,45 +119,43 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
     }
   };
 
-  // Handle Token input changes
   const handleTokenChange = (val: string) => {
     setSubmitError(null);
     setSubmitSuccess(null);
     setTokenAmount(val);
     const num = parseFloat(val);
     if (!isNaN(num) && num >= 0) {
-      setUsdAmount((num * REWARD_RATE_USD).toFixed(4));
+      // Token -> USD base value -> selected fiat currency.
+      setFiatAmount((num * REWARD_RATE_USD * currencyRate).toFixed(activeCurrency.defaultDecimals === 0 ? 0 : 4));
     } else {
-      setUsdAmount('');
+      setFiatAmount('');
     }
   };
 
-  // Handle USD input changes
-  const handleUsdChange = (val: string) => {
+  const handleFiatChange = (val: string) => {
     setSubmitError(null);
     setSubmitSuccess(null);
-    setUsdAmount(val);
+    setFiatAmount(val);
     const num = parseFloat(val);
     if (!isNaN(num) && num >= 0) {
-      setTokenAmount((num / REWARD_RATE_USD).toFixed(2));
+      // Selected fiat currency -> USD base value -> TokenCare tokens.
+      const usdValue = num / currencyRate;
+      setTokenAmount((usdValue / REWARD_RATE_USD).toFixed(2));
     } else {
       setTokenAmount('');
     }
   };
 
-  // Toggle input mode (Swap button)
   const handleSwapMode = () => {
-    setInputMode((prev) => (prev === 'TOKEN' ? 'USD' : 'TOKEN'));
+    setInputMode((prev) => (prev === 'TOKEN' ? 'FIAT' : 'TOKEN'));
   };
 
-  // MAX button handler
   const handleSetMax = () => {
     setSubmitError(null);
     setSubmitSuccess(null);
     handleTokenChange(displayBalanceTokens.toString());
   };
 
-  // Execute actual withdrawal submission
   const executeWithdrawal = async () => {
     setSubmitError(null);
     setSubmitSuccess(null);
@@ -190,9 +183,7 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
 
     if (amountUsdNum < MIN_WITHDRAWAL_USD) {
       setSubmitError(
-        `Minimum amount is not enough. Minimum withdrawal is $${MIN_WITHDRAWAL_USD.toFixed(
-          2
-        )} USD (${Math.ceil(MIN_WITHDRAWAL_TOKENS).toLocaleString()} TCARE).`
+        `Minimum amount is not enough. Minimum withdrawal is ${formatCurrency(MIN_WITHDRAWAL_USD, { minDecimals: activeCurrency.defaultDecimals === 0 ? 0 : 2 })} (${Math.ceil(MIN_WITHDRAWAL_TOKENS).toLocaleString()} TCARE).`
       );
       return;
     }
@@ -208,12 +199,11 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
 
       if (res.success && res.request) {
         setSubmitSuccess(
-          `Withdrawal request for ${safeLocaleString(amountTokensNum, safeFractionDigits(0, 2))} TCARE ($${amountUsdNum.toFixed(2)} USD) successfully submitted!`
+          `Withdrawal request for ${safeLocaleString(amountTokensNum, safeFractionDigits(0, 2))} TCARE (${formatCurrency(amountUsdNum, { minDecimals: activeCurrency.defaultDecimals === 0 ? 0 : 2 })}) successfully submitted!`
         );
         setTokenAmount('');
-        setUsdAmount('');
+        setFiatAmount('');
 
-        // Update local wallet balance state
         const remainingTokens = Math.max(0, displayBalanceTokens - amountTokensNum);
         onUpdateWallet({
           ...wallet,
@@ -231,10 +221,7 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
   };
 
   return (
-    /* FIXED FULL SCREEN OVERLAY: Own Layout, completely non-scrolling viewport */
     <div className="fixed inset-0 z-[100] w-full h-full bg-[#06080E] text-white flex flex-col overflow-hidden select-none animate-in fade-in duration-300">
-      
-      {/* 1. FIXED TOP NAVIGATION HEADER FOR WITHDRAWAL/SEND PAGE */}
       <header className="shrink-0 z-40 bg-[#090C12] backdrop-blur-xl border-b border-emerald-500/30 rounded-b-2xl p-2.5 pt-safe-nav shadow-[0_4px_25px_rgba(0,0,0,0.7)] max-w-md mx-auto w-full transition-all flex items-center justify-between">
         <button
           type="button"
@@ -249,7 +236,6 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
           <h1 className="text-sm font-black tracking-tight text-white uppercase">{t('wallet.withdraw')}</h1>
         </div>
 
-        {/* USDT Logo & Badge at top right */}
         <div className="flex items-center space-x-1.5 bg-[#0D2118] border border-[#22C55E]/40 px-2.5 py-1 rounded-full shadow-md">
           <img
             src="https://assets.coingecko.com/coins/images/325/large/Tether.png"
@@ -259,16 +245,11 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
               e.currentTarget.style.display = 'none';
             }}
           />
-          <span className="text-[11px] font-black text-[#4ADE80] font-mono tracking-wider">
-            USDT
-          </span>
+          <span className="text-[11px] font-black text-[#4ADE80] font-mono tracking-wider">USDT</span>
         </div>
       </header>
 
-      {/* 2. SCROLLABLE MIDDLE CONTENT AREA */}
       <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-4 max-w-md mx-auto w-full pb-10">
-
-        {/* 2. SAVED PAYOUT ADDRESS CARD (Auto-fetched from database with inline Add/Edit) */}
         <div className="bg-[#0D111A] border border-[#22C55E]/30 rounded-2xl p-3.5 space-y-2.5 text-xs shadow-md">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -276,9 +257,7 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
                 <Wallet className="w-4.5 h-4.5" />
               </div>
               <div>
-                <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
-                  {t('settings.savedAddress')}
-                </div>
+                <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">{t('settings.savedAddress')}</div>
                 <div className="text-xs font-mono font-bold text-[#4ADE80] flex items-center space-x-1.5 mt-0.5">
                   {isLoadingAddress ? (
                     <span className="text-zinc-500 animate-pulse">{t('common.loading')}</span>
@@ -303,12 +282,9 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
             </div>
           </div>
 
-          {/* Inline Edit/Add Input Drawer */}
           {isEditingAddress ? (
             <div className="pt-2 border-t border-zinc-800/80 space-y-2 animate-in fade-in duration-200">
-              <label className="text-[10px] text-zinc-400 font-bold uppercase block">
-                {t('wallet.enterAddressPlaceholder')}
-              </label>
+              <label className="text-[10px] text-zinc-400 font-bold uppercase block">{t('wallet.enterAddressPlaceholder')}</label>
               <div className="flex items-center space-x-2">
                 <input
                   type="text"
@@ -323,21 +299,11 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
                   disabled={isSavingAddress}
                   className="px-3 py-2 bg-[#22C55E] hover:bg-[#16A34A] text-black font-extrabold text-xs rounded-xl flex items-center space-x-1 transition-all cursor-pointer disabled:opacity-50 shrink-0"
                 >
-                  {isSavingAddress ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <>
-                      <Save className="w-3.5 h-3.5" />
-                      <span>{t('common.save')}</span>
-                    </>
-                  )}
+                  {isSavingAddress ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <><Save className="w-3.5 h-3.5" /><span>{t('common.save')}</span></>}
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setIsEditingAddress(false);
-                    setNewAddressInput('');
-                  }}
+                  onClick={() => { setIsEditingAddress(false); setNewAddressInput(''); }}
                   className="px-2.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
                 >
                   {t('common.cancel')}
@@ -346,15 +312,10 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
             </div>
           ) : !savedAddress && !isLoadingAddress ? (
             <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between">
-              <p className="text-[11px] text-amber-300/90 leading-tight">
-                {t('wallet.enterAddressPlaceholder')}
-              </p>
+              <p className="text-[11px] text-amber-300/90 leading-tight">{t('wallet.enterAddressPlaceholder')}</p>
               <button
                 type="button"
-                onClick={() => {
-                  setNewAddressInput('');
-                  setIsEditingAddress(true);
-                }}
+                onClick={() => { setNewAddressInput(''); setIsEditingAddress(true); }}
                 className="px-3 py-1.5 bg-[#22C55E]/20 hover:bg-[#22C55E]/30 border border-[#22C55E]/50 text-[#4ADE80] font-bold text-xs rounded-xl flex items-center space-x-1 transition-all cursor-pointer shrink-0 ml-2"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -366,10 +327,7 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
               <span>{t('wallet.recipientAddress')}</span>
               <button
                 type="button"
-                onClick={() => {
-                  setNewAddressInput(savedAddress);
-                  setIsEditingAddress(true);
-                }}
+                onClick={() => { setNewAddressInput(savedAddress); setIsEditingAddress(true); }}
                 className="text-[#4ADE80] hover:underline font-bold cursor-pointer"
               >
                 {t('wallet.editAddress')}
@@ -378,7 +336,6 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
           ) : null}
         </div>
 
-        {/* System Error / Success Alerts */}
         {submitSuccess && (
           <div className="bg-[#22C55E]/15 border border-[#22C55E]/40 rounded-2xl p-3 text-[#4ADE80] text-xs font-semibold flex items-start space-x-2 animate-in fade-in duration-200">
             <CheckCircle2 className="w-4 h-4 text-[#22C55E] shrink-0 mt-0.5" />
@@ -393,13 +350,11 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
           </div>
         )}
 
-        {/* 3. CONVERSION CARDS WITH SWAP ICON OVERLAY */}
         <div className="relative space-y-2.5 pt-1">
-          {/* TOP CARD: AMOUNT INPUT */}
           <div className="bg-[#121522] border border-[#22C55E]/30 focus-within:border-[#22C55E]/60 rounded-2xl p-4 flex items-center justify-between shadow-xl transition-all">
             <div className="flex items-center space-x-2">
               <span className="text-xs font-black tracking-wider text-white uppercase">
-                {inputMode === 'TOKEN' ? t('wallet.amount') : `${t('wallet.amount')} (USD)`}
+                {inputMode === 'TOKEN' ? t('wallet.amount') : `${t('wallet.amount')} (${currency})`}
               </span>
               <button
                 type="button"
@@ -424,8 +379,8 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
                 <input
                   type="number"
                   step="any"
-                  value={usdAmount}
-                  onChange={(e) => handleUsdChange(e.target.value)}
+                  value={fiatAmount}
+                  onChange={(e) => handleFiatChange(e.target.value)}
                   placeholder="0.00"
                   className="w-full bg-transparent text-right text-lg sm:text-xl font-black font-mono text-white placeholder-zinc-600 focus:outline-none"
                 />
@@ -433,50 +388,45 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
             </div>
           </div>
 
-          {/* OVERLAPPING SWAP BUTTON OVERLAY */}
           <div className="absolute right-6 top-[48px] z-20">
             <button
               type="button"
               onClick={handleSwapMode}
-              title="Click to swap between TokenCare and USD"
+              title={`Click to swap between TokenCare and ${currency}`}
               className="w-9 h-9 rounded-full bg-[#1C2234] hover:bg-[#273049] border border-[#22C55E]/50 text-[#4ADE80] flex items-center justify-center shadow-xl transition-transform active:scale-90 cursor-pointer"
             >
               <ArrowUpDown className="w-4 h-4 text-[#4ADE80]" />
             </button>
           </div>
 
-          {/* BOTTOM CARD: EQUIVALENT VALUE */}
           <div className="bg-[#121522] border border-[#22C55E]/30 rounded-2xl p-4 flex items-center justify-between shadow-xl">
             <span className="text-xs font-bold text-zinc-400">
-              {inputMode === 'TOKEN' ? t('wallet.amount') + ' (USD)' : t('wallet.amount') + ' (TC)'}
+              {inputMode === 'TOKEN' ? `${t('wallet.amount')} (${currency})` : `${t('wallet.amount')} (TC)`}
             </span>
             <div className="text-right text-base sm:text-lg font-mono font-black text-white">
               {inputMode === 'TOKEN'
-                ? `${usdAmount || '0.00'}`
+                ? formatCurrency(parseFloat(tokenAmount || '0') * REWARD_RATE_USD)
                 : `${tokenAmount || '0.00'} TC`}
             </div>
           </div>
         </div>
 
-        {/* 4. RATE BANNER */}
         <div className="bg-[#0D111A] border border-[#22C55E]/30 rounded-xl p-2 flex items-center justify-between text-[10px] text-zinc-400 font-mono">
           <div className="flex items-center space-x-1.5">
             <Coins className="w-3 h-3 text-[#4ADE80] shrink-0" />
-            <span>1 TC = $0.00015</span>
+            <span>1 TC = {formatCurrency(REWARD_RATE_USD, { minDecimals: activeCurrency.defaultDecimals === 0 ? 0 : 2 })}</span>
           </div>
           <div className="text-[#4ADE80] font-bold">
-            {t('wallet.minWithdrawal')}: ${MIN_WITHDRAWAL_USD.toFixed(2)}
+            {t('wallet.minWithdrawal')}: {formatCurrency(MIN_WITHDRAWAL_USD, { minDecimals: activeCurrency.defaultDecimals === 0 ? 0 : 2 })}
           </div>
         </div>
 
-        {/* 5. VERIFICATION / SECURITY BADGE IN MAIN BACKGROUND */}
         <div className="pt-1 text-center flex items-center justify-center space-x-1 text-[10px] text-zinc-500 font-mono">
           <ShieldCheck className="w-3.5 h-3.5 text-[#22C55E] inline shrink-0" />
           <span>Secured by TokenCare DB Payout System</span>
         </div>
       </div>
 
-      {/* FIXED BOTTOM ACTION BUTTON */}
       <div className="shrink-0 w-full max-w-md mx-auto p-3 bg-[#090C12] border-t border-zinc-800/80 rounded-t-2xl">
         <button
           type="button"
@@ -497,7 +447,6 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
           )}
         </button>
       </div>
-
     </div>
   );
 };

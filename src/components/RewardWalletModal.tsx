@@ -78,7 +78,7 @@ export const RewardWalletModal: React.FC<RewardWalletModalProps> = ({ isOpen, on
       saveRewardWallet(updated, userId);
       onUpdateWallet(updated);
       setIsClaiming(false);
-      setClaimSuccessMsg(`Successfully claimed ${claimedAmountTokens} REWARD Tokens ($${claimedAmountUsd.toFixed(3)} USD) to ${String(claimAddress || '').slice(0, 6)}...${String(claimAddress || '').slice(-4)}!`);
+      setClaimSuccessMsg(`Successfully claimed ${claimedAmountTokens} REWARD Tokens ($${claimedAmountUsd.toFixed(3)} USD) to ${claimAddress.slice(0, 6)}...${claimAddress.slice(-4)}!`);
     }, 1200);
   };
 

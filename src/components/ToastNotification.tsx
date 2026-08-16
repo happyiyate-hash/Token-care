@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, AlertCircle, Database } from 'lucide-react';
 import { triggerHaptic } from '../utils/capacitor';
-import { safePatchFetch } from '../utils/fetchBridge';
+import { safeOverrideFetch } from '../utils/safeFetchOverride';
 
 export interface ToastProps {
   message: string | null;
@@ -50,59 +50,55 @@ const installBackgroundFetchBridge = (): (() => void) => {
   if (typeof window === 'undefined' || typeof window.fetch !== 'function') return () => {};
   const win = window as typeof window & {
     __tokencareBackgroundFetchBridgeInstalled?: boolean;
-    __tokencareOriginalFetch?: typeof window.fetch;
   };
   if (win.__tokencareBackgroundFetchBridgeInstalled) return () => {};
-
-  const originalFetch = window.fetch.bind(window);
-  win.__tokencareOriginalFetch = originalFetch;
   win.__tokencareBackgroundFetchBridgeInstalled = true;
 
-  const customFetch: typeof window.fetch = async (...args) => {
-    const response = await originalFetch(...args);
-    try {
-      const requestInput = args[0];
-      const url = typeof requestInput === 'string'
-        ? requestInput
-        : requestInput instanceof Request
-          ? requestInput.url
-          : String((requestInput as any)?.url || '');
+  const restore = safeOverrideFetch((originalFetch) => {
+    return async (...args) => {
+      const response = await originalFetch(...args);
+      try {
+        const requestInput = args[0];
+        const url = typeof requestInput === 'string'
+          ? requestInput
+          : requestInput instanceof Request
+            ? requestInput.url
+            : String((requestInput as any)?.url || '');
 
-      if (url.includes('api.dexscreener.com/latest/dex/tokens/') && response.ok) {
-        response.clone().json().then((data: any) => {
-          const pairs = Array.isArray(data?.pairs) ? data.pairs : [];
-          if (!pairs.length) return;
-          const bestPair = [...pairs].sort(
-            (a: any, b: any) => (b?.liquidity?.usd || 0) - (a?.liquidity?.usd || 0)
-          )[0];
-          const token = bestPair?.baseToken;
-          if (!token?.name && !token?.symbol) return;
+        if (url.includes('api.dexscreener.com/latest/dex/tokens/') && response.ok) {
+          response.clone().json().then((data: any) => {
+            const pairs = Array.isArray(data?.pairs) ? data.pairs : [];
+            if (!pairs.length) return;
+            const bestPair = [...pairs].sort(
+              (a: any, b: any) => (b?.liquidity?.usd || 0) - (a?.liquidity?.usd || 0)
+            )[0];
+            const token = bestPair?.baseToken;
+            if (!token?.name && !token?.symbol) return;
 
-          // IMPORTANT: this is only an early metadata signal. The toast layer
-          // deliberately waits for the complete verification/render cycle before
-          // presenting anything to the user.
-          window.dispatchEvent(new CustomEvent<BackgroundTokenEvent>('tokencare:token-fetch-success', {
-            detail: {
-              name: token?.name || '',
-              symbol: token?.symbol || '',
-              chain: bestPair?.chainId || '',
-            },
-          }));
-        }).catch(() => {});
+            // IMPORTANT: this is only an early metadata signal. The toast layer
+            // deliberately waits for the complete verification/render cycle before
+            // presenting anything to the user.
+            window.dispatchEvent(new CustomEvent<BackgroundTokenEvent>('tokencare:token-fetch-success', {
+              detail: {
+                name: token?.name || '',
+                symbol: token?.symbol || '',
+                chain: bestPair?.chainId || '',
+              },
+            }));
+          }).catch(() => {});
+        }
+
+        // Haptics are deliberately NOT triggered by verification/fetch requests.
+        // A success haptic belongs to the explicit save operation only.
+      } catch {
+        // Notification instrumentation must never interfere with networking.
       }
-
-      // Haptics are deliberately NOT triggered by verification/fetch requests.
-      // A success haptic belongs to the explicit save operation only.
-    } catch {
-      // Notification instrumentation must never interfere with networking.
-    }
-    return response;
-  };
-
-  safePatchFetch(customFetch);
+      return response;
+    };
+  });
 
   return () => {
-    if (win.__tokencareOriginalFetch) safePatchFetch(win.__tokencareOriginalFetch);
+    if (restore) restore();
     delete win.__tokencareBackgroundFetchBridgeInstalled;
   };
 };

@@ -192,7 +192,7 @@ export const ChainSelectorModal: React.FC<ChainSelectorModalProps> = ({
                             className="w-full h-full rounded-md flex items-center justify-center font-mono text-[9px] font-bold text-white"
                             style={{ backgroundColor: def.themeColor }}
                           >
-                            {String(def.symbol || 'EVM').slice(0, 3)}
+                            {def.symbol.slice(0, 3)}
                           </div>
                         )}
                       </div>

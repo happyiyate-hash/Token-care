@@ -1,4 +1,4 @@
-import { safePatchFetch } from '../utils/fetchBridge';
+import { safeOverrideFetch } from '../utils/safeFetchOverride';
 
 const DB_NAME = 'tokencare_data_cache_v1';
 const STORE_NAME = 'responses';
@@ -45,7 +45,7 @@ function isSupabaseGraphQLRead(url: string, method: string, body: string): boole
 }
 
 function makeKey(url: string, method: string, body: string): string {
-  return `${String(method || 'GET').toUpperCase()}:${url}:${body}`;
+  return `${method.toUpperCase()}:${url}:${body}`;
 }
 
 async function readCached(key: string): Promise<CachedResponse | null> {
@@ -104,75 +104,73 @@ export function installSupabaseDataCache(ttlMs = DEFAULT_TTL_MS): void {
   if (win[marker]) return;
   win[marker] = true;
 
-  const originalFetch = window.fetch.bind(window);
+  safeOverrideFetch((originalFetch) => {
+    return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = input instanceof Request ? input : null;
+      const url = request ? request.url : String(input);
+      const method = (init?.method || request?.method || 'GET').toUpperCase();
 
-  const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const request = input instanceof Request ? input : null;
-    const url = request ? request.url : String(input);
-    const method = (init?.method || request?.method || 'GET').toUpperCase();
-
-    let body = '';
-    if (init?.body && typeof init.body === 'string') body = init.body;
-    else if (request && method === 'POST') {
-      try { body = await request.clone().text(); } catch { body = ''; }
-    }
-
-    const cacheable = isSupabaseDataRead(url, method) || isSupabaseGraphQLRead(url, method, body);
-    const mutatesTokenData = /\/rest\/v1\/(tokens|user_tokens)(?:[/?]|$)/i.test(url) && !/^(GET|HEAD)$/i.test(method);
-
-    if (mutatesTokenData) {
-      await clearSupabaseDataCache();
-      return originalFetch(input, init);
-    }
-
-    if (!cacheable) return originalFetch(input, init);
-
-    const key = makeKey(url, method, body);
-    const cached = await readCached(key);
-    const isFresh = !!cached && Date.now() - cached.savedAt <= ttlMs;
-
-    const refresh = async (): Promise<Response> => {
-      const response = await originalFetch(input, init);
-      if (response.ok) {
-        const responseClone = response.clone();
-        const responseBody = await responseClone.text();
-        await writeCached({
-          key,
-          status: response.status,
-          statusText: response.statusText,
-          headers: Array.from(response.headers.entries()),
-          body: responseBody,
-          savedAt: Date.now(),
-        });
+      let body = '';
+      if (init?.body && typeof init.body === 'string') body = init.body;
+      else if (request && method === 'POST') {
+        try { body = await request.clone().text(); } catch { body = ''; }
       }
-      return response;
-    };
 
-    // Fast path: return persistent local data immediately and refresh silently.
-    if (isFresh && cached) {
-      void refresh().catch(() => {});
-      return new Response(cached.body, {
-        status: cached.status,
-        statusText: cached.statusText,
-        headers: cached.headers,
-      });
-    }
+      const cacheable = isSupabaseDataRead(url, method) || isSupabaseGraphQLRead(url, method, body);
+      const mutatesTokenData = /\/rest\/v1\/(tokens|user_tokens)(?:[/?]|$)/i.test(url) && !/^(GET|HEAD)$/i.test(method);
 
-    try {
-      return await refresh();
-    } catch (networkError) {
-      if (cached) {
+      if (mutatesTokenData) {
+        await clearSupabaseDataCache();
+        return originalFetch(input, init);
+      }
+
+      if (!cacheable) return originalFetch(input, init);
+
+      const key = makeKey(url, method, body);
+      const cached = await readCached(key);
+      const isFresh = !!cached && Date.now() - cached.savedAt <= ttlMs;
+
+      const refresh = async (): Promise<Response> => {
+        const response = await originalFetch(input, init);
+        if (response.ok) {
+          const responseClone = response.clone();
+          const responseBody = await responseClone.text();
+          await writeCached({
+            key,
+            status: response.status,
+            statusText: response.statusText,
+            headers: Array.from(response.headers.entries()),
+            body: responseBody,
+            savedAt: Date.now(),
+          });
+        }
+        return response;
+      };
+
+      // Fast path: return persistent local data immediately and refresh silently.
+      if (isFresh && cached) {
+        void refresh().catch(() => {});
         return new Response(cached.body, {
           status: cached.status,
           statusText: cached.statusText,
           headers: cached.headers,
         });
       }
-      throw networkError;
-    }
-  };
 
-  safePatchFetch(customFetch);
+      try {
+        return await refresh();
+      } catch (networkError) {
+        if (cached) {
+          return new Response(cached.body, {
+            status: cached.status,
+            statusText: cached.statusText,
+            headers: cached.headers,
+          });
+        }
+        throw networkError;
+      }
+    };
+  });
 
   window.addEventListener('tokencare:clear-data-cache', () => {
     clearSupabaseDataCache().catch(() => {});

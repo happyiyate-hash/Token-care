@@ -87,28 +87,20 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   // Merge cached directory with prop tokens
   const allTokens = useMemo(() => {
     const map = new Map<string, SubmittedToken>();
-    cachedDirectory.forEach((t) => {
-      if (t?.address) map.set(t.address.toLowerCase().trim(), t);
-    });
-    propTokens.forEach((t) => {
-      if (t?.address) map.set(t.address.toLowerCase().trim(), t);
-    });
+    cachedDirectory.forEach((t) => map.set(t.address.toLowerCase().trim(), t));
+    propTokens.forEach((t) => map.set(t.address.toLowerCase().trim(), t));
     return Array.from(map.values());
   }, [cachedDirectory, propTokens]);
 
   // Instant local search & local chain filtering
   const filteredTokens = useMemo(() => {
     let result = allTokens.filter((t) => {
-      const q = (searchTerm || '').toLowerCase().trim();
-      const name = (t?.metadata?.name || '').toLowerCase();
-      const symbol = (t?.metadata?.symbol || '').toLowerCase();
-      const addr = (t?.address || '').toLowerCase();
-      const chainName = (t?.metadata?.blockchainName || (t?.metadata as any)?.chainName || '').toLowerCase();
-
-      const nameMatch = name.includes(q);
-      const symbolMatch = symbol.includes(q);
-      const addrMatch = addr.includes(q);
-      const chainMatch = chainName.includes(q);
+      const q = searchTerm.toLowerCase().trim();
+      const nameMatch = t.metadata.name.toLowerCase().includes(q);
+      const symbolMatch = t.metadata.symbol.toLowerCase().includes(q);
+      const addrMatch = t.address.toLowerCase().includes(q);
+      const chainName = t.metadata.blockchainName || (t.metadata as any).chainName || '';
+      const chainMatch = chainName.toLowerCase().includes(q);
 
       if (q && !(nameMatch || symbolMatch || addrMatch || chainMatch)) {
         return false;
@@ -116,11 +108,11 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
 
       // Local Chain Filter
       if (selectedChainFilter !== 'ALL') {
-        const chainInfo = resolveChainLogo(chainName, t?.chainId || t?.metadata?.chainId);
+        const chainInfo = resolveChainLogo(chainName, t.chainId || t.metadata.chainId);
         const reqChain = resolveChainLogo(selectedChainFilter, selectedChainFilter);
         const matchesId = chainInfo.id === reqChain.id;
-        const matchesName = chainName.includes(selectedChainFilter.toLowerCase());
-        const matchesShort = (chainInfo.shortName || '').toLowerCase().includes(selectedChainFilter.toLowerCase());
+        const matchesName = chainName.toLowerCase().includes(selectedChainFilter.toLowerCase());
+        const matchesShort = chainInfo.shortName.toLowerCase().includes(selectedChainFilter.toLowerCase());
         if (!matchesId && !matchesName && !matchesShort) {
           return false;
         }
@@ -413,8 +405,8 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                         );
                         return (
                           info.id === chainInfo?.id ||
-                          String(info.shortName || '').toLowerCase() === String(net.id || '').toLowerCase() ||
-                          String(t.metadata.blockchainName || '').toLowerCase().includes(String(net.id || '').toLowerCase())
+                          info.shortName.toLowerCase() === net.id.toLowerCase() ||
+                          (t.metadata.blockchainName || '').toLowerCase().includes(net.id.toLowerCase())
                         );
                       }).length;
 

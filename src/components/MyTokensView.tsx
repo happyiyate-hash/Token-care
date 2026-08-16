@@ -183,13 +183,10 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
 
   // Filter list by searchQuery
   const filteredTokens = displayList.filter(
-    (t) => {
-      const q = (searchQuery || '').toLowerCase();
-      const name = (t?.name || '').toLowerCase();
-      const symbol = (t?.symbol || '').toLowerCase();
-      const chain = (t?.chain || '').toLowerCase();
-      return name.includes(q) || symbol.includes(q) || chain.includes(q);
-    }
+    (t) =>
+      t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      t.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      t.chain.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const totalTokenCount = displayList.length;
