@@ -288,7 +288,7 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
               <div className="flex items-center space-x-2">
                 <input
                   type="text"
-                  value={newAddressInput}
+                  value={newAddressInput ?? ''}
                   onChange={(e) => setNewAddressInput(e.target.value)}
                   placeholder="0x..."
                   className="flex-1 bg-[#06080E] border border-zinc-700 focus:border-[#22C55E] text-white font-mono text-xs rounded-xl px-3 py-2 focus:outline-none placeholder:text-zinc-600"
@@ -370,7 +370,7 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
                 <input
                   type="number"
                   step="any"
-                  value={tokenAmount}
+                  value={tokenAmount ?? ''}
                   onChange={(e) => handleTokenChange(e.target.value)}
                   placeholder="0.00"
                   className="w-full bg-transparent text-right text-lg sm:text-xl font-black font-mono text-white placeholder-zinc-600 focus:outline-none"
@@ -379,7 +379,7 @@ export const WithdrawalView: React.FC<WithdrawalViewProps> = ({
                 <input
                   type="number"
                   step="any"
-                  value={fiatAmount}
+                  value={fiatAmount ?? ''}
                   onChange={(e) => handleFiatChange(e.target.value)}
                   placeholder="0.00"
                   className="w-full bg-transparent text-right text-lg sm:text-xl font-black font-mono text-white placeholder-zinc-600 focus:outline-none"

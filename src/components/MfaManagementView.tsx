@@ -668,7 +668,7 @@ export const MfaManagementView: React.FC<MfaManagementViewProps> = ({
                     autoComplete="one-time-code"
                     autoFocus
                     maxLength={6}
-                    value={otpCode}
+                    value={otpCode ?? ''}
                     onChange={(e) =>
                       setOtpCode(e.target.value.replace(/\D/g, ''))
                     }
@@ -768,7 +768,7 @@ export const MfaManagementView: React.FC<MfaManagementViewProps> = ({
                   type={showDisablePassword ? 'text' : 'password'}
                   required
                   autoFocus
-                  value={disablePasswordInput}
+                  value={disablePasswordInput ?? ''}
                   onChange={(e) => setDisablePasswordInput(e.target.value)}
                   placeholder="Enter your account password"
                   className="w-full bg-white/[0.03] border border-white/10 text-white text-xs font-mono rounded-xl px-3.5 py-3 pr-10 focus:outline-none focus:border-rose-500"

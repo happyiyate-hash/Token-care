@@ -135,7 +135,7 @@ export const ChainSelectorModal: React.FC<ChainSelectorModalProps> = ({
             <input
               type="text"
               placeholder="Search EVM network by name, symbol or ID..."
-              value={searchTerm}
+              value={searchTerm ?? ''}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full bg-zinc-900/90 border border-zinc-800 text-white font-mono text-xs rounded-xl pl-10 pr-9 py-2 focus:outline-none focus:border-emerald-500 transition-colors"
             />

@@ -266,7 +266,7 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
           <input
             type="url"
             placeholder="Paste logo URL (https://...)"
-            value={urlInput}
+            value={urlInput ?? ''}
             onChange={(e) => setUrlInput(e.target.value)}
             className="flex-1 bg-zinc-900 border border-zinc-800 text-white text-[9px] rounded px-1.5 py-0.5 focus:outline-none focus:border-emerald-500"
           />

@@ -261,7 +261,7 @@ export const ContactSupportView: React.FC<ContactSupportViewProps> = ({
                 <input
                   type="text"
                   required
-                  value={reportSubject}
+                  value={reportSubject ?? ''}
                   onChange={(e) => setReportSubject(e.target.value)}
                   placeholder={t('support.subjectPlaceholder', 'e.g. Verification status not updating on Polygon')}
                   className="w-full bg-[#06080E] border border-zinc-800 text-white placeholder-zinc-500 text-xs rounded-xl p-2.5 focus:outline-none focus:border-[#00E575] transition-colors"
@@ -274,7 +274,7 @@ export const ContactSupportView: React.FC<ContactSupportViewProps> = ({
                 <textarea
                   required
                   rows={3}
-                  value={reportDescription}
+                  value={reportDescription ?? ''}
                   onChange={(e) => setReportDescription(e.target.value)}
                   placeholder={t('support.descPlaceholder', 'Tell us what happened, steps to reproduce, or relevant contract details...')}
                   className="w-full bg-[#06080E] border border-zinc-800 text-white placeholder-zinc-500 text-xs rounded-xl p-2.5 focus:outline-none focus:border-[#00E575] transition-colors resize-none leading-relaxed"
@@ -289,7 +289,7 @@ export const ContactSupportView: React.FC<ContactSupportViewProps> = ({
                 </label>
                 <input
                   type="text"
-                  value={reportContract}
+                  value={reportContract ?? ''}
                   onChange={(e) => setReportContract(e.target.value)}
                   placeholder="0x..."
                   className="w-full bg-[#06080E] border border-zinc-800 text-white placeholder-zinc-500 font-mono text-xs rounded-xl p-2.5 focus:outline-none focus:border-[#00E575] transition-colors"

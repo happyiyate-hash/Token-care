@@ -219,7 +219,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       setUsage(usageData || []);
       setLogs(getDeveloperApiLogs());
       if (proj) {
-        setEditProjectName(proj.project_name);
+        setEditProjectName(proj.project_name || '');
       }
     } catch (err: any) {
       console.warn('[DeveloperView] load error:', err);
@@ -1195,7 +1195,7 @@ print("TokenCare Response:", data)`;
                         <label className="block text-zinc-400 font-semibold mb-1 text-[10px]">Contract / Token Address</label>
                         <input
                           type="text"
-                          value={testContractAddress}
+                          value={testContractAddress ?? ''}
                           onChange={(e) => setTestContractAddress(e.target.value)}
                           className="w-full p-2 rounded-lg bg-zinc-950 border border-zinc-800 text-white font-mono text-xs focus:border-emerald-500 outline-none"
                           placeholder="0x..."
@@ -1358,7 +1358,7 @@ print("TokenCare Response:", data)`;
                     <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Project Name</label>
                     <input
                       type="text"
-                      value={editProjectName}
+                      value={editProjectName ?? ''}
                       onChange={(e) => setEditProjectName(e.target.value)}
                       className="w-full p-2 sm:p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-emerald-500 outline-none"
                     />
@@ -1448,7 +1448,7 @@ print("TokenCare Response:", data)`;
                 <label className="block text-[11px] font-semibold text-zinc-300 mb-1">Project Name</label>
                 <input
                   type="text"
-                  value={projectNameInput}
+                  value={projectNameInput ?? ''}
                   onChange={(e) => setProjectNameInput(e.target.value)}
                   placeholder="e.g. My Token Analytics Bot"
                   className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-emerald-500 outline-none"

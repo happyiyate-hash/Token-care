@@ -1154,7 +1154,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="text-[10.5px] font-bold text-zinc-300">Display Name</label>
                 <input
                   type="text"
-                  value={displayName}
+                  value={displayName ?? ''}
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="Wisdom"
                   className="w-full bg-[#06080E] border border-zinc-800 text-white text-xs rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-emerald-500 transition-colors"
@@ -1166,7 +1166,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="text-[10.5px] font-bold text-zinc-300">Username</label>
                 <input
                   type="text"
-                  value={username}
+                  value={username ?? ''}
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="username"
                   className="w-full bg-[#06080E] border border-zinc-800 text-white font-mono text-xs rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-emerald-500 transition-colors"
@@ -1178,7 +1178,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="text-[10.5px] font-bold text-zinc-300">Email Address</label>
                 <input
                   type="email"
-                  value={email}
+                  value={email ?? ''}
                   disabled
                   className="w-full bg-zinc-950 border border-zinc-800/60 text-zinc-400 font-mono text-xs rounded-xl px-2.5 py-1.5 cursor-not-allowed opacity-80"
                 />
@@ -1261,7 +1261,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </label>
                 <input
                   type="text"
-                  value={addressInput}
+                  value={addressInput ?? ''}
                   onChange={(e) => setAddressInput(e.target.value)}
                   placeholder="0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
                   className="w-full bg-[#06080E] border border-zinc-800 text-white font-mono text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-[#22C55E] transition-colors"
@@ -1503,7 +1503,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     maxLength={6}
-                    value={mfaCodeInput}
+                    value={mfaCodeInput ?? ''}
                     onChange={(e) => setMfaCodeInput(e.target.value.replace(/\D/g, ''))}
                     placeholder="000000"
                     className="w-full bg-[#06080E] border border-zinc-800 text-white font-mono text-center text-lg tracking-[0.3em] font-black rounded-2xl py-2.5 focus:outline-none focus:border-[#00E575] focus:ring-1 focus:ring-[#00E575]/50 transition-all"
@@ -1620,7 +1620,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       inputMode="numeric"
                       autoComplete="one-time-code"
                       maxLength={6}
-                      value={mfaCodeInput}
+                      value={mfaCodeInput ?? ''}
                       onChange={(e) => setMfaCodeInput(e.target.value.replace(/\D/g, ''))}
                       placeholder="000000"
                       className="w-full bg-zinc-950 border border-zinc-800 text-white font-mono text-center text-sm tracking-[0.2em] font-bold rounded-xl py-2 focus:outline-none focus:border-rose-500 transition-colors"

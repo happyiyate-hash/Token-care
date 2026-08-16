@@ -330,7 +330,7 @@ export const TokenInformationCard: React.FC<TokenInformationCardProps> = ({
                   <input
                     type="url"
                     placeholder="Paste logo URL..."
-                    value={customUrlInput}
+                    value={customUrlInput ?? ''}
                     onChange={(e) => setCustomUrlInput(e.target.value)}
                     className="flex-1 bg-zinc-900 border border-zinc-800 text-white text-[9px] rounded px-1.5 py-0.5 focus:outline-none focus:border-emerald-500"
                   />
