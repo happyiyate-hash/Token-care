@@ -58,18 +58,14 @@ export function getLocalDeveloperProject(): DeveloperProject | null {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_PROJECT_KEY);
     return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 export function saveLocalDeveloperProject(project: DeveloperProject | null): void {
   try {
     if (project) localStorage.setItem(LOCAL_STORAGE_PROJECT_KEY, JSON.stringify(project));
     else localStorage.removeItem(LOCAL_STORAGE_PROJECT_KEY);
-  } catch (e) {
-    console.warn('[DeveloperAPI] local cache error:', e);
-  }
+  } catch (e) { console.warn('[DeveloperAPI] local cache error:', e); }
 }
 
 export async function getDeveloperProject(): Promise<DeveloperProject | null> {
@@ -82,9 +78,7 @@ export async function getDeveloperProject(): Promise<DeveloperProject | null> {
 
 export async function createDeveloperProject(projectName: string): Promise<DeveloperProject> {
   const name = projectName.trim() || 'My TokenCare App';
-  const { data, error } = await getSupabase().rpc('create_my_developer_project', {
-    p_project_name: name,
-  });
+  const { data, error } = await getSupabase().rpc('create_my_developer_project', { p_project_name: name });
   if (error) throw new Error(error.message || 'Unable to create developer project.');
   const project = unwrapRpc<DeveloperProject>(data);
   if (!project) throw new Error('Developer project was not returned by Supabase.');
@@ -101,12 +95,9 @@ export async function regenerateDeveloperApiKey(): Promise<string> {
   return project.api_key;
 }
 
-export async function updateDeveloperProject(
-  updates: Partial<Pick<DeveloperProject, 'project_name' | 'plan_code'>>
-): Promise<DeveloperProject> {
+export async function updateDeveloperProject(updates: Partial<Pick<DeveloperProject, 'project_name' | 'plan_code'>>): Promise<DeveloperProject> {
   const current = await getDeveloperProject();
   if (!current) throw new Error('No active developer project found.');
-
   const { data, error } = await getSupabase().rpc('update_my_developer_project', {
     p_project_name: updates.project_name ?? current.project_name,
     p_plan_code: updates.plan_code ?? current.plan_code,
@@ -126,9 +117,7 @@ export async function deleteDeveloperProject(): Promise<boolean> {
 }
 
 export async function setDeveloperProjectActive(active: boolean): Promise<DeveloperProject> {
-  const { data, error } = await getSupabase().rpc('set_my_developer_project_active', {
-    p_active: active,
-  });
+  const { data, error } = await getSupabase().rpc('set_my_developer_project_active', { p_active: active });
   if (error) throw new Error(error.message || 'Unable to change project status.');
   const project = unwrapRpc<DeveloperProject>(data);
   if (!project) throw new Error('Project status update returned no project.');
@@ -145,64 +134,44 @@ export async function getDeveloperUsage(days = 30): Promise<DeveloperUsage[]> {
 export async function getDeveloperApiLogs(limit = 100): Promise<DeveloperApiLog[]> {
   const { data, error } = await getSupabase().rpc('get_my_developer_logs', { p_limit: limit });
   if (error) throw new Error(error.message || 'Unable to load developer request logs.');
-  return Array.isArray(data)
-    ? data.map((row: any) => ({
-        id: String(row.id),
-        timestamp: row.timestamp,
-        method: row.method || 'POST',
-        endpoint: row.endpoint,
-        status: Number(row.status ?? 0),
-        latency_ms: Number(row.latency_ms ?? 0),
-        error_code: row.error_code ?? null,
-      }))
-    : [];
+  return Array.isArray(data) ? data.map((row: any) => ({
+    id: String(row.id), timestamp: row.timestamp, method: row.method || 'POST', endpoint: row.endpoint,
+    action: row.action || undefined, status: Number(row.status ?? 0), latency_ms: Number(row.latency_ms ?? 0), error_code: row.error_code ?? null,
+  })) : [];
 }
 
-/** Developer logs are server-owned records; clearing them locally must not hide database history. */
-export function clearDeveloperApiLogs(): void {
-  // Intentionally no-op. Supabase owns request telemetry and there is no delete RPC.
-}
-
-export async function listDeveloperApiKeys(): Promise<DeveloperApiKey[]> {
-  const project = await getDeveloperProject();
-  if (!project) return [];
-  const rawKey = String(project.api_key || '');
-  return [{
-    id: project.id,
-    name: `${project.project_name} Primary Key`,
-    key: project.api_key,
-    masked_key: rawKey ? `${rawKey.slice(0, 10)}••••••••${rawKey.slice(-4)}` : undefined,
-    created_at: project.created_at,
-    is_active: project.is_active !== false,
-    status: project.is_active === false ? 'suspended' : 'active',
-    rate_limit: project.daily_limit,
-  }];
-}
-
-export async function createDeveloperApiKey(name: string): Promise<{ key: string; apiKey: DeveloperApiKey }> {
-  const project = await createDeveloperProject(name);
-  const rawKey = String(project.api_key || '');
+/** Optimistic UI entry; the authoritative request log is written by Vercel/Supabase. */
+export function recordDeveloperApiCall(options: {
+  endpoint: string; method?: string; action?: string; status: number; latency_ms: number; error_code?: string | null;
+}): DeveloperApiLog {
   return {
-    key: project.api_key,
-    apiKey: {
-      id: project.id,
-      name: project.project_name,
-      key: project.api_key,
-      masked_key: `${rawKey.slice(0, 10)}••••••••${rawKey.slice(-4)}`,
-      created_at: project.created_at,
-      is_active: project.is_active !== false,
-      rate_limit: project.daily_limit,
-    },
+    id: `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    timestamp: new Date().toISOString(), method: options.method || 'POST', endpoint: options.endpoint,
+    action: options.action || 'api_call', status: options.status, latency_ms: options.latency_ms, error_code: options.error_code ?? null,
   };
 }
 
-export async function revokeDeveloperApiKey(_id: string): Promise<boolean> {
-  await regenerateDeveloperApiKey();
-  return true;
+export function clearDeveloperApiLogs(): void {
+  // Supabase owns request telemetry; the client cannot delete server history.
 }
 
-export function getDeveloperApiBaseUrl(): string {
-  return 'https://token-care-mwv9.vercel.app';
+export async function listDeveloperApiKeys(): Promise<DeveloperApiKey[]> {
+  const project = await getDeveloperProject(); if (!project) return [];
+  const rawKey = String(project.api_key || '');
+  return [{ id: project.id, name: `${project.project_name} Primary Key`, key: project.api_key,
+    masked_key: rawKey ? `${rawKey.slice(0, 10)}••••••••${rawKey.slice(-4)}` : undefined,
+    created_at: project.created_at, is_active: project.is_active !== false,
+    status: project.is_active === false ? 'suspended' : 'active', rate_limit: project.daily_limit }];
 }
 
+export async function createDeveloperApiKey(name: string): Promise<{ key: string; apiKey: DeveloperApiKey }> {
+  const project = await createDeveloperProject(name); const rawKey = String(project.api_key || '');
+  return { key: project.api_key, apiKey: { id: project.id, name: project.project_name, key: project.api_key,
+    masked_key: `${rawKey.slice(0, 10)}••••••••${rawKey.slice(-4)}`, created_at: project.created_at,
+    is_active: project.is_active !== false, rate_limit: project.daily_limit } };
+}
+
+export async function revokeDeveloperApiKey(_id: string): Promise<boolean> { await regenerateDeveloperApiKey(); return true; }
+
+export function getDeveloperApiBaseUrl(): string { return 'https://token-care-mwv9.vercel.app'; }
 export const WORKER_BASE_URL = 'https://token-care-mwv9.vercel.app';
