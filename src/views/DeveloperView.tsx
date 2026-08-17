@@ -420,6 +420,10 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   // Handle Key Copy
   const handleCopyKey = async () => {
     if (!project?.api_key) return;
+    if (!showKey) {
+      handleToggleRevealKey();
+      return;
+    }
     try {
       await navigator.clipboard.writeText(project.api_key);
       setCopiedKey(true);
