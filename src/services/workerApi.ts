@@ -1,117 +1,155 @@
 /**
- * Fetches full token details by contract address and chain
- * Payload action: "getTokenDetails"
+ * TokenCare backend client.
+ * All token data requests go through the dedicated Vercel backend.
  */
+
+export const TOKENCARE_BACKEND_URL = 'https://token-care-mwv9.vercel.app';
+
+async function postBackend(path: string, payload: Record<string, any>): Promise<any> {
+  const response = await fetch(`${TOKENCARE_BACKEND_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  let data: any;
+  try {
+    data = await response.json();
+  } catch {
+    data = await response.text();
+  }
+
+  if (!response.ok) {
+    return {
+      success: false,
+      error: data?.message || data?.error || `Backend request failed (${response.status})`,
+      raw: data,
+    };
+  }
+
+  return data?.data || data;
+}
+
+/** Fetch full token metadata/market data by contract address and chain. */
 export async function getTokenDetailsFromWorker(
   chain: string,
   contractAddress: string
 ): Promise<{ success: boolean; token?: any; raw?: any; error?: string }> {
   const payload = {
-    action: 'getTokenDetails',
     chain: (chain || 'ethereum').toLowerCase(),
     contractAddress: (contractAddress || '').trim().toLowerCase(),
   };
 
-  return executeWorkerGenericAction(payload);
+  try {
+    const result = await postBackend('/api/token/details', payload);
+    return {
+      success: result?.success !== false,
+      token: result?.token || result,
+      raw: result,
+    };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Token details backend request failed.' };
+  }
 }
 
-/**
- * Fetches live price for a single token
- * Payload action: "getTokenPrice"
- */
+/** Fetch live token price through the Vercel backend. */
 export async function getTokenPriceFromWorker(
   chain: string,
   contractAddress: string
 ): Promise<{ success: boolean; chain?: string; contractAddress?: string; priceUsd?: number; change24h?: number; updatedAt?: string; raw?: any; error?: string }> {
   const payload = {
-    action: 'getTokenPrice',
     chain: (chain || 'ethereum').toLowerCase(),
     contractAddress: (contractAddress || '').trim().toLowerCase(),
   };
 
-  return executeWorkerGenericAction(payload);
+  try {
+    const result = await postBackend('/api/token/price', payload);
+    return {
+      success: result?.success !== false,
+      chain: result?.chain,
+      contractAddress: result?.contractAddress,
+      priceUsd: result?.priceUsd,
+      change24h: result?.priceChange24h,
+      updatedAt: result?.timestamp ? new Date(result.timestamp * 1000).toISOString() : undefined,
+      raw: result,
+      error: result?.error,
+    };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Token price backend request failed.' };
+  }
 }
 
-/**
- * Batch fetches prices for an array of tokens across blockchains
- * Payload action: "getTokenPrices"
- */
+/** Batch token prices through the Vercel backend. */
 export async function getTokenPricesBatchFromWorker(
   tokens: Array<{ chain: string; contractAddress: string }>
 ): Promise<{ success: boolean; prices?: any[]; raw?: any; error?: string }> {
-  const payload = {
-    action: 'getTokenPrices',
-    tokens: (tokens || []).map((t) => ({
-      chain: (t.chain || 'ethereum').toLowerCase(),
-      contractAddress: (t.contractAddress || '').trim().toLowerCase(),
-    })),
-  };
+  try {
+    const result = await postBackend('/api/tokens/prices', {
+      tokens: (tokens || []).map((t) => ({
+        chain: (t.chain || 'ethereum').toLowerCase(),
+        contractAddress: (t.contractAddress || '').trim().toLowerCase(),
+      })),
+    });
 
-  return executeWorkerGenericAction(payload);
+    return {
+      success: result?.success !== false,
+      prices: result?.results || result?.prices || [],
+      raw: result,
+      error: result?.error,
+    };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Batch price backend request failed.' };
+  }
 }
 
 /**
- * Inspects token for security, verification and smart contract metadata
- * Payload action: "inspectToken"
+ * Token inspection currently uses the Vercel token-details endpoint.
+ * The backend's configured provider router supplies metadata and market data
+ * from DexScreener, CoinGecko, GeckoTerminal and EVM RPC.
  */
 export async function inspectTokenFromWorker(
   chain: string,
   contractAddress: string
 ): Promise<{ success: boolean; chain?: string; contractAddress?: string; inspection?: any; raw?: any; error?: string }> {
-  const payload = {
-    action: 'inspectToken',
-    chain: (chain || 'ethereum').toLowerCase(),
-    contractAddress: (contractAddress || '').trim().toLowerCase(),
-  };
+  try {
+    const result = await postBackend('/api/token/details', {
+      chain: (chain || 'ethereum').toLowerCase(),
+      contractAddress: (contractAddress || '').trim().toLowerCase(),
+    });
 
-  return executeWorkerGenericAction(payload);
+    return {
+      success: result?.success !== false,
+      chain: result?.chain,
+      contractAddress: result?.contractAddress,
+      inspection: result,
+      raw: result,
+      error: result?.error,
+    };
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Token inspection backend request failed.' };
+  }
 }
 
 /**
- * Universal execution proxy helper for Cloudflare Worker actions.
- * Tries server proxy first (/api/worker-proxy), then direct worker fetch.
+ * Compatibility helper retained for existing callers.
+ * The old Cloudflare Worker action proxy has been removed; callers now use
+ * explicit Vercel backend endpoints.
  */
-export async function executeWorkerGenericAction(
-  payload: Record<string, any>
-): Promise<any> {
-  // 1. Try server-side proxy route
-  try {
-    const proxyResponse = await fetch('/api/worker-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (proxyResponse.ok) {
-      const data = await proxyResponse.json();
-      return data.result || data;
-    }
-  } catch (proxyError) {
-    console.warn('[Worker API Proxy] Server route failed, trying direct fetch...', proxyError);
-  }
-
-  // 2. Direct fetch fallback
-  try {
-    const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    let result: any = null;
-    try {
-      result = await response.json();
-    } catch {
-      result = await response.text();
-    }
-
-    return result;
-  } catch (error: any) {
-    console.error('[Worker API Direct] Execution error:', error);
-    return {
-      success: false,
-      error: error.message || 'Worker connection failed',
-    };
+export async function executeWorkerGenericAction(payload: Record<string, any>): Promise<any> {
+  switch (payload?.action) {
+    case 'getTokenDetails':
+      return getTokenDetailsFromWorker(payload.chain, payload.contractAddress);
+    case 'getTokenPrice':
+      return getTokenPriceFromWorker(payload.chain, payload.contractAddress);
+    case 'getTokenPrices':
+      return getTokenPricesBatchFromWorker(payload.tokens || []);
+    case 'inspectToken':
+      return inspectTokenFromWorker(payload.chain, payload.contractAddress);
+    default:
+      return {
+        success: false,
+        error: `Unsupported backend action: ${String(payload?.action || 'unknown')}`,
+      };
   }
 }
 
@@ -130,223 +168,63 @@ export interface WorkerTokenLookupResult {
   error?: string;
 }
 
-/**
- * Queries Cloudflare Worker to check if a token contract address exists globally
- * Payload action: "getTokenByAddress"
- */
+/** Resolve a token by address through the Vercel token-details endpoint. */
 export async function getTokenByAddressFromWorker(
   blockchain: string,
   contractAddress: string
 ): Promise<WorkerTokenLookupResult> {
-  if (!contractAddress || !contractAddress.trim()) {
-    return { exists: false };
-  }
+  if (!contractAddress || !contractAddress.trim()) return { exists: false };
 
-  const normalizedAddress = contractAddress.trim().toLowerCase();
-  const normalizedChain = (blockchain || 'polygon').trim().toLowerCase();
-
-  const payload = {
-    action: 'getTokenByAddress',
-    blockchain: normalizedChain,
-    contractAddress: normalizedAddress,
-  };
-
-  // 1. Try server-side proxy route first
   try {
-    const proxyResponse = await fetch('/api/get-token-by-address', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+    const result = await postBackend('/api/token/details', {
+      chain: (blockchain || 'polygon').trim().toLowerCase(),
+      contractAddress: contractAddress.trim().toLowerCase(),
     });
 
-    if (proxyResponse.ok) {
-      const data = await proxyResponse.json();
-      const res = data.result || data;
-      const exists = !!(
-        res?.exists === true ||
-        res?.token ||
-        (res?.success === true && res?.data) ||
-        res?.found === true
-      );
-      return {
-        exists,
-        token: res?.token || res?.data || null,
-        raw: res,
-      };
-    }
-  } catch (proxyError) {
-    console.warn('[Worker API Lookup Proxy] Failed, trying direct fetch...', proxyError);
-  }
-
-  // 2. Direct client-side fetch fallback
-  try {
-    const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    let result: any = null;
-    try {
-      result = await response.json();
-    } catch {
-      result = await response.text();
-    }
-
+    const token = result?.token || result;
     const exists = !!(
-      result?.exists === true ||
-      result?.token ||
-      (result?.success === true && result?.data) ||
-      result?.found === true
+      result?.success !== false &&
+      (token?.contractAddress || token?.address || result?.found !== false)
     );
 
     return {
       exists,
-      token: result?.token || result?.data || null,
+      token: token || null,
       raw: result,
+      error: result?.error,
     };
   } catch (error: any) {
-    console.error('[Worker API Lookup Direct] Error fetching token by address:', error);
-    return {
-      exists: false,
-      error: error.message || 'Worker connection failed',
-    };
+    return { exists: false, error: error?.message || 'Token lookup backend request failed.' };
   }
 }
 
 /**
- * Fetches global token directory from Cloudflare Worker
- * Payload action: "getAllTokens"
+ * The Vercel backend currently exposes token lookup/price/batch/chart APIs,
+ * not a global token-directory endpoint. Keep this function explicit so the
+ * Developer Console cannot silently call the removed Cloudflare Worker.
  */
 export async function getAllTokensFromWorker(
-  page: number = 1,
-  limit: number = 100
+  _page: number = 1,
+  _limit: number = 100
 ): Promise<{ success: boolean; tokens?: any[]; raw?: any; error?: string }> {
-  const payload = {
-    action: 'getAllTokens',
-    page,
-    limit,
+  return {
+    success: false,
+    tokens: [],
+    error: 'The Vercel backend does not currently expose a global get-all-tokens endpoint.',
   };
-
-  // 1. Try server proxy first
-  try {
-    const proxyResponse = await fetch('/api/get-all-tokens', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (proxyResponse.ok) {
-      const data = await proxyResponse.json();
-      const res = data.result || data;
-      const tokens = res?.tokens || res?.data || (Array.isArray(res) ? res : []);
-      return {
-        success: true,
-        tokens,
-        raw: res,
-      };
-    }
-  } catch (proxyError) {
-    console.warn('[Worker API Directory Proxy] Failed, trying direct fetch...', proxyError);
-  }
-
-  // 2. Direct fetch fallback
-  try {
-    const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    let result: any = null;
-    try {
-      result = await response.json();
-    } catch {
-      result = await response.text();
-    }
-
-    const tokens = result?.tokens || result?.data || (Array.isArray(result) ? result : []);
-
-    return {
-      success: response.ok,
-      tokens,
-      raw: result,
-    };
-  } catch (error: any) {
-    console.error('[Worker API Directory Direct] Error fetching all tokens:', error);
-    return {
-      success: false,
-      error: error.message || 'Worker directory connection failed',
-    };
-  }
 }
 
 /**
- * Uploads token metadata array to Cloudflare Worker endpoint
- * Primary path: Uses backend Express proxy route (/api/upload-tokens) to avoid browser CORS restrictions
- * Fallback path: Direct fetch to Worker endpoint
+ * Token uploads are intentionally disabled here because the dedicated Vercel
+ * backend currently exposes read/price/chart APIs only; no Cloudflare fallback
+ * is used anymore.
  */
 export async function uploadTokensToWorker(
-  tokens: WorkerTokenPayload[],
-  blockchain: string = 'polygon'
+  _tokens: WorkerTokenPayload[],
+  _blockchain: string = 'polygon'
 ): Promise<{ success: boolean; result?: any; error?: string }> {
-  if (!tokens || tokens.length === 0) {
-    return { success: false, error: 'No tokens provided for upload.' };
-  }
-
-  const payload = {
-    action: 'uploadTokens',
-    blockchain: blockchain.toLowerCase(),
-    tokens: tokens.map((t) => ({
-      name: t.name || 'Unknown Token',
-      symbol: t.symbol || 'TOK',
-      contractAddress: t.contractAddress || '0x0000000000000000000000000000000000000000',
-      logoUrl: t.logoUrl || '',
-      verified: t.verified ?? true,
-    })),
+  return {
+    success: false,
+    error: 'Token upload is not exposed by the current Vercel backend.',
   };
-
-  // 1. Try server-side proxy route first (bypasses browser CORS)
-  try {
-    const proxyResponse = await fetch('/api/upload-tokens', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (proxyResponse.ok) {
-      const data = await proxyResponse.json();
-      console.log('[Worker API via Proxy] Success:', data);
-      return { success: true, result: data.result };
-    }
-  } catch (proxyError) {
-    console.warn('[Worker API Proxy] Proxy request failed, attempting direct fetch...', proxyError);
-  }
-
-  // 2. Direct client-side fetch fallback
-  try {
-    const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    let result: any = null;
-    try {
-      result = await response.json();
-    } catch {
-      result = await response.text();
-    }
-
-    console.log('[Worker API Direct] Response:', result);
-    return { success: response.ok, result };
-  } catch (error: any) {
-    console.error('[Worker API Direct] Failed to upload tokens:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to connect to Cloudflare Worker endpoint.',
-    };
-  }
 }
