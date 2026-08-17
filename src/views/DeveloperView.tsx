@@ -294,26 +294,36 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     const cached = getCachedDeveloperView(userId);
     const hadCachedProject = !!cached?.project;
 
-    if (cached) {
+    if (cached?.project) {
+      // Only hydrate the full Developer dashboard from a cache that actually
+      // contains a real project. An empty/partial cache must never render a fake project.
       setProject(cached.project);
       setQuota(cached.quota);
       setPlans(Array.isArray(cached.plans) && cached.plans.length ? cached.plans : DEFAULT_DEVELOPER_PLANS);
       setSubscriptions(Array.isArray(cached.subscriptions) ? cached.subscriptions : []);
       setUsage(Array.isArray(cached.usage) ? cached.usage : []);
       setLogs(Array.isArray(cached.logs) ? cached.logs : []);
-      if (cached.project) {
-        setEditProjectName(cached.project.project_name || '');
-        setShowCreateModal(false);
-      } else setShowCreateModal(true);
+      setEditProjectName(cached.project.project_name || '');
+      setShowCreateModal(false);
       setLoading(false);
     } else if (!background) {
+      // There is no cached Developer project. Do not display the Developer
+      // dashboard while waiting for Supabase to tell us whether one exists.
+      setProject(null);
+      setShowCreateModal(false);
       setLoading(true);
     }
 
     setError('');
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      if (!cached) {
-        setProject(null); setQuota(null); setUsage([]); setLogs([]); setSubscriptions([]); setShowCreateModal(true);
+      if (!cached?.project) {
+        // No local Developer project exists, so there is nothing legitimate to
+        // show offline. Return to the main app instead of showing a fake dashboard.
+        setProject(null);
+        setShowCreateModal(false);
+        setLoading(false);
+        onBack?.();
+        return;
       }
       setLoading(false);
       return;
@@ -322,13 +332,21 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     try {
       const proj = await getDeveloperProject();
       if (!proj) {
-        if (hadCachedProject) {
+        const wasPreviouslyCached = hadCachedProject;
+        if (wasPreviouslyCached) {
           clearCachedDeveloperView(userId);
-          setProject(null); setQuota(null); setUsage([]); setLogs([]); setSubscriptions([]); setShowCreateModal(true);
           showToast('Project deleted. Create a new developer project.', 'info');
-        } else {
-          setProject(null); setQuota(null); setUsage([]); setLogs([]); setSubscriptions([]); setShowCreateModal(true);
         }
+        // No project exists in Supabase. Never remain on/render the Developer
+        // dashboard. Return to the main page so the app can offer project creation
+        // from its normal entry flow.
+        setProject(null);
+        setQuota(null);
+        setUsage([]);
+        setLogs([]);
+        setSubscriptions([]);
+        setShowCreateModal(false);
+        onBack?.();
         return;
       }
 
