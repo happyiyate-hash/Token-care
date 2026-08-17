@@ -57,6 +57,10 @@ import {
   getDeveloperApiLogs,
   recordDeveloperApiCall,
   clearDeveloperApiLogs,
+  verifyProjectPassword,
+  updateProjectPassword,
+  getApiKeyRotationCooldown,
+  recordApiKeyRotated,
   DeveloperProject,
   DeveloperPlan,
   DeveloperSubscription,
@@ -197,6 +201,10 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
 
   // Creation State
   const [projectNameInput, setProjectNameInput] = useState('');
+  const [projectPasswordInput, setProjectPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [createPasswordError, setCreatePasswordError] = useState<string | null>(null);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
@@ -206,6 +214,33 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [regeneratingKey, setRegeneratingKey] = useState(false);
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+  const [showCooldownModal, setShowCooldownModal] = useState(false);
+
+  // Security Operations: Password-Protected Reveal Key
+  const [showRevealKeyModal, setShowRevealKeyModal] = useState(false);
+  const [revealPasswordInput, setRevealPasswordInput] = useState('');
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [verifyingReveal, setVerifyingReveal] = useState(false);
+
+  // Security Operations: Password-Protected Pause Project
+  const [showPauseModal, setShowPauseModal] = useState(false);
+  const [pausePasswordInput, setPausePasswordInput] = useState('');
+  const [pauseError, setPauseError] = useState<string | null>(null);
+  const [pausingProject, setPausingProject] = useState(false);
+
+  // Security Operations: Password-Protected Activate & Auto-Rotate
+  const [showActivateModal, setShowActivateModal] = useState(false);
+  const [activatePasswordInput, setActivatePasswordInput] = useState('');
+  const [activateError, setActivateError] = useState<string | null>(null);
+  const [activatingProject, setActivatingProject] = useState(false);
+
+  // Security Operations: Change Project Password Modal
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmNewPasswordInput, setConfirmNewPasswordInput] = useState('');
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
+  const [changingPassword, setChangingPassword] = useState(false);
 
   // Endpoint Tester State
   const [selectedEndpointId, setSelectedEndpointId] = useState<string>('get-all-tokens');
@@ -332,16 +367,43 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   const remainingCalls = quota?.usage?.remaining ?? Math.max(0, dailyLimit - callsToday);
   const usagePercentage = Math.min(100, Math.round((callsToday / Math.max(1, dailyLimit)) * 100));
 
-  // Handle Project Creation (creates project in Supabase with API key & initial free plan)
+  // 24-Hour Rotation Cooldown calculation
+  const cooldownInfo = useMemo(() => {
+    if (!project) return null;
+    return getApiKeyRotationCooldown(project);
+  }, [project, regeneratingKey]);
+
+  // Handle Project Creation with Password
   const handleCreateProject = async () => {
     const name = projectNameInput.trim() || 'My TokenCare App';
-    setCreatingProject(true);
+    setCreatePasswordError(null);
     setError('');
+
+    if (!projectPasswordInput) {
+      setCreatePasswordError('Project password is required.');
+      return;
+    }
+    if (projectPasswordInput.length < 12) {
+      setCreatePasswordError('Password must be at least 12 characters long.');
+      return;
+    }
+    if (!/[A-Za-z]/.test(projectPasswordInput) || !/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(projectPasswordInput)) {
+      setCreatePasswordError('Password must include mixed character types (letters and numbers/symbols).');
+      return;
+    }
+    if (projectPasswordInput !== confirmPasswordInput) {
+      setCreatePasswordError('Passwords do not match.');
+      return;
+    }
+
+    setCreatingProject(true);
     try {
-      await createDeveloperProject(name);
+      await createDeveloperProject(name, projectPasswordInput);
       setProjectNameInput('');
+      setProjectPasswordInput('');
+      setConfirmPasswordInput('');
       setShowCreateModal(false);
-      showToast('Developer project created successfully!', 'success');
+      showToast('Developer project created successfully with security password!', 'success');
       await loadData();
     } catch (err: any) {
       console.error('[DeveloperView] create project error:', err);
@@ -382,24 +444,80 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     }
   };
 
+  // Trigger Rotate Key Modal with 24-Hour Cooldown Verification
+  const handleOpenRotateKeyModal = () => {
+    if (!project) return;
+    const cooldown = getApiKeyRotationCooldown(project);
+    if (cooldown.isLocked) {
+      setShowCooldownModal(true);
+      return;
+    }
+    setShowRegenerateConfirm(true);
+  };
+
   // Handle Key Regeneration via rotate_my_developer_api_key RPC
   const handleRegenerateKey = async () => {
+    if (!project) return;
     setRegeneratingKey(true);
     setError('');
     try {
-      const newKey = await regenerateDeveloperApiKey();
-      if (project) {
-        setProject({ ...project, api_key: newKey });
+      const updatedProject = await regenerateDeveloperApiKey();
+      recordApiKeyRotated(project.id);
+      if (updatedProject) {
+        setProject(updatedProject);
+      } else {
+        const fresh = await getDeveloperProject();
+        if (fresh) setProject(fresh);
       }
       setShowRegenerateConfirm(false);
-      showToast('API Key rotated successfully!', 'success');
+      showToast('API Key rotated successfully! The old key has been invalidated.', 'success');
       await loadData();
     } catch (err: any) {
+      console.error('[DeveloperView] rotate key error:', err);
       const msg = err?.message || 'Failed to rotate API key in Supabase.';
       setError(msg);
       showToast(msg, 'error');
     } finally {
       setRegeneratingKey(false);
+    }
+  };
+
+  // Password-Protected Reveal API Key Handler
+  const handleToggleRevealKey = () => {
+    if (showKey) {
+      setShowKey(false);
+    } else {
+      setRevealPasswordInput('');
+      setRevealError(null);
+      setShowRevealKeyModal(true);
+    }
+  };
+
+  const handleVerifyAndRevealKey = async () => {
+    if (!project) return;
+    setRevealError(null);
+    if (!revealPasswordInput.trim()) {
+      setRevealError('Project password is required.');
+      return;
+    }
+
+    setVerifyingReveal(true);
+    try {
+      const isValid = await verifyProjectPassword(revealPasswordInput, project);
+      if (!isValid) {
+        setRevealError('PROJECT_PASSWORD_INVALID: Incorrect project password.');
+        setVerifyingReveal(false);
+        return;
+      }
+
+      setShowKey(true);
+      setShowRevealKeyModal(false);
+      setRevealPasswordInput('');
+      showToast('API Key revealed.', 'info');
+    } catch (err: any) {
+      setRevealError(err?.message || 'Verification failed.');
+    } finally {
+      setVerifyingReveal(false);
     }
   };
 
@@ -426,27 +544,158 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     }
   };
 
-  // Handle Toggle Active via set_my_developer_project_active RPC & reload from Supabase
-  const handleToggleProjectActive = async () => {
+  // Route Status Toggle to Password Modal
+  const handleToggleProjectActive = () => {
     if (!project) return;
-    setTogglingActive(true);
-    setError('');
+    if (project.is_active !== false) {
+      // Currently active -> open Pause Project Modal
+      setPausePasswordInput('');
+      setPauseError(null);
+      setShowPauseModal(true);
+    } else {
+      // Currently paused -> open Activate Project Modal (with auto-rotation)
+      setActivatePasswordInput('');
+      setActivateError(null);
+      setShowActivateModal(true);
+    }
+  };
+
+  // Handle Password-Protected Pause Project
+  const handlePauseProjectWithPassword = async () => {
+    if (!project) return;
+    setPauseError(null);
+    if (!pausePasswordInput.trim()) {
+      setPauseError('Project password is required.');
+      return;
+    }
+
+    setPausingProject(true);
     try {
-      const nextActive = project.is_active === false ? true : false;
-      await setDeveloperProjectActive(nextActive);
-      // Reload the project directly from Supabase so the database is the sole source of truth
+      const isValid = await verifyProjectPassword(pausePasswordInput, project);
+      if (!isValid) {
+        setPauseError('PROJECT_PASSWORD_INVALID: Incorrect project password.');
+        setPausingProject(false);
+        return;
+      }
+
+      await setDeveloperProjectActive(false);
       const freshProject = await getDeveloperProject();
       if (freshProject) {
         setProject(freshProject);
+      } else {
+        setProject({ ...project, is_active: false });
       }
-      showToast(`Project ${nextActive ? 'activated' : 'paused'} successfully!`, 'success');
+      setShowPauseModal(false);
+      setPausePasswordInput('');
+      showToast('Project paused successfully. All incoming API requests are now blocked.', 'success');
+      await loadData();
     } catch (err: any) {
-      console.error('[DeveloperView] status toggle error:', err);
-      const msg = err?.message || 'Failed to update project status in Supabase.';
-      setError(msg);
+      console.error('[DeveloperView] pause project error:', err);
+      const msg = err?.message || 'Failed to pause project in Supabase.';
+      setPauseError(msg);
       showToast(msg, 'error');
     } finally {
-      setTogglingActive(false);
+      setPausingProject(false);
+    }
+  };
+
+  // Handle Password-Protected Activate Project & Automatic Key Rotation
+  const handleActivateProjectWithPassword = async () => {
+    if (!project) return;
+    setActivateError(null);
+    if (!activatePasswordInput.trim()) {
+      setActivateError('Project password is required.');
+      return;
+    }
+
+    setActivatingProject(true);
+    try {
+      const isValid = await verifyProjectPassword(activatePasswordInput, project);
+      if (!isValid) {
+        setActivateError('PROJECT_PASSWORD_INVALID: Incorrect project password.');
+        setActivatingProject(false);
+        return;
+      }
+
+      // Reactivate in database
+      await setDeveloperProjectActive(true);
+
+      // Automatically generate a fresh API key upon resume to invalidate any potentially compromised key
+      try {
+        const freshWithNewKey = await regenerateDeveloperApiKey();
+        recordApiKeyRotated(project.id);
+        if (freshWithNewKey) {
+          setProject(freshWithNewKey);
+        } else {
+          const fresh = await getDeveloperProject();
+          if (fresh) setProject(fresh);
+        }
+      } catch (rotErr) {
+        console.warn('[DeveloperView] auto rotate key on activate warning:', rotErr);
+        const fresh = await getDeveloperProject();
+        if (fresh) setProject(fresh);
+      }
+
+      setShowActivateModal(false);
+      setActivatePasswordInput('');
+      showToast('Project activated & fresh API key generated successfully!', 'success');
+      await loadData();
+    } catch (err: any) {
+      console.error('[DeveloperView] activate project error:', err);
+      const msg = err?.message || 'Failed to activate project in Supabase.';
+      setActivateError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setActivatingProject(false);
+    }
+  };
+
+  // Handle Change Project Password
+  const handleChangePassword = async () => {
+    if (!project) return;
+    setChangePasswordError(null);
+
+    if (!currentPasswordInput.trim()) {
+      setChangePasswordError('Current password is required.');
+      return;
+    }
+    if (!newPasswordInput.trim()) {
+      setChangePasswordError('New password is required.');
+      return;
+    }
+    if (newPasswordInput.length < 12) {
+      setChangePasswordError('New password must be at least 12 characters.');
+      return;
+    }
+    if (!/[A-Za-z]/.test(newPasswordInput) || !/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(newPasswordInput)) {
+      setChangePasswordError('New password must include mixed character types (letters and numbers/symbols).');
+      return;
+    }
+    if (newPasswordInput !== confirmNewPasswordInput) {
+      setChangePasswordError('New passwords do not match.');
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const isValid = await verifyProjectPassword(currentPasswordInput, project);
+      if (!isValid) {
+        setChangePasswordError('PROJECT_PASSWORD_INVALID: Current password is incorrect.');
+        setChangingPassword(false);
+        return;
+      }
+
+      await updateProjectPassword(project.id, newPasswordInput);
+      setShowChangePasswordModal(false);
+      setCurrentPasswordInput('');
+      setNewPasswordInput('');
+      setConfirmNewPasswordInput('');
+      showToast('Project security password updated successfully!', 'success');
+      await loadData();
+    } catch (err: any) {
+      setChangePasswordError(err?.message || 'Failed to update project password.');
+    } finally {
+      setChangingPassword(false);
     }
   };
 
@@ -1761,22 +2010,24 @@ print("TokenCare Response:", data)`;
             </div>
             <h4 className="text-sm sm:text-base font-bold text-white">Rotate API Key?</h4>
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              Generating a new key will immediately invalidate the current key. Any external apps using the current key will stop working.
+              Your current API key will immediately stop working. Any application using the old key will need to be updated with the new key.
             </p>
             <div className="flex items-center gap-2 pt-1">
               <button
+                type="button"
                 onClick={() => setShowRegenerateConfirm(false)}
-                className="flex-1 py-2 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400 hover:text-white"
+                className="flex-1 py-2 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400 hover:text-white transition-colors"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 disabled={regeneratingKey}
                 onClick={handleRegenerateKey}
                 className="flex-1 py-2 rounded-lg bg-amber-500 text-black font-bold text-xs hover:bg-amber-400 transition-colors flex items-center justify-center gap-1"
               >
                 {regeneratingKey && <Loader2 className="w-3 h-3 animate-spin" />}
-                Yes, Rotate Key
+                Rotate API Key
               </button>
             </div>
           </div>

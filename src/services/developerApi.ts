@@ -15,6 +15,8 @@ export interface DeveloperProject {
   quota_updated_at?: string;
   allowed_origins?: string[];
   webhook_url?: string;
+  password_hash?: string | null;
+  api_key_last_rotated_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -169,10 +171,172 @@ export async function getDeveloperProject(): Promise<DeveloperProject | null> {
 }
 
 /**
- * 7. Creating the project
- * Calls Supabase RPC create_my_developer_project(p_project_name)
+ * Password & Security Hashing Functions
+ * Projects store only cryptographic hashes, never plaintext passwords.
  */
-export async function createDeveloperProject(projectName: string): Promise<DeveloperProject> {
+export async function hashProjectPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const salted = encoder.encode(`tokencare_dev_secret_v2_${password}`);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', salted);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const LOCAL_STORAGE_PASS_KEY_PREFIX = 'tc_dev_pwd_hash_';
+const LOCAL_STORAGE_ROTATED_PREFIX = 'tc_dev_last_rot_';
+
+/**
+ * Get stored password hash for a project
+ */
+export function getStoredProjectPasswordHash(projectId: string): string | null {
+  try {
+    return localStorage.getItem(`${LOCAL_STORAGE_PASS_KEY_PREFIX}${projectId}`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Save stored password hash for a project
+ */
+export function saveStoredProjectPasswordHash(projectId: string, hash: string): void {
+  try {
+    localStorage.setItem(`${LOCAL_STORAGE_PASS_KEY_PREFIX}${projectId}`, hash);
+  } catch {}
+}
+
+/**
+ * Verifies if user entered password matches project's password hash
+ */
+export async function verifyProjectPassword(
+  inputPassword: string,
+  project: DeveloperProject
+): Promise<boolean> {
+  if (!inputPassword) return false;
+  const inputHash = await hashProjectPassword(inputPassword.trim());
+
+  // 1. Check database column if present
+  if (project.password_hash) {
+    return project.password_hash === inputHash;
+  }
+
+  // 2. Check cached local hash for this project
+  const storedHash = getStoredProjectPasswordHash(project.id);
+  if (storedHash) {
+    return storedHash === inputHash;
+  }
+
+  // If no password was ever set yet (legacy project), allow setting one on first sensitive action
+  return true;
+}
+
+/**
+ * Updates project password hash in Supabase and cache
+ */
+export async function updateProjectPassword(
+  projectId: string,
+  newPassword: string
+): Promise<void> {
+  const newHash = await hashProjectPassword(newPassword.trim());
+  
+  // Update in database
+  try {
+    await getSupabase()
+      .from('developer_projects')
+      .update({ password_hash: newHash, updated_at: new Date().toISOString() })
+      .eq('id', projectId);
+  } catch (err) {
+    console.warn('[DeveloperAPI] direct password_hash update note:', err);
+  }
+
+  // Also cache locally
+  saveStoredProjectPasswordHash(projectId, newHash);
+}
+
+/**
+ * 24-Hour API Key Rotation Cooldown Helpers
+ */
+export const ROTATION_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+export function getApiKeyRotationCooldown(project: DeveloperProject): {
+  isLocked: boolean;
+  hoursRemaining: number;
+  minutesRemaining: number;
+  formattedRemaining: string;
+  lastRotatedAt: Date | null;
+} {
+  let lastRotatedStr = project.api_key_last_rotated_at;
+  if (!lastRotatedStr) {
+    try {
+      lastRotatedStr = localStorage.getItem(`${LOCAL_STORAGE_ROTATED_PREFIX}${project.id}`);
+    } catch {}
+  }
+
+  if (!lastRotatedStr) {
+    return {
+      isLocked: false,
+      hoursRemaining: 0,
+      minutesRemaining: 0,
+      formattedRemaining: '',
+      lastRotatedAt: null,
+    };
+  }
+
+  const lastRotatedTime = new Date(lastRotatedStr).getTime();
+  const now = Date.now();
+  const elapsed = now - lastRotatedTime;
+
+  if (isNaN(lastRotatedTime) || elapsed >= ROTATION_COOLDOWN_MS) {
+    return {
+      isLocked: false,
+      hoursRemaining: 0,
+      minutesRemaining: 0,
+      formattedRemaining: '',
+      lastRotatedAt: new Date(lastRotatedTime),
+    };
+  }
+
+  const remainingMs = ROTATION_COOLDOWN_MS - elapsed;
+  const hoursRemaining = Math.floor(remainingMs / (1000 * 60 * 60));
+  const minutesRemaining = Math.ceil((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+  
+  const formattedRemaining = hoursRemaining > 0 
+    ? `${hoursRemaining}h ${minutesRemaining}m` 
+    : `${minutesRemaining}m`;
+
+  return {
+    isLocked: true,
+    hoursRemaining,
+    minutesRemaining,
+    formattedRemaining,
+    lastRotatedAt: new Date(lastRotatedTime),
+  };
+}
+
+export function recordApiKeyRotated(projectId: string): void {
+  const now = new Date().toISOString();
+  try {
+    localStorage.setItem(`${LOCAL_STORAGE_ROTATED_PREFIX}${projectId}`, now);
+  } catch {}
+
+  // Attempt database column update if column exists
+  try {
+    getSupabase()
+      .from('developer_projects')
+      .update({ api_key_last_rotated_at: now, updated_at: now })
+      .eq('id', projectId)
+      .then();
+  } catch {}
+}
+
+/**
+ * 7. Creating the project with Password Protection
+ * Calls Supabase RPC create_my_developer_project(p_project_name) and records password hash
+ */
+export async function createDeveloperProject(
+  projectName: string,
+  projectPassword?: string
+): Promise<DeveloperProject> {
   const name = projectName.trim() || 'My TokenCare App';
 
   // Check auth user session
@@ -196,7 +360,7 @@ export async function createDeveloperProject(projectName: string): Promise<Devel
     throw new Error(errorMsg);
   }
 
-  const project = unwrapRpc<DeveloperProject>(data);
+  let project = unwrapRpc<DeveloperProject>(data);
   if (!project) {
     // If unwrapRpc returned null, check developer_projects table
     const {
@@ -210,14 +374,30 @@ export async function createDeveloperProject(projectName: string): Promise<Devel
         .maybeSingle();
 
       if (dbProj && dbProj.id) {
-        return dbProj as DeveloperProject;
-      }
-      if (dbErr) {
+        project = dbProj as DeveloperProject;
+      } else if (dbErr) {
         throw new Error(dbErr.message || 'Developer project could not be loaded.');
       }
     }
+  }
+
+  if (!project) {
     throw new Error('Developer project was not returned by Supabase.');
   }
+
+  // Save the password hash
+  if (projectPassword && project.id) {
+    const passHash = await hashProjectPassword(projectPassword.trim());
+    project.password_hash = passHash;
+    saveStoredProjectPasswordHash(project.id, passHash);
+    try {
+      await getSupabase()
+        .from('developer_projects')
+        .update({ password_hash: passHash })
+        .eq('id', project.id);
+    } catch {}
+  }
+
   return project;
 }
 
@@ -305,19 +485,22 @@ export async function updateDeveloperProject(
  * 12. API-key rotation
  * Calls Supabase RPC rotate_my_developer_api_key()
  */
-export async function regenerateDeveloperApiKey(): Promise<string> {
+export async function regenerateDeveloperApiKey(): Promise<DeveloperProject> {
   const { data, error } = await getSupabase().rpc('rotate_my_developer_api_key');
   if (error) {
     throw new Error(error.message || 'Unable to rotate API key.');
   }
   const project = unwrapRpc<DeveloperProject>(data);
-  if (project?.api_key) {
-    return project.api_key;
+  if (project && project.api_key) {
+    return project;
   }
-  if (typeof data === 'string' && data) {
-    return data;
+  if (data && typeof data === 'object' && 'api_key' in (data as any)) {
+    return data as DeveloperProject;
   }
-  throw new Error('API key rotation did not return a key.');
+  // Fetch fresh project from Supabase as fallback
+  const fresh = await getDeveloperProject();
+  if (fresh) return fresh;
+  throw new Error('API key rotation completed, but project reload failed.');
 }
 
 /**
