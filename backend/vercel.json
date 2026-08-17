@@ -12,7 +12,6 @@
     { "src": "/api/token/price", "dest": "api/token_price.py" },
     { "src": "/api/tokens/prices", "dest": "api/batch_prices.py" },
     { "src": "/api/token/chart", "dest": "api/token_chart.py" },
-    { "src": "/api/developer", "dest": "api/developer.py" },
     { "src": "/api", "dest": "api/index.py" }
   ]
 }

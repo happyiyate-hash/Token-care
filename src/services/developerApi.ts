@@ -44,6 +44,7 @@ export interface DeveloperApiLog {
   latency_ms: number;
   action?: string;
   error_code?: string | null;
+  user_agent?: string;
 }
 
 const LOCAL_STORAGE_PROJECT_KEY = 'tokencare_developer_project';
@@ -142,12 +143,13 @@ export async function getDeveloperApiLogs(limit = 100): Promise<DeveloperApiLog[
 
 /** Optimistic UI entry; the authoritative request log is written by Vercel/Supabase. */
 export function recordDeveloperApiCall(options: {
-  endpoint: string; method?: string; action?: string; status: number; latency_ms: number; error_code?: string | null;
+  endpoint: string; method?: string; action?: string; status: number; latency_ms: number; error_code?: string | null; user_agent?: string;
 }): DeveloperApiLog {
   return {
     id: `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     timestamp: new Date().toISOString(), method: options.method || 'POST', endpoint: options.endpoint,
     action: options.action || 'api_call', status: options.status, latency_ms: options.latency_ms, error_code: options.error_code ?? null,
+    user_agent: options.user_agent,
   };
 }
 
