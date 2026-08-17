@@ -1,4 +1,4 @@
-import { getSupabase, SUPABASE_URL } from '../lib/supabase';
+import { getSupabase } from '../lib/supabase';
 
 export interface DeveloperProject {
   id: string;
@@ -9,6 +9,8 @@ export interface DeveloperProject {
   daily_limit: number;
   created_at: string;
   updated_at: string;
+  is_active?: boolean;
+  suspended_at?: string | null;
   allowed_origins?: string[];
   webhook_url?: string;
 }
@@ -41,26 +43,21 @@ export interface DeveloperApiLog {
   status: number;
   latency_ms: number;
   action?: string;
+  error_code?: string | null;
 }
 
 const LOCAL_STORAGE_PROJECT_KEY = 'tokencare_developer_project';
-const LOCAL_STORAGE_LOGS_KEY = 'tokencare_developer_logs';
 
-function generateApiKey(): string {
-  const chars = 'abcdef0123456789';
-  const prefix = 'tc_live_';
-  let rand = '';
-  for (let i = 0; i < 32; i++) {
-    rand += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return `${prefix}${rand}`;
+function unwrapRpc<T>(data: any): T | null {
+  if (!data) return null;
+  if (Array.isArray(data)) return (data[0] ?? null) as T;
+  return data as T;
 }
 
 export function getLocalDeveloperProject(): DeveloperProject | null {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_PROJECT_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
@@ -68,265 +65,118 @@ export function getLocalDeveloperProject(): DeveloperProject | null {
 
 export function saveLocalDeveloperProject(project: DeveloperProject | null): void {
   try {
-    if (!project) {
-      localStorage.removeItem(LOCAL_STORAGE_PROJECT_KEY);
-    } else {
-      localStorage.setItem(LOCAL_STORAGE_PROJECT_KEY, JSON.stringify(project));
-    }
+    if (project) localStorage.setItem(LOCAL_STORAGE_PROJECT_KEY, JSON.stringify(project));
+    else localStorage.removeItem(LOCAL_STORAGE_PROJECT_KEY);
   } catch (e) {
-    console.warn('[DeveloperAPI] Local storage save error:', e);
+    console.warn('[DeveloperAPI] local cache error:', e);
   }
 }
 
 export async function getDeveloperProject(): Promise<DeveloperProject | null> {
-  const supabase = getSupabase();
-  try {
-    const { data, error } = await supabase.rpc('get_my_developer_project');
-    if (!error && data) {
-      saveLocalDeveloperProject(data);
-      return data;
-    }
-  } catch (err) {
-    console.warn('[DeveloperAPI] RPC fetch error:', err);
-  }
-
-  // Fallback to local storage
-  return getLocalDeveloperProject();
+  const { data, error } = await getSupabase().rpc('get_my_developer_project');
+  if (error) throw new Error(error.message || 'Unable to load developer project.');
+  const project = unwrapRpc<DeveloperProject>(data);
+  saveLocalDeveloperProject(project);
+  return project;
 }
 
 export async function createDeveloperProject(projectName: string): Promise<DeveloperProject> {
   const name = projectName.trim() || 'My TokenCare App';
-  const supabase = getSupabase();
-
-  try {
-    const { data, error } = await supabase.rpc('create_my_developer_project', { p_project_name: name });
-    if (!error && data) {
-      saveLocalDeveloperProject(data);
-      return data as DeveloperProject;
-    }
-  } catch (err) {
-    console.warn('[DeveloperAPI] create RPC error, falling back to local creation:', err);
-  }
-
-  // Local fallback creation
-  const newProject: DeveloperProject = {
-    id: `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-    user_id: 'current_user',
-    project_name: name,
-    api_key: generateApiKey(),
-    plan_code: 'free',
-    daily_limit: 100,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    allowed_origins: ['*'],
-  };
-
-  saveLocalDeveloperProject(newProject);
-  return newProject;
+  const { data, error } = await getSupabase().rpc('create_my_developer_project', {
+    p_project_name: name,
+  });
+  if (error) throw new Error(error.message || 'Unable to create developer project.');
+  const project = unwrapRpc<DeveloperProject>(data);
+  if (!project) throw new Error('Developer project was not returned by Supabase.');
+  saveLocalDeveloperProject(project);
+  return project;
 }
 
 export async function regenerateDeveloperApiKey(): Promise<string> {
-  const current = await getDeveloperProject();
-  if (!current) throw new Error('No active developer project found.');
-
-  const newKey = generateApiKey();
-  const updated: DeveloperProject = {
-    ...current,
-    api_key: newKey,
-    updated_at: new Date().toISOString(),
-  };
-
-  saveLocalDeveloperProject(updated);
-  return newKey;
+  const { data, error } = await getSupabase().rpc('rotate_my_developer_api_key');
+  if (error) throw new Error(error.message || 'Unable to rotate API key.');
+  const project = unwrapRpc<DeveloperProject>(data);
+  if (!project?.api_key) throw new Error('API key rotation did not return a key.');
+  saveLocalDeveloperProject(project);
+  return project.api_key;
 }
 
 export async function updateDeveloperProject(
-  updates: Partial<Pick<DeveloperProject, 'project_name' | 'plan_code' | 'allowed_origins' | 'webhook_url'>>
+  updates: Partial<Pick<DeveloperProject, 'project_name' | 'plan_code'>>
 ): Promise<DeveloperProject> {
   const current = await getDeveloperProject();
-  if (!current) throw new Error('No active project to update');
+  if (!current) throw new Error('No active developer project found.');
 
-  let daily_limit = current.daily_limit;
-  if (updates.plan_code === 'starter') daily_limit = 1000;
-  else if (updates.plan_code === 'growth') daily_limit = 10000;
-  else if (updates.plan_code === 'scale') daily_limit = 100000;
-  else if (updates.plan_code === 'free') daily_limit = 100;
-
-  const updated: DeveloperProject = {
-    ...current,
-    ...updates,
-    daily_limit,
-    updated_at: new Date().toISOString(),
-  };
-
-  saveLocalDeveloperProject(updated);
-  return updated;
+  const { data, error } = await getSupabase().rpc('update_my_developer_project', {
+    p_project_name: updates.project_name ?? current.project_name,
+    p_plan_code: updates.plan_code ?? current.plan_code,
+  });
+  if (error) throw new Error(error.message || 'Unable to update developer project.');
+  const project = unwrapRpc<DeveloperProject>(data);
+  if (!project) throw new Error('Developer project update returned no project.');
+  saveLocalDeveloperProject(project);
+  return project;
 }
 
 export async function deleteDeveloperProject(): Promise<boolean> {
+  const { data, error } = await getSupabase().rpc('delete_my_developer_project');
+  if (error) throw new Error(error.message || 'Unable to delete developer project.');
   saveLocalDeveloperProject(null);
-  return true;
+  return data === true || data === 'true';
+}
+
+export async function setDeveloperProjectActive(active: boolean): Promise<DeveloperProject> {
+  const { data, error } = await getSupabase().rpc('set_my_developer_project_active', {
+    p_active: active,
+  });
+  if (error) throw new Error(error.message || 'Unable to change project status.');
+  const project = unwrapRpc<DeveloperProject>(data);
+  if (!project) throw new Error('Project status update returned no project.');
+  saveLocalDeveloperProject(project);
+  return project;
 }
 
 export async function getDeveloperUsage(days = 30): Promise<DeveloperUsage[]> {
-  const supabase = getSupabase();
-  try {
-    const { data, error } = await supabase.rpc('get_my_developer_usage', { p_days: days });
-    if (!error && Array.isArray(data) && data.length > 0) {
-      return data as DeveloperUsage[];
-    }
-  } catch (e) {
-    console.warn('[DeveloperAPI] getDeveloperUsage note:', e);
-  }
-
-  // Generate realistic usage curve ending with today's activity
-  const logs = getDeveloperApiLogs();
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const todayCalls = logs.filter((l) => l.timestamp.startsWith(todayStr)).length;
-
-  const results: DeveloperUsage[] = [];
-  const now = new Date();
-
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().slice(0, 10);
-
-    if (i === 0) {
-      results.push({
-        usage_date: dateStr,
-        calls: Math.max(todayCalls, 12),
-        successful_calls: Math.max(todayCalls, 12),
-        blocked_calls: 0,
-      });
-    } else {
-      // Historical simulated pattern
-      const baseCalls = Math.floor(Math.sin(i * 0.4) * 15 + 25);
-      const calls = Math.max(2, baseCalls);
-      results.push({
-        usage_date: dateStr,
-        calls,
-        successful_calls: calls,
-        blocked_calls: i % 7 === 0 ? 1 : 0,
-      });
-    }
-  }
-
-  return results;
+  const { data, error } = await getSupabase().rpc('get_my_developer_usage', { p_days: days });
+  if (error) throw new Error(error.message || 'Unable to load developer usage.');
+  return Array.isArray(data) ? (data as DeveloperUsage[]) : [];
 }
 
-export function recordDeveloperApiCall(
-  endpointOrOptions: string | { endpoint: string; method?: string; action?: string; status: number; latency_ms: number; user_agent?: string },
-  action?: string,
-  status?: number,
-  latency_ms?: number
-): DeveloperApiLog {
-  try {
-    const existing = getDeveloperApiLogs();
-    let newLog: DeveloperApiLog;
-
-    if (typeof endpointOrOptions === 'object' && endpointOrOptions !== null) {
-      newLog = {
-        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        timestamp: new Date().toISOString(),
-        method: endpointOrOptions.method || 'POST',
-        endpoint: endpointOrOptions.endpoint,
-        action: endpointOrOptions.action || 'api_call',
-        status: endpointOrOptions.status ?? 200,
-        latency_ms: endpointOrOptions.latency_ms ?? 0,
-      };
-    } else {
-      newLog = {
-        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        timestamp: new Date().toISOString(),
-        method: 'POST',
-        endpoint: String(endpointOrOptions || '/api'),
-        action: action || 'api_call',
-        status: status ?? 200,
-        latency_ms: latency_ms ?? 0,
-      };
-    }
-
-    const updated = [newLog, ...existing].slice(0, 50);
-    localStorage.setItem(LOCAL_STORAGE_LOGS_KEY, JSON.stringify(updated));
-    return newLog;
-  } catch (e) {
-    console.warn('[DeveloperAPI] Log record error:', e);
-    return {
-      id: `log_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      method: 'POST',
-      endpoint: typeof endpointOrOptions === 'string' ? endpointOrOptions : endpointOrOptions?.endpoint || '/api',
-      status: 200,
-      latency_ms: 0,
-    };
-  }
+export async function getDeveloperApiLogs(limit = 100): Promise<DeveloperApiLog[]> {
+  const { data, error } = await getSupabase().rpc('get_my_developer_logs', { p_limit: limit });
+  if (error) throw new Error(error.message || 'Unable to load developer request logs.');
+  return Array.isArray(data)
+    ? data.map((row: any) => ({
+        id: String(row.id),
+        timestamp: row.timestamp,
+        method: row.method || 'POST',
+        endpoint: row.endpoint,
+        status: Number(row.status ?? 0),
+        latency_ms: Number(row.latency_ms ?? 0),
+        error_code: row.error_code ?? null,
+      }))
+    : [];
 }
 
-export function getDeveloperApiLogs(): DeveloperApiLog[] {
-  try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_LOGS_KEY);
-    if (!raw) {
-      // Default sample logs
-      return [
-        {
-          id: 'log_1',
-          timestamp: new Date(Date.now() - 1000 * 60 * 3).toISOString(),
-          method: 'POST',
-          endpoint: '/api/worker-tokens',
-          action: 'getAllTokens',
-          status: 200,
-          latency_ms: 42,
-        },
-        {
-          id: 'log_2',
-          timestamp: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-          method: 'POST',
-          endpoint: '/api/get-token-by-address',
-          action: 'getTokenByAddress',
-          status: 200,
-          latency_ms: 58,
-        },
-        {
-          id: 'log_3',
-          timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-          method: 'POST',
-          endpoint: '/api/worker-tokens',
-          action: 'inspectToken',
-          status: 200,
-          latency_ms: 95,
-        },
-      ];
-    }
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
+/** Developer logs are server-owned records; clearing them locally must not hide database history. */
 export function clearDeveloperApiLogs(): void {
-  try {
-    localStorage.removeItem(LOCAL_STORAGE_LOGS_KEY);
-  } catch {}
+  // Intentionally no-op. Supabase owns request telemetry and there is no delete RPC.
 }
 
 export async function listDeveloperApiKeys(): Promise<DeveloperApiKey[]> {
   const project = await getDeveloperProject();
-  if (project) {
-    const rawKey = String(project.api_key || '');
-    return [
-      {
-        id: project.id,
-        name: `${project.project_name} Primary Key`,
-        key: project.api_key,
-        masked_key: rawKey ? `${rawKey.slice(0, 10)}••••••••${rawKey.slice(-4)}` : undefined,
-        created_at: project.created_at,
-        is_active: true,
-        rate_limit: project.daily_limit,
-      },
-    ];
-  }
-  return [];
+  if (!project) return [];
+  const rawKey = String(project.api_key || '');
+  return [{
+    id: project.id,
+    name: `${project.project_name} Primary Key`,
+    key: project.api_key,
+    masked_key: rawKey ? `${rawKey.slice(0, 10)}••••••••${rawKey.slice(-4)}` : undefined,
+    created_at: project.created_at,
+    is_active: project.is_active !== false,
+    status: project.is_active === false ? 'suspended' : 'active',
+    rate_limit: project.daily_limit,
+  }];
 }
 
 export async function createDeveloperApiKey(name: string): Promise<{ key: string; apiKey: DeveloperApiKey }> {
@@ -340,7 +190,7 @@ export async function createDeveloperApiKey(name: string): Promise<{ key: string
       key: project.api_key,
       masked_key: `${rawKey.slice(0, 10)}••••••••${rawKey.slice(-4)}`,
       created_at: project.created_at,
-      is_active: true,
+      is_active: project.is_active !== false,
       rate_limit: project.daily_limit,
     },
   };
@@ -352,9 +202,7 @@ export async function revokeDeveloperApiKey(_id: string): Promise<boolean> {
 }
 
 export function getDeveloperApiBaseUrl(): string {
-  return `${SUPABASE_URL}/functions/v1/developer-api`;
+  return 'https://token-care-mwv9.vercel.app';
 }
 
-export const WORKER_BASE_URL = 'https://rough-meadow-6435.happyiyate.workers.dev/';
-
-
+export const WORKER_BASE_URL = 'https://token-care-mwv9.vercel.app';
