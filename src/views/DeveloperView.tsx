@@ -19,6 +19,7 @@ import {
   Settings as SettingsIcon,
   ScrollText,
   Play,
+  Pause,
   Layers,
   Sparkles,
   Search,
@@ -28,6 +29,7 @@ import {
   Compass,
   CheckCircle2,
   AlertTriangle,
+  AlertCircle,
   ChevronRight,
   TrendingUp,
   Clock,
@@ -39,20 +41,29 @@ import {
   PanelLeft,
   PanelLeftClose,
 } from 'lucide-react';
+import { ToastNotification } from '../components/ToastNotification';
 import {
   createDeveloperProject,
   getDeveloperApiBaseUrl,
   getDeveloperProject,
+  getDeveloperQuota,
+  getDeveloperPlans,
+  getDeveloperSubscriptions,
   getDeveloperUsage,
   regenerateDeveloperApiKey,
   updateDeveloperProject,
   deleteDeveloperProject,
+  setDeveloperProjectActive,
   getDeveloperApiLogs,
   recordDeveloperApiCall,
   clearDeveloperApiLogs,
   DeveloperProject,
+  DeveloperPlan,
+  DeveloperSubscription,
+  DeveloperQuota,
   DeveloperUsage,
   DeveloperApiLog,
+  DEFAULT_DEVELOPER_PLANS,
   WORKER_BASE_URL,
 } from '../services/developerApi';
 import {
@@ -162,15 +173,12 @@ const ENDPOINTS: EndpointDefinition[] = [
   },
 ];
 
-const PLANS = [
-  { id: 'free', name: 'Free Starter', calls: 5000, price: '$0/mo', note: 'Standard edge rate limits' },
-  { id: 'pro', name: 'Developer Pro', calls: 50000, price: '$29/mo', note: 'High throughput, priority caching' },
-  { id: 'enterprise', name: 'Enterprise', calls: 500000, price: '$199/mo', note: 'Dedicated edge worker routing' },
-];
-
 export default function DeveloperView({ onBack, currentUser }: DeveloperViewProps) {
   // State
   const [project, setProject] = useState<DeveloperProject | null>(null);
+  const [quota, setQuota] = useState<DeveloperQuota | null>(null);
+  const [plans, setPlans] = useState<DeveloperPlan[]>(DEFAULT_DEVELOPER_PLANS);
+  const [subscriptions, setSubscriptions] = useState<DeveloperSubscription[]>([]);
   const [usage, setUsage] = useState<DeveloperUsage[]>([]);
   const [logs, setLogs] = useState<DeveloperApiLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -178,9 +186,17 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   const [activeTab, setActiveTab] = useState<SubTab>('overview');
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
 
+  // Toast Notification State
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<'success' | 'error' | 'info'>('error');
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'error') => {
+    setToastMessage(message);
+    setToastType(type);
+  };
+
   // Creation State
   const [projectNameInput, setProjectNameInput] = useState('');
-  const [selectedPlanCode, setSelectedPlanCode] = useState('free');
   const [creatingProject, setCreatingProject] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
@@ -204,30 +220,75 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   const [editProjectName, setEditProjectName] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
+  const [togglingActive, setTogglingActive] = useState(false);
   const [deletingProject, setDeletingProject] = useState(false);
+
+  // Deletion Flow States (2-Step Verification)
+  const [showDeleteStep1, setShowDeleteStep1] = useState(false);
+  const [showDeleteStep2, setShowDeleteStep2] = useState(false);
+  const [confirmDeleteInput, setConfirmDeleteInput] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const endpointBaseUrl = useMemo(() => getDeveloperApiBaseUrl(), []);
   const liveWorkerUrl = WORKER_BASE_URL;
 
-  // Load project & stats
+  // Format header title to match: "<name> TC developer" (e.g., "wisdom TC developer")
+  const displayName = useMemo(() => {
+    const rawName =
+      project?.project_name?.trim() ||
+      currentUser?.user_metadata?.full_name?.trim() ||
+      currentUser?.username?.trim() ||
+      currentUser?.email?.split('@')[0]?.trim() ||
+      'wisdom';
+
+    if (/TC developer$/i.test(rawName)) {
+      return rawName;
+    }
+    return `${rawName} TC developer`;
+  }, [project?.project_name, currentUser]);
+
+  // Load project & stats from Supabase Developer tables and RPCs
   const loadData = async () => {
     setLoading(true);
     setError('');
     try {
-      const [proj, usageData, logData] = await Promise.all([
-        getDeveloperProject().catch(() => null),
+      // 1. Entry guard check: Call get_my_developer_project() via Supabase
+      const proj = await getDeveloperProject();
+
+      if (!proj) {
+        // User has no Developer project -> stay on page and do not auto-open modal
+        setProject(null);
+        setQuota(null);
+        setUsage([]);
+        setLogs([]);
+        setSubscriptions([]);
+        setShowCreateModal(false);
+        return;
+      }
+
+      // User has an existing project -> set project, dismiss create popup, and load dashboard data
+      setProject(proj);
+      setShowCreateModal(false);
+      setEditProjectName(proj.project_name || '');
+
+      const [quotaData, plansData, usageData, logData, subsData] = await Promise.all([
+        getDeveloperQuota().catch(() => null),
+        getDeveloperPlans().catch(() => DEFAULT_DEVELOPER_PLANS),
         getDeveloperUsage(30).catch(() => []),
         getDeveloperApiLogs(100).catch(() => []),
+        getDeveloperSubscriptions().catch(() => []),
       ]);
-      setProject(proj);
+
+      setQuota(quotaData);
+      setPlans(Array.isArray(plansData) && plansData.length > 0 ? plansData : DEFAULT_DEVELOPER_PLANS);
       setUsage(Array.isArray(usageData) ? usageData : []);
       setLogs(Array.isArray(logData) ? logData : []);
-      if (proj) {
-        setEditProjectName(proj.project_name || '');
-      }
+      setSubscriptions(Array.isArray(subsData) ? subsData : []);
     } catch (err: any) {
       console.warn('[DeveloperView] load error:', err);
-      setError(err?.message || 'Unable to load developer project.');
+      const msg = err?.message || 'Unable to load developer project from Supabase.';
+      setError(msg);
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -249,34 +310,44 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     }
   }, [selectedEndpointId]);
 
-  // Quota Computations
+  // Quota Computations based on Supabase database
   const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const todayUsage = useMemo(() => {
     return usage.find((u) => u.usage_date === todayStr);
   }, [usage, todayStr]);
 
-  const callsToday = todayUsage?.calls ?? ((Array.isArray(logs) ? logs : []).filter((l) => l?.timestamp?.startsWith(todayStr)).length || 14);
-  const dailyLimit = project?.daily_limit ?? 5000;
-  const remainingCalls = Math.max(0, dailyLimit - callsToday);
+  const callsToday =
+    quota?.usage?.used ??
+    todayUsage?.calls ??
+    ((Array.isArray(logs) ? logs : []).filter(
+      (l) => l?.timestamp?.startsWith(todayStr) || l?.created_at?.startsWith(todayStr)
+    ).length || 0);
+
+  const dailyLimit =
+    quota?.usage?.limit ??
+    quota?.project?.daily_limit ??
+    project?.daily_limit ??
+    100;
+
+  const remainingCalls = quota?.usage?.remaining ?? Math.max(0, dailyLimit - callsToday);
   const usagePercentage = Math.min(100, Math.round((callsToday / Math.max(1, dailyLimit)) * 100));
 
-  // Handle Project Creation
+  // Handle Project Creation (creates project in Supabase with API key & initial free plan)
   const handleCreateProject = async () => {
     const name = projectNameInput.trim() || 'My TokenCare App';
     setCreatingProject(true);
     setError('');
     try {
-      const created = await createDeveloperProject(name);
-      if (selectedPlanCode !== 'free') {
-        await updateDeveloperProject({ plan_code: selectedPlanCode });
-      }
-      setProject(created);
-      setEditProjectName(created.project_name);
-      setShowCreateModal(false);
+      await createDeveloperProject(name);
       setProjectNameInput('');
+      setShowCreateModal(false);
+      showToast('Developer project created successfully!', 'success');
       await loadData();
     } catch (err: any) {
-      setError(err?.message || 'Failed to create developer project.');
+      console.error('[DeveloperView] create project error:', err);
+      const msg = err?.message || 'Failed to create developer project in Supabase.';
+      setError(msg);
+      showToast(msg, 'error');
     } finally {
       setCreatingProject(false);
     }
@@ -288,9 +359,12 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     try {
       await navigator.clipboard.writeText(project.api_key);
       setCopiedKey(true);
+      showToast('API Key copied to clipboard!', 'success');
       setTimeout(() => setCopiedKey(false), 2000);
     } catch {
-      setError('Unable to access clipboard. Please copy manually.');
+      const msg = 'Unable to access clipboard. Please copy manually.';
+      setError(msg);
+      showToast(msg, 'error');
     }
   };
 
@@ -299,13 +373,16 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     try {
       await navigator.clipboard.writeText(url);
       setCopiedUrl(true);
+      showToast('Worker URL copied to clipboard!', 'success');
       setTimeout(() => setCopiedUrl(false), 2000);
     } catch {
-      setError('Unable to copy URL.');
+      const msg = 'Unable to copy URL.';
+      setError(msg);
+      showToast(msg, 'error');
     }
   };
 
-  // Handle Key Regeneration
+  // Handle Key Regeneration via rotate_my_developer_api_key RPC
   const handleRegenerateKey = async () => {
     setRegeneratingKey(true);
     setError('');
@@ -315,15 +392,18 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
         setProject({ ...project, api_key: newKey });
       }
       setShowRegenerateConfirm(false);
+      showToast('API Key rotated successfully!', 'success');
       await loadData();
     } catch (err: any) {
-      setError(err?.message || 'Failed to rotate API key.');
+      const msg = err?.message || 'Failed to rotate API key in Supabase.';
+      setError(msg);
+      showToast(msg, 'error');
     } finally {
       setRegeneratingKey(false);
     }
   };
 
-  // Handle Save Settings
+  // Handle Save Settings via update_my_developer_project RPC
   const handleSaveSettings = async () => {
     if (!project) return;
     setSavingSettings(true);
@@ -335,24 +415,92 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       });
       setProject(updated);
       setSettingsSuccess(true);
+      showToast('Project settings saved successfully!', 'success');
       setTimeout(() => setSettingsSuccess(false), 3000);
     } catch (err: any) {
-      setError(err?.message || 'Failed to save project settings.');
+      const msg = err?.message || 'Failed to save project settings in Supabase.';
+      setError(msg);
+      showToast(msg, 'error');
     } finally {
       setSavingSettings(false);
     }
   };
 
-  // Handle Delete Project
-  const handleDeleteProject = async () => {
-    if (!confirm('Are you sure you want to delete this developer project? All API credentials will be revoked.')) return;
-    setDeletingProject(true);
+  // Handle Toggle Active via set_my_developer_project_active RPC & reload from Supabase
+  const handleToggleProjectActive = async () => {
+    if (!project) return;
+    setTogglingActive(true);
+    setError('');
     try {
-      await deleteDeveloperProject();
-      setProject(null);
-      setActiveTab('overview');
+      const nextActive = project.is_active === false ? true : false;
+      await setDeveloperProjectActive(nextActive);
+      // Reload the project directly from Supabase so the database is the sole source of truth
+      const freshProject = await getDeveloperProject();
+      if (freshProject) {
+        setProject(freshProject);
+      }
+      showToast(`Project ${nextActive ? 'activated' : 'paused'} successfully!`, 'success');
     } catch (err: any) {
-      setError(err?.message || 'Failed to delete project.');
+      console.error('[DeveloperView] status toggle error:', err);
+      const msg = err?.message || 'Failed to update project status in Supabase.';
+      setError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setTogglingActive(false);
+    }
+  };
+
+  // Handle Transition from Step 1 to Step 2
+  const handleProceedToDeleteStep2 = () => {
+    setShowDeleteStep1(false);
+    setConfirmDeleteInput('');
+    setDeleteError(null);
+    setShowDeleteStep2(true);
+  };
+
+  // Handle Permanent Project Deletion via delete_my_developer_project RPC
+  const handleConfirmPermanentDelete = async () => {
+    if (!project) return;
+    const targetName = (project.project_name || '').trim();
+    const typedName = confirmDeleteInput.trim();
+
+    if (typedName !== targetName) {
+      const err = 'Project name does not match.';
+      setDeleteError(err);
+      showToast(err, 'error');
+      return;
+    }
+
+    setDeletingProject(true);
+    setDeleteError(null);
+    try {
+      const success = await deleteDeveloperProject();
+      if (success) {
+        // 1. Clear currently loaded Developer project from application state
+        setProject(null);
+        // 2. Clear quota/usage/log/subscription state
+        setQuota(null);
+        setUsage([]);
+        setLogs([]);
+        setSubscriptions([]);
+        // 3. Clear inputs & close modals
+        setConfirmDeleteInput('');
+        setShowDeleteStep2(false);
+        setShowDeleteStep1(false);
+        setActiveTab('overview');
+        // 4. Return user to No Developer Project state (modal stays closed until user clicks Create)
+        setShowCreateModal(false);
+        showToast('Developer project permanently deleted.', 'info');
+      } else {
+        const msg = 'Unable to delete the project. Nothing was changed. Please try again.';
+        setDeleteError(msg);
+        showToast(msg, 'error');
+      }
+    } catch (err: any) {
+      console.error('[DeveloperView] delete project error:', err);
+      const msg = err?.message || 'Unable to delete the project. Nothing was changed. Please try again.';
+      setDeleteError(msg);
+      showToast(msg, 'error');
     } finally {
       setDeletingProject(false);
     }
@@ -404,6 +552,10 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       });
 
       setLogs((prev) => [logged, ...prev.slice(0, 49)]);
+
+      // Asynchronously refresh real quota & logs from database
+      getDeveloperQuota().then((q) => { if (q?.has_project) setQuota(q); }).catch(() => {});
+      getDeveloperApiLogs(100).then((l) => { if (l && l.length > 0) setLogs(l); }).catch(() => {});
     } catch (err: any) {
       const elapsed = Math.round(performance.now() - start);
       setTestLatency(elapsed);
@@ -414,7 +566,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       };
       setTestResult(errPayload);
 
-      recordDeveloperApiCall({
+      const loggedErr = recordDeveloperApiCall({
         endpoint: currentEndpoint.path,
         method: currentEndpoint.method,
         action: currentEndpoint.action,
@@ -422,6 +574,10 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
         latency_ms: elapsed,
         user_agent: navigator.userAgent,
       });
+
+      setLogs((prev) => [loggedErr, ...prev.slice(0, 49)]);
+      getDeveloperQuota().then((q) => { if (q?.has_project) setQuota(q); }).catch(() => {});
+      getDeveloperApiLogs(100).then((l) => { if (l && l.length > 0) setLogs(l); }).catch(() => {});
     } finally {
       setTestingEndpoint(false);
     }
@@ -497,53 +653,55 @@ print("TokenCare Response:", data)`;
 
   return (
     <div className="flex-1 w-full h-full min-h-0 flex flex-col bg-[#030710] text-white overflow-hidden select-text relative">
-      {/* 1. TOP HEADER - AT THE VERY TOP OF SCREEN (Sticky, Standalone, Seamless) */}
-      <header className="shrink-0 z-40 border-b border-zinc-800/80 bg-[#060913]/95 backdrop-blur-md px-2.5 sm:px-5 py-2 sm:py-2.5 flex items-center justify-between gap-2 sticky top-0">
-        {/* Left: Back Button + Side Panel Hamburger + Title */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
-          {onBack && (
+      {/* Toast Notification for Supabase Operations */}
+      <ToastNotification
+        message={toastMessage}
+        type={toastType}
+        onClose={() => setToastMessage(null)}
+      />
+
+      {/* 1. TOP HEADER - ONLY DISPLAY WHEN AN ACTIVE PROJECT EXISTS */}
+      {project && (
+        <header className="shrink-0 z-40 border-b border-zinc-800/80 bg-[#060913]/95 backdrop-blur-md px-2.5 sm:px-5 py-2 sm:py-2.5 flex items-center justify-between gap-2 sticky top-0">
+          {/* Left: Back Button + Side Panel Hamburger + Title */}
+          <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
+            {onBack && (
+              <button
+                id="developer-back-btn"
+                onClick={onBack}
+                className="p-1.5 sm:p-2 rounded-lg border border-zinc-800 bg-zinc-900/80 text-zinc-400 hover:text-white hover:border-zinc-700 transition-colors shrink-0 cursor-pointer"
+                title="Back"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              </button>
+            )}
+
+            {/* Side Panel Toggle Button (Mobile & Tablet) */}
             <button
-              id="developer-back-btn"
-              onClick={onBack}
-              className="p-1.5 sm:p-2 rounded-lg border border-zinc-800 bg-zinc-900/80 text-zinc-400 hover:text-white hover:border-zinc-700 transition-colors shrink-0 cursor-pointer"
-              title="Back"
+              id="developer-mobile-drawer-toggle"
+              onClick={() => setIsMobileDrawerOpen(!isMobileDrawerOpen)}
+              className="p-1.5 sm:p-2 rounded-lg border border-zinc-800/80 bg-zinc-900/80 text-zinc-300 hover:text-white hover:border-zinc-700 transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+              title="Toggle Developer Navigation Panel"
             >
-              <ArrowLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <Menu className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#00E575]" />
+              <span className="text-[10px] sm:text-xs font-bold text-zinc-300 hidden xs:inline">Menu</span>
             </button>
-          )}
 
-          {/* Side Panel Toggle Button (Mobile & Tablet) */}
-          <button
-            id="developer-mobile-drawer-toggle"
-            onClick={() => setIsMobileDrawerOpen(!isMobileDrawerOpen)}
-            className="p-1.5 sm:p-2 rounded-lg border border-zinc-800/80 bg-zinc-900/80 text-zinc-300 hover:text-white hover:border-zinc-700 transition-all flex items-center gap-1 shrink-0 cursor-pointer"
-            title="Toggle Developer Navigation Panel"
-          >
-            <Menu className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#00E575]" />
-            <span className="text-[10px] sm:text-xs font-bold text-zinc-300 hidden xs:inline">Menu</span>
-          </button>
-
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-widest text-[#00E575] bg-[#00E575]/10 px-1.5 sm:px-2 py-0.5 rounded-full border border-[#00E575]/20">
-                Developer API
+            <div className="min-w-0 flex items-center gap-2">
+              <div className="min-w-0">
+                <h1 className="text-xs sm:text-sm md:text-base font-bold text-white truncate flex items-center gap-2">
+                  <span>{displayName}</span>
+                </h1>
+              </div>
+              <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live
               </span>
-              {project && (
-                <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-mono text-zinc-400 bg-zinc-900/80 px-1.5 py-0.5 rounded border border-zinc-800">
-                  <Server className="w-2.5 h-2.5 text-emerald-400" />
-                  Edge Live
-                </span>
-              )}
             </div>
-            <h1 className="text-xs sm:text-sm md:text-base font-bold text-white truncate">
-              {project ? project.project_name : 'Developer API Console'}
-            </h1>
           </div>
-        </div>
 
-        {/* Header Right Actions */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {project ? (
+          {/* Header Right Actions */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <div className="flex items-center gap-1.5 sm:gap-2">
               <button
                 id="developer-quick-docs-btn"
@@ -557,21 +715,12 @@ print("TokenCare Response:", data)`;
                 {(project.plan_code || 'FREE').toUpperCase()} • {dailyLimit} calls/d
               </span>
             </div>
-          ) : (
-            <button
-              id="developer-header-create-btn"
-              onClick={() => setShowCreateModal(true)}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#00E575] text-black font-bold text-xs hover:bg-[#00E575]/90 transition-all shadow-md shadow-[#00E575]/10"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              New Project
-            </button>
-          )}
-        </div>
-      </header>
+          </div>
+        </header>
+      )}
 
-      {/* 2. SLIDE-OUT MOBILE SIDE DRAWER (Accessible on Mobile View) */}
-      {isMobileDrawerOpen && (
+      {/* 2. SLIDE-OUT MOBILE SIDE DRAWER (Only when active project exists) */}
+      {project && isMobileDrawerOpen && (
         <div className="fixed inset-0 z-50 flex">
           {/* Backdrop */}
           <div
@@ -589,8 +738,8 @@ print("TokenCare Response:", data)`;
                     <Code2 className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="text-xs font-bold text-white">Developer Suite</h3>
-                    <p className="text-[10px] text-zinc-400 font-mono">Multi-Chain API</p>
+                    <h3 className="text-xs font-bold text-white truncate max-w-[160px]">{displayName}</h3>
+                    <p className="text-[10px] text-zinc-400 font-mono">Edge Worker Console</p>
                   </div>
                 </div>
                 <button
@@ -679,9 +828,21 @@ print("TokenCare Response:", data)`;
           <p className="text-xs text-zinc-400 font-medium">Loading developer credentials...</p>
         </div>
       ) : !project ? (
-        /* ZERO PROJECT STATE - SLIM, COMPACT, BACKGROUND-BLENDED */
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6 lg:p-10 flex flex-col items-center justify-center">
-          <div className="w-full max-w-xl text-center space-y-4 sm:space-y-6 my-auto">
+        /* ZERO PROJECT STATE - SLIM, COMPACT, BACKGROUND-BLENDED FULL SCREEN */
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 lg:p-10 flex flex-col items-center justify-center relative">
+          {/* Subtle Floating Back Button */}
+          {onBack && (
+            <button
+              id="developer-zero-back-btn"
+              onClick={onBack}
+              className="absolute top-3 left-3 sm:top-4 sm:left-4 p-2 rounded-xl border border-zinc-800 bg-zinc-900/80 text-zinc-400 hover:text-white hover:border-zinc-700 transition-colors shrink-0 cursor-pointer z-10"
+              title="Back"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
+
+          <div className="w-full max-w-xl text-center space-y-4 sm:space-y-6 my-auto pt-8 sm:pt-0">
             {/* Badge Icon */}
             <div className="w-12 h-12 sm:w-14 sm:h-14 mx-auto rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-[#00E575] shadow-lg shadow-emerald-500/5">
               <Code2 className="w-6 h-6 sm:w-7 sm:h-7 text-[#00E575]" />
@@ -713,9 +874,7 @@ print("TokenCare Response:", data)`;
               </button>
               <button
                 id="explore-endpoints-primary-btn"
-                onClick={() => {
-                  handleCreateProject();
-                }}
+                onClick={() => setShowCreateModal(true)}
                 className="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-800 bg-zinc-900/60 text-white font-bold text-xs sm:text-sm hover:bg-zinc-800/80 hover:border-zinc-700 transition-all active:scale-95 cursor-pointer"
               >
                 <Zap className="w-4 h-4 text-emerald-400" />
@@ -863,9 +1022,20 @@ print("TokenCare Response:", data)`;
                         </span>
                         <h3 className="text-sm sm:text-base font-bold text-white mt-0.5">Today's Consumption</h3>
                       </div>
-                      <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                        Resets 00:00 UTC
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${
+                            project.is_active !== false
+                              ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                              : 'text-zinc-400 bg-zinc-800/80 border-zinc-700'
+                          }`}
+                        >
+                          {project.is_active !== false ? 'ACTIVE' : 'PAUSED'}
+                        </span>
+                        <span className="text-[10px] font-mono font-bold text-zinc-400 bg-zinc-900/80 px-2 py-0.5 rounded-full border border-zinc-800 hidden xs:inline">
+                          Resets 00:00 UTC
+                        </span>
+                      </div>
                     </div>
 
                     {/* Numbers & Progress Bar */}
@@ -1377,15 +1547,66 @@ print("TokenCare Response:", data)`;
                   </button>
                 </div>
 
-                {/* Plan Selection */}
+                {/* Project Status Control Card */}
+                <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-xs sm:text-sm font-bold text-white">Project Status</h4>
+                        <span
+                          className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border ${
+                            project.is_active !== false
+                              ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                              : 'text-zinc-400 bg-zinc-800/60 border-zinc-700'
+                          }`}
+                        >
+                          {project.is_active !== false ? 'ACTIVE' : 'PAUSED'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">
+                        {project.is_active !== false
+                          ? 'Project is active and edge worker processes API requests.'
+                          : 'Project is paused. Incoming API requests will be rejected.'}
+                      </p>
+                    </div>
+
+                    <button
+                      id="developer-settings-status-toggle-btn"
+                      disabled={togglingActive}
+                      onClick={handleToggleProjectActive}
+                      className={`px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 shadow-sm active:scale-95 cursor-pointer ${
+                        project.is_active !== false
+                          ? 'bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-orange-600/20 border border-orange-500/40 text-orange-300 hover:from-amber-500/30 hover:to-orange-500/30 shadow-orange-500/10'
+                          : 'bg-gradient-to-r from-zinc-800/90 to-zinc-900/90 border border-zinc-700/80 text-zinc-300 hover:bg-zinc-800 hover:text-white hover:border-zinc-600'
+                      }`}
+                    >
+                      {togglingActive ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : project.is_active !== false ? (
+                        <Pause className="w-3.5 h-3.5 fill-current" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                      )}
+                      <span>{project.is_active !== false ? 'Pause Project' : 'Activate Project'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Plan Selection from database */}
                 <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-3">
-                  <h4 className="text-xs sm:text-sm font-bold text-white">Tier & Quota Plan</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {PLANS.map((p) => {
-                      const isCurrent = (project.plan_code || 'free').toLowerCase() === p.id;
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs sm:text-sm font-bold text-white">Tier & Quota Plan</h4>
+                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                      {(project.plan_code || 'free').toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {plans.map((p) => {
+                      const isCurrent = (project.plan_code || 'free').toLowerCase() === p.code.toLowerCase();
+                      const priceLabel = p.monthly_price_usd === 0 ? '$0/mo' : `$${p.monthly_price_usd}/mo`;
                       return (
                         <div
-                          key={p.id}
+                          key={p.code}
                           className={`p-2.5 sm:p-3 rounded-xl border transition-all ${
                             isCurrent
                               ? 'border-[#00E575] bg-[#00E575]/10'
@@ -1394,25 +1615,57 @@ print("TokenCare Response:", data)`;
                         >
                           <div className="flex items-center justify-between">
                             <h5 className="text-xs font-bold text-white">{p.name}</h5>
-                            <span className="text-xs font-extrabold text-emerald-400">{p.price}</span>
+                            <span className="text-xs font-extrabold text-emerald-400">{priceLabel}</span>
                           </div>
-                          <p className="text-[10px] text-zinc-400 mt-0.5 font-mono">{p.calls.toLocaleString()} calls/day</p>
-                          <p className="text-[9px] text-zinc-500 mt-0.5">{p.note}</p>
+                          <p className="text-[10px] text-zinc-400 mt-0.5 font-mono">{p.daily_limit.toLocaleString()} calls/day</p>
+                          {isCurrent ? (
+                            <span className="inline-block text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded mt-1 border border-emerald-500/20">
+                              Active Plan
+                            </span>
+                          ) : (
+                            <p className="text-[9px] text-zinc-500 mt-1">Managed via billing</p>
+                          )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
 
+                {/* Subscriptions History if available */}
+                {subscriptions.length > 0 && (
+                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-2">
+                    <h4 className="text-xs sm:text-sm font-bold text-white">Subscription Records</h4>
+                    <div className="space-y-1.5">
+                      {subscriptions.map((s) => (
+                        <div
+                          key={s.id}
+                          className="p-2 rounded-lg bg-zinc-950 border border-zinc-800/60 flex items-center justify-between text-[11px]"
+                        >
+                          <div>
+                            <span className="font-bold text-white uppercase">{s.plan_code}</span>
+                            <span className="text-zinc-500 text-[10px] ml-2">
+                              Started: {new Date(s.started_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <span className="text-emerald-400 font-bold uppercase text-[10px]">{s.status}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Danger Zone */}
                 <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-red-500/20 bg-red-500/5 backdrop-blur-sm space-y-2">
                   <h4 className="text-xs sm:text-sm font-bold text-red-300">Danger Zone</h4>
                   <p className="text-[10px] text-zinc-400">
-                    Deleting this project immediately revokes the associated API key.
+                    Permanently delete this project and revoke its associated API credentials.
                   </p>
                   <button
                     disabled={deletingProject}
-                    onClick={handleDeleteProject}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setShowDeleteStep1(true);
+                    }}
                     className="px-3 py-2 rounded-lg bg-red-500/20 border border-red-500/40 text-red-300 font-bold text-xs hover:bg-red-500/30 transition-all flex items-center gap-1"
                   >
                     <Trash2 className="w-3 h-3" />
@@ -1448,6 +1701,13 @@ print("TokenCare Response:", data)`;
             </div>
 
             <div className="space-y-3">
+              {error && (
+                <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 flex items-start gap-2 text-rose-300 text-xs animate-in fade-in duration-200">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="flex-1 leading-snug break-words font-medium">{error}</div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-[11px] font-semibold text-zinc-300 mb-1">Project Name</label>
                 <input
@@ -1459,25 +1719,14 @@ print("TokenCare Response:", data)`;
                 />
               </div>
 
-              <div>
-                <label className="block text-[11px] font-semibold text-zinc-300 mb-1">Initial Plan</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {PLANS.slice(0, 2).map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => setSelectedPlanCode(p.id)}
-                      className={`p-2.5 rounded-lg border text-left transition-all ${
-                        selectedPlanCode === p.id
-                          ? 'border-[#00E575] bg-[#00E575]/10'
-                          : 'border-zinc-800 bg-zinc-950'
-                      }`}
-                    >
-                      <div className="font-bold text-xs text-white">{p.name}</div>
-                      <div className="text-[10px] text-emerald-400 font-mono mt-0.5">{p.calls} calls/day</div>
-                    </button>
-                  ))}
+              <div className="p-3 rounded-xl border border-zinc-800/80 bg-zinc-950/60 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-white">Default Tier</span>
+                  <span className="text-emerald-400 font-bold font-mono text-[11px]">Free Tier</span>
                 </div>
+                <p className="text-[10px] text-zinc-400">
+                  Projects start with 100 requests/day and live edge worker access. Upgrades can be managed through subscription billing.
+                </p>
               </div>
             </div>
 
@@ -1528,6 +1777,159 @@ print("TokenCare Response:", data)`;
               >
                 {regeneratingKey && <Loader2 className="w-3 h-3 animate-spin" />}
                 Yes, Rotate Key
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. DELETE PROJECT - STEP 1 (WARNING MODAL) */}
+      {showDeleteStep1 && project && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm sm:max-w-md bg-[#090D1A] border border-red-500/30 rounded-2xl sm:rounded-3xl p-5 sm:p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-500/10 text-red-400 flex items-center justify-center shrink-0 border border-red-500/20">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Developer Project?</h3>
+                <p className="text-[11px] text-zinc-400">Action cannot be undone</p>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 text-xs text-zinc-300 leading-relaxed">
+              <p className="font-semibold text-white">
+                Are you sure you want to permanently delete this Developer project?
+              </p>
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-[11px] text-red-200 space-y-1.5">
+                <p className="font-bold flex items-center gap-1.5 text-red-400">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  Warning:
+                </p>
+                <p className="leading-snug">
+                  Deleting this project will permanently remove the project and its associated Developer data, including API credentials, usage information, request logs, and subscription/project information where the database relationships are configured to cascade.
+                </p>
+                <p className="font-bold text-red-300 pt-1">
+                  This action cannot be undone.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteStep1(false)}
+                className="w-full sm:flex-1 py-2.5 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleProceedToDeleteStep2}
+                className="w-full sm:flex-1 py-2.5 rounded-lg bg-red-500 text-white font-bold text-xs hover:bg-red-600 transition-colors flex items-center justify-center gap-1.5 shadow-md shadow-red-500/20"
+              >
+                I understand, delete this project
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. DELETE PROJECT - STEP 2 (EXPLICIT CONFIRMATION WITH TYPING) */}
+      {showDeleteStep2 && project && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm sm:max-w-md bg-[#090D1A] border border-red-500/40 rounded-2xl sm:rounded-3xl p-5 sm:p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-red-500/10 text-red-400 flex items-center justify-center shrink-0 border border-red-500/20">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-white">
+                    Delete &ldquo;{project.project_name || 'My API Project'}&rdquo;
+                  </h3>
+                  <p className="text-[10px] text-red-400 font-medium">This action is permanent.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowDeleteStep2(false);
+                  setConfirmDeleteInput('');
+                  setDeleteError(null);
+                }}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {deleteError && (
+                <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 flex items-start gap-2 text-rose-300 text-xs animate-in fade-in duration-200">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="flex-1 leading-snug break-words font-medium">{deleteError}</div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-300 mb-1.5">
+                  Type the project name to confirm:
+                </label>
+                <div className="p-2 rounded-lg bg-zinc-950/80 border border-zinc-800 text-zinc-400 text-xs font-mono mb-2 select-all break-all">
+                  {project.project_name}
+                </div>
+                <input
+                  type="text"
+                  value={confirmDeleteInput}
+                  onChange={(e) => {
+                    setConfirmDeleteInput(e.target.value);
+                    if (deleteError) setDeleteError(null);
+                  }}
+                  placeholder={project.project_name}
+                  className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-red-500 outline-none"
+                  autoFocus
+                />
+              </div>
+
+              <p className="text-[10px] text-zinc-400 leading-relaxed">
+                To prevent accidental deletion, enter the exact project name above to enable the permanent deletion button.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteStep2(false);
+                  setConfirmDeleteInput('');
+                  setDeleteError(null);
+                }}
+                className="flex-1 py-2.5 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  deletingProject ||
+                  confirmDeleteInput.trim() !== (project.project_name || '').trim() ||
+                  confirmDeleteInput.trim().length === 0
+                }
+                onClick={handleConfirmPermanentDelete}
+                className={`flex-1 py-2.5 rounded-lg font-extrabold text-xs transition-all flex items-center justify-center gap-1.5 ${
+                  confirmDeleteInput.trim() === (project.project_name || '').trim() &&
+                  confirmDeleteInput.trim().length > 0 &&
+                  !deletingProject
+                    ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30'
+                    : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                }`}
+              >
+                {deletingProject ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                Permanently Delete
               </button>
             </div>
           </div>

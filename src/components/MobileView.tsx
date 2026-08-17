@@ -636,7 +636,7 @@ export const MobileView: React.FC<MobileViewProps> = ({
         )}
       </main>
 
-      {/* Fixed Bottom Navigation Bar (Hidden when on standalone sub-pages / Support pages) */}
+      {/* Fixed Bottom Navigation Bar (Hidden when on standalone sub-pages / Support pages / Developer page) */}
       {mobileTab !== 'withdrawals' &&
         mobileTab !== 'notifications' &&
         mobileTab !== 'mfa' &&
@@ -646,7 +646,9 @@ export const MobileView: React.FC<MobileViewProps> = ({
         mobileTab !== 'live-chat' &&
         mobileTab !== 'terms-privacy' &&
         mobileTab !== 'privacy-policy' &&
-        mobileTab !== 'preferences' && (
+        mobileTab !== 'preferences' &&
+        mobileTab !== 'developer' &&
+        mobileTab !== 'api-console' && (
         <nav className="shrink-0 z-50 bg-[#090C12] backdrop-blur-xl border-t border-zinc-800/80 rounded-t-3xl px-3 pt-2.5 pb-safe-nav shadow-[0_-8px_30px_rgba(0,0,0,0.6)]">
           <div className="max-w-md mx-auto grid grid-cols-5 items-center justify-items-center relative">
             {/* 1. Overview */}
