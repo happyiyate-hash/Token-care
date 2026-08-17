@@ -1,0 +1,62 @@
+name: Fix Developer No Project Route
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Route to main when no Developer project exists
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/views/DeveloperView.tsx')
+          s = p.read_text()
+
+          old = '''    if (cached) {\n      setProject(cached.project);\n      setQuota(cached.quota);\n      setPlans(Array.isArray(cached.plans) && cached.plans.length ? cached.plans : DEFAULT_DEVELOPER_PLANS);\n      setSubscriptions(Array.isArray(cached.subscriptions) ? cached.subscriptions : []);\n      setUsage(Array.isArray(cached.usage) ? cached.usage : []);\n      setLogs(Array.isArray(cached.logs) ? cached.logs : []);\n      if (cached.project) {\n        setEditProjectName(cached.project.project_name || '');\n        setShowCreateModal(false);\n      } else setShowCreateModal(true);\n      setLoading(false);\n    } else if (!background) {\n      setLoading(true);\n    }'''
+
+          new = '''    if (cached?.project) {\n      // Only hydrate the full Developer dashboard from a cache that actually\n      // contains a real project. An empty/partial cache must never render a fake project.\n      setProject(cached.project);\n      setQuota(cached.quota);\n      setPlans(Array.isArray(cached.plans) && cached.plans.length ? cached.plans : DEFAULT_DEVELOPER_PLANS);\n      setSubscriptions(Array.isArray(cached.subscriptions) ? cached.subscriptions : []);\n      setUsage(Array.isArray(cached.usage) ? cached.usage : []);\n      setLogs(Array.isArray(cached.logs) ? cached.logs : []);\n      setEditProjectName(cached.project.project_name || '');\n      setShowCreateModal(false);\n      setLoading(false);\n    } else if (!background) {\n      // There is no cached Developer project. Do not display the Developer\n      // dashboard while waiting for Supabase to tell us whether one exists.\n      setProject(null);\n      setShowCreateModal(false);\n      setLoading(true);\n    }'''
+
+          if s.count(old) != 1:
+              raise SystemExit('Expected Developer cache block was not found exactly once')
+          s = s.replace(old, new, 1)
+
+          old_offline = '''    if (typeof navigator !== 'undefined' && !navigator.onLine) {\n      if (!cached) {\n        setProject(null); setQuota(null); setUsage([]); setLogs([]); setSubscriptions([]); setShowCreateModal(true);\n      }\n      setLoading(false);\n      return;\n    }'''
+
+          new_offline = '''    if (typeof navigator !== 'undefined' && !navigator.onLine) {\n      if (!cached?.project) {\n        // No local Developer project exists, so there is nothing legitimate to\n        // show offline. Return to the main app instead of showing a fake dashboard.\n        setProject(null);\n        setShowCreateModal(false);\n        setLoading(false);\n        onBack?.();\n        return;\n      }\n      setLoading(false);\n      return;\n    }'''
+
+          if s.count(old_offline) != 1:
+              raise SystemExit('Expected offline block was not found exactly once')
+          s = s.replace(old_offline, new_offline, 1)
+
+          old_no_project = '''      if (!proj) {\n        if (hadCachedProject) {\n          clearCachedDeveloperView(userId);\n          setProject(null); setQuota(null); setUsage([]); setLogs([]); setSubscriptions([]); setShowCreateModal(true);\n          showToast('Project deleted. Create a new developer project.', 'info');\n        } else {\n          setProject(null); setQuota(null); setUsage([]); setLogs([]); setSubscriptions([]); setShowCreateModal(true);\n        }\n        return;\n      }'''
+
+          new_no_project = '''      if (!proj) {\n        const wasPreviouslyCached = hadCachedProject;\n        if (wasPreviouslyCached) {\n          clearCachedDeveloperView(userId);\n          showToast('Project deleted. Create a new developer project.', 'info');\n        }\n        // No project exists in Supabase. Never remain on/render the Developer\n        // dashboard. Return to the main page so the app can offer project creation\n        // from its normal entry flow.\n        setProject(null);\n        setQuota(null);\n        setUsage([]);\n        setLogs([]);\n        setSubscriptions([]);\n        setShowCreateModal(false);\n        onBack?.();\n        return;\n      }'''
+
+          if s.count(old_no_project) != 1:
+              raise SystemExit('Expected Supabase no-project block was not found exactly once')
+          s = s.replace(old_no_project, new_no_project, 1)
+
+          p.write_text(s)
+
+      - name: Verify routing guard
+        run: |
+          grep -q "if (cached?.project)" src/views/DeveloperView.tsx
+          grep -q "onBack?.();" src/views/DeveloperView.tsx
+          grep -q "No project exists in Supabase" src/views/DeveloperView.tsx
+
+      - name: Commit and remove one-shot workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/views/DeveloperView.tsx
+          git rm .github/workflows/fix-developer-no-project-route.yml
+          git commit -m "Return to main when Developer project is missing" || exit 0
+          git push
