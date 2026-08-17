@@ -42,6 +42,7 @@ import {
   PanelLeftClose,
 } from 'lucide-react';
 import { ToastNotification } from '../components/ToastNotification';
+import { getCachedDeveloperView, setCachedDeveloperView, clearCachedDeveloperView } from '../services/developerCache';
 import {
   createDeveloperProject,
   getDeveloperApiBaseUrl,
@@ -284,30 +285,54 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     return `${rawName} TC developer`;
   }, [project?.project_name, currentUser]);
 
-  // Load project & stats from Supabase Developer tables and RPCs
-  const loadData = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      // 1. Entry guard check: Call get_my_developer_project() via Supabase
-      const proj = await getDeveloperProject();
+  // Cache-first Developer dashboard: render cached data immediately, then refresh in background online.
+  const loadData = async (options: { background?: boolean } = {}) => {
+    const background = options.background === true;
+    const userId = currentUser?.id;
+    if (!userId) return;
 
-      if (!proj) {
-        // User has no Developer project -> stay on page and do not auto-open modal
-        setProject(null);
-        setQuota(null);
-        setUsage([]);
-        setLogs([]);
-        setSubscriptions([]);
+    const cached = getCachedDeveloperView(userId);
+    const hadCachedProject = !!cached?.project;
+
+    if (cached) {
+      setProject(cached.project);
+      setQuota(cached.quota);
+      setPlans(Array.isArray(cached.plans) && cached.plans.length ? cached.plans : DEFAULT_DEVELOPER_PLANS);
+      setSubscriptions(Array.isArray(cached.subscriptions) ? cached.subscriptions : []);
+      setUsage(Array.isArray(cached.usage) ? cached.usage : []);
+      setLogs(Array.isArray(cached.logs) ? cached.logs : []);
+      if (cached.project) {
+        setEditProjectName(cached.project.project_name || '');
         setShowCreateModal(false);
+      } else setShowCreateModal(true);
+      setLoading(false);
+    } else if (!background) {
+      setLoading(true);
+    }
+
+    setError('');
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (!cached) {
+        setProject(null); setQuota(null); setUsage([]); setLogs([]); setSubscriptions([]); setShowCreateModal(true);
+      }
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const proj = await getDeveloperProject();
+      if (!proj) {
+        if (hadCachedProject) {
+          clearCachedDeveloperView(userId);
+          setProject(null); setQuota(null); setUsage([]); setLogs([]); setSubscriptions([]); setShowCreateModal(true);
+          showToast('Project deleted. Create a new developer project.', 'info');
+        } else {
+          setProject(null); setQuota(null); setUsage([]); setLogs([]); setSubscriptions([]); setShowCreateModal(true);
+        }
         return;
       }
 
-      // User has an existing project -> set project, dismiss create popup, and load dashboard data
-      setProject(proj);
-      setShowCreateModal(false);
-      setEditProjectName(proj.project_name || '');
-
+      setProject(proj); setShowCreateModal(false); setEditProjectName(proj.project_name || '');
       const [quotaData, plansData, usageData, logData, subsData] = await Promise.all([
         getDeveloperQuota().catch(() => null),
         getDeveloperPlans().catch(() => DEFAULT_DEVELOPER_PLANS),
@@ -315,17 +340,15 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
         getDeveloperApiLogs(100).catch(() => []),
         getDeveloperSubscriptions().catch(() => []),
       ]);
-
-      setQuota(quotaData);
-      setPlans(Array.isArray(plansData) && plansData.length > 0 ? plansData : DEFAULT_DEVELOPER_PLANS);
-      setUsage(Array.isArray(usageData) ? usageData : []);
-      setLogs(Array.isArray(logData) ? logData : []);
-      setSubscriptions(Array.isArray(subsData) ? subsData : []);
+      const finalPlans = Array.isArray(plansData) && plansData.length ? plansData : DEFAULT_DEVELOPER_PLANS;
+      const finalUsage = Array.isArray(usageData) ? usageData : [];
+      const finalLogs = Array.isArray(logData) ? logData : [];
+      const finalSubs = Array.isArray(subsData) ? subsData : [];
+      setQuota(quotaData); setPlans(finalPlans); setUsage(finalUsage); setLogs(finalLogs); setSubscriptions(finalSubs);
+      setCachedDeveloperView({ userId, project: proj, quota: quotaData, plans: finalPlans, subscriptions: finalSubs, usage: finalUsage, logs: finalLogs, lastSyncTimestamp: Date.now() });
     } catch (err: any) {
-      console.warn('[DeveloperView] load error:', err);
-      const msg = err?.message || 'Unable to load developer project from Supabase.';
-      setError(msg);
-      showToast(msg, 'error');
+      console.warn('[DeveloperView] refresh failed; preserving cached dashboard:', err);
+      if (!cached) setError(err?.message || 'Unable to load developer project from Supabase.');
     } finally {
       setLoading(false);
     }
@@ -333,7 +356,15 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
 
   useEffect(() => {
     loadData();
-  }, []);
+    const handleOffline = () => setLoading(false);
+    const handleOnline = () => loadData({ background: true });
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [currentUser?.id]);
 
   // Sync selected endpoint parameters
   const currentEndpoint = useMemo(() => {

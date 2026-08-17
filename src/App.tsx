@@ -91,6 +91,7 @@ import { ToastNotification } from './components/ToastNotification';
 import { ConnectionStatusToast } from './components/ConnectionStatusToast';
 import {
   getCachedAppData,
+  getLatestCachedAppData,
   setCachedAppData,
   clearCachedAppData,
   SessionStatus,
@@ -376,12 +377,34 @@ export default function App() {
 
           await performBackgroundSync(session.user, true);
         } else {
-          setCurrentUser(null);
-          setUserProfile(null);
-          setTokens([]);
+          const cachedIdentity = getLatestCachedAppData();
+          if (cachedIdentity?.userId) {
+            setCurrentUser({ id: cachedIdentity.userId, email: cachedIdentity.userEmail || '', user_metadata: cachedIdentity.userProfile ? { full_name: cachedIdentity.userProfile.display_name, username: cachedIdentity.userProfile.username, avatar_url: cachedIdentity.userProfile.avatar_url } : {} });
+            if (cachedIdentity.userProfile) setUserProfile(cachedIdentity.userProfile);
+            if (cachedIdentity.tokens) setTokens(cachedIdentity.tokens);
+            if (cachedIdentity.wallet) setWallet(cachedIdentity.wallet);
+            setUnreadNotificationCount(cachedIdentity.unreadCount || 0);
+            setLastSyncTimestamp(cachedIdentity.lastSyncTimestamp || null);
+            setSessionStatus('offline');
+          } else {
+            setCurrentUser(null);
+            setUserProfile(null);
+            setTokens([]);
+          }
         }
       } catch (err) {
-        console.warn('[App] Offline cache bootstrap note:', err);
+        const cachedIdentity = getLatestCachedAppData();
+        if (cachedIdentity?.userId) {
+          setCurrentUser({ id: cachedIdentity.userId, email: cachedIdentity.userEmail || '', user_metadata: {} });
+          if (cachedIdentity.userProfile) setUserProfile(cachedIdentity.userProfile);
+          if (cachedIdentity.tokens) setTokens(cachedIdentity.tokens);
+          if (cachedIdentity.wallet) setWallet(cachedIdentity.wallet);
+          setUnreadNotificationCount(cachedIdentity.unreadCount || 0);
+          setLastSyncTimestamp(cachedIdentity.lastSyncTimestamp || null);
+          setSessionStatus('offline');
+        } else {
+          console.warn('[App] Offline cache bootstrap note:', err);
+        }
       }
     };
 

@@ -124,6 +124,23 @@ export async function getCachedAppData(userId?: string): Promise<CachedAppData |
 /**
  * Synchronous local storage reader for instant synchronous hydration before React renders
  */
+export function getLatestCachedAppData(): CachedAppData | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    let newest: CachedAppData | null = null;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith('tokencare_cache_')) continue;
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as CachedAppData;
+      if (!parsed?.userId) continue;
+      if (!newest || Number(parsed.lastSyncTimestamp || 0) > Number(newest.lastSyncTimestamp || 0)) newest = parsed;
+    }
+    return newest;
+  } catch { return null; }
+}
+
 export function getSyncCachedAppData(userId?: string): CachedAppData | null {
   if (!userId) return null;
   try {
