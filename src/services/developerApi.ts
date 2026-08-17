@@ -11,6 +11,10 @@ export interface DeveloperProject {
   updated_at: string;
   is_active?: boolean;
   suspended_at?: string | null;
+  subscription_status?: string;
+  subscription_started_at?: string | null;
+  subscription_expires_at?: string | null;
+  quota_updated_at?: string;
   allowed_origins?: string[];
   webhook_url?: string;
 }
@@ -20,6 +24,52 @@ export interface DeveloperUsage {
   calls: number;
   successful_calls: number;
   blocked_calls: number;
+}
+
+export interface DeveloperQuota {
+  has_project: boolean;
+  project?: {
+    id: string;
+    project_name: string;
+    api_key: string;
+    plan_code: string;
+    daily_limit: number;
+    is_active: boolean;
+    subscription_status: string;
+    subscription_started_at?: string | null;
+    subscription_expires_at?: string | null;
+  };
+  usage?: {
+    usage_date: string;
+    used: number;
+    successful: number;
+    blocked: number;
+    limit: number;
+    remaining: number;
+  };
+}
+
+export interface DeveloperPlan {
+  code: string;
+  name: string;
+  monthly_price_usd: number;
+  daily_limit: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface DeveloperSubscription {
+  id: string;
+  project_id: string;
+  user_id: string;
+  plan_code: string;
+  status: string;
+  started_at: string;
+  expires_at: string;
+  provider?: string | null;
+  provider_subscription_id?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DeveloperApiKey {
@@ -77,6 +127,28 @@ export async function getDeveloperProject(): Promise<DeveloperProject | null> {
   return project;
 }
 
+export async function getDeveloperQuota(): Promise<DeveloperQuota> {
+  const { data, error } = await getSupabase().rpc('get_my_developer_quota');
+  if (error) throw new Error(error.message || 'Unable to load developer quota.');
+  return (data || { has_project: false }) as DeveloperQuota;
+}
+
+export async function getDeveloperPlans(): Promise<DeveloperPlan[]> {
+  const { data, error } = await getSupabase()
+    .from('developer_plans')
+    .select('code,name,monthly_price_usd,daily_limit,is_active,created_at')
+    .eq('is_active', true)
+    .order('monthly_price_usd', { ascending: true });
+  if (error) throw new Error(error.message || 'Unable to load developer plans.');
+  return Array.isArray(data) ? (data as DeveloperPlan[]) : [];
+}
+
+export async function getDeveloperSubscriptions(): Promise<DeveloperSubscription[]> {
+  const { data, error } = await getSupabase().rpc('get_my_developer_subscriptions');
+  if (error) throw new Error(error.message || 'Unable to load developer subscriptions.');
+  return Array.isArray(data) ? (data as DeveloperSubscription[]) : [];
+}
+
 export async function createDeveloperProject(projectName: string): Promise<DeveloperProject> {
   const name = projectName.trim() || 'My TokenCare App';
   const { data, error } = await getSupabase().rpc('create_my_developer_project', { p_project_name: name });
@@ -96,12 +168,12 @@ export async function regenerateDeveloperApiKey(): Promise<string> {
   return project.api_key;
 }
 
-export async function updateDeveloperProject(updates: Partial<Pick<DeveloperProject, 'project_name' | 'plan_code'>>): Promise<DeveloperProject> {
+export async function updateDeveloperProject(updates: Pick<DeveloperProject, 'project_name'>): Promise<DeveloperProject> {
   const current = await getDeveloperProject();
   if (!current) throw new Error('No active developer project found.');
   const { data, error } = await getSupabase().rpc('update_my_developer_project', {
-    p_project_name: updates.project_name ?? current.project_name,
-    p_plan_code: updates.plan_code ?? current.plan_code,
+    p_project_name: updates.project_name || current.project_name,
+    p_plan_code: current.plan_code,
   });
   if (error) throw new Error(error.message || 'Unable to update developer project.');
   const project = unwrapRpc<DeveloperProject>(data);
@@ -141,7 +213,6 @@ export async function getDeveloperApiLogs(limit = 100): Promise<DeveloperApiLog[
   })) : [];
 }
 
-/** Optimistic UI entry; the authoritative request log is written by Vercel/Supabase. */
 export function recordDeveloperApiCall(options: {
   endpoint: string; method?: string; action?: string; status: number; latency_ms: number; error_code?: string | null; user_agent?: string;
 }): DeveloperApiLog {
@@ -175,5 +246,8 @@ export async function createDeveloperApiKey(name: string): Promise<{ key: string
 
 export async function revokeDeveloperApiKey(_id: string): Promise<boolean> { await regenerateDeveloperApiKey(); return true; }
 
-export function getDeveloperApiBaseUrl(): string { return 'https://token-care-mwv9.vercel.app'; }
-export const WORKER_BASE_URL = 'https://token-care-mwv9.vercel.app';
+export function getDeveloperApiBaseUrl(): string {
+  return (import.meta.env.VITE_DEVELOPER_API_URL || '').trim().replace(/\/$/, '');
+}
+
+export const WORKER_BASE_URL = (import.meta.env.VITE_WORKER_BASE_URL || '').trim().replace(/\/$/, '');
