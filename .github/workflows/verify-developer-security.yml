@@ -1,0 +1,27 @@
+name: Verify Developer Security Wiring
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: TypeScript check
+        run: |
+          npm ci
+          npm run lint
+      - name: Remove one-shot verification workflow
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/verify-developer-security.yml
+          git commit -m "Remove one-shot Developer security verification" || exit 0
+          git push
