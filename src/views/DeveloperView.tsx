@@ -215,6 +215,8 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   const [regeneratingKey, setRegeneratingKey] = useState(false);
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [showCooldownModal, setShowCooldownModal] = useState(false);
+  const [rotatePasswordInput, setRotatePasswordInput] = useState('');
+  const [rotatePasswordError, setRotatePasswordError] = useState<string | null>(null);
 
   // Security Operations: Password-Protected Reveal Key
   const [showRevealKeyModal, setShowRevealKeyModal] = useState(false);
@@ -458,23 +460,24 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   // Handle Key Regeneration via rotate_my_developer_api_key RPC
   const handleRegenerateKey = async () => {
     if (!project) return;
+    setRotatePasswordError(null);
+    if (!rotatePasswordInput.trim()) {
+      setRotatePasswordError('Project password is required.');
+      return;
+    }
     setRegeneratingKey(true);
     setError('');
     try {
-      const updatedProject = await regenerateDeveloperApiKey();
-      recordApiKeyRotated(project.id);
-      if (updatedProject) {
-        setProject(updatedProject);
-      } else {
-        const fresh = await getDeveloperProject();
-        if (fresh) setProject(fresh);
-      }
+      const updatedProject = await regenerateDeveloperApiKey(rotatePasswordInput);
+      setProject(updatedProject);
+      setRotatePasswordInput('');
       setShowRegenerateConfirm(false);
-      showToast('API Key rotated successfully! The old key has been invalidated.', 'success');
+      showToast('API Key rotated successfully! The old key has been invalidated for security.', 'success');
       await loadData();
     } catch (err: any) {
       console.error('[DeveloperView] rotate key error:', err);
       const msg = err?.message || 'Failed to rotate API key in Supabase.';
+      setRotatePasswordError(msg.includes('API_KEY_ROTATION_COOLDOWN') ? 'API key rotation is still locked for 24 hours.' : msg);
       setError(msg);
       showToast(msg, 'error');
     } finally {
@@ -578,7 +581,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
         return;
       }
 
-      await setDeveloperProjectActive(false);
+      await setDeveloperProjectActive(false, pausePasswordInput);
       const freshProject = await getDeveloperProject();
       if (freshProject) {
         setProject(freshProject);
@@ -617,23 +620,10 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
         return;
       }
 
-      // Reactivate in database
-      await setDeveloperProjectActive(true);
-
-      // Automatically generate a fresh API key upon resume to invalidate any potentially compromised key
-      try {
-        const freshWithNewKey = await regenerateDeveloperApiKey();
-        recordApiKeyRotated(project.id);
-        if (freshWithNewKey) {
-          setProject(freshWithNewKey);
-        } else {
-          const fresh = await getDeveloperProject();
-          if (fresh) setProject(fresh);
-        }
-      } catch (rotErr) {
-        console.warn('[DeveloperView] auto rotate key on activate warning:', rotErr);
-        const fresh = await getDeveloperProject();
-        if (fresh) setProject(fresh);
+      // Reactivate and rotate the API key atomically in Supabase.
+      const activatedProject = await setDeveloperProjectActive(true, activatePasswordInput);
+      if (activatedProject && typeof activatedProject !== 'boolean') {
+        setProject(activatedProject);
       }
 
       setShowActivateModal(false);
@@ -685,7 +675,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
         return;
       }
 
-      await updateProjectPassword(project.id, newPasswordInput);
+      await updateProjectPassword(project.id, newPasswordInput, currentPasswordInput);
       setShowChangePasswordModal(false);
       setCurrentPasswordInput('');
       setNewPasswordInput('');
@@ -1460,7 +1450,7 @@ print("TokenCare Response:", data)`;
                           : `${String(project.api_key || '').slice(0, 10)}••••••••••••••••${String(project.api_key || '').slice(-4)}`}
                       </div>
                       <button
-                        onClick={() => setShowKey(!showKey)}
+                        onClick={handleToggleRevealKey}
                         className="p-2 sm:p-2.5 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white transition-colors shrink-0"
                         title={showKey ? 'Hide key' : 'Reveal key'}
                       >
@@ -1486,7 +1476,7 @@ print("TokenCare Response:", data)`;
                       Created: {new Date(project.created_at).toLocaleDateString()}
                     </div>
                     <button
-                      onClick={() => setShowRegenerateConfirm(true)}
+                      onClick={handleOpenRotateKeyModal}
                       className="text-[11px] font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 transition-colors"
                     >
                       <RefreshCw className="w-3 h-3" />
@@ -1796,6 +1786,32 @@ print("TokenCare Response:", data)`;
                   </button>
                 </div>
 
+                {/* Project Password Security */}
+                <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
+                        <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                        Project Password
+                      </h4>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Used for sensitive Developer security actions.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCurrentPasswordInput('');
+                        setNewPasswordInput('');
+                        setConfirmNewPasswordInput('');
+                        setChangePasswordError(null);
+                        setShowChangePasswordModal(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-200 text-[11px] font-bold hover:bg-zinc-800 transition-colors"
+                    >
+                      Change Password
+                    </button>
+                  </div>
+                </div>
+
                 {/* Project Status Control Card */}
                 <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-2.5">
                   <div className="flex items-center justify-between gap-3">
@@ -1968,6 +1984,30 @@ print("TokenCare Response:", data)`;
                 />
               </div>
 
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-300 mb-1">Project Password</label>
+                <input
+                  type={showCreatePassword ? 'text' : 'password'}
+                  value={projectPasswordInput ?? ''}
+                  onChange={(e) => setProjectPasswordInput(e.target.value)}
+                  placeholder="At least 12 characters"
+                  className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-emerald-500 outline-none"
+                />
+                <p className="text-[9px] text-zinc-500 mt-1">Keep this password safe. It protects pause, activation, key rotation, and key reveal.</p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-300 mb-1">Confirm Project Password</label>
+                <input
+                  type={showCreatePassword ? 'text' : 'password'}
+                  value={confirmPasswordInput ?? ''}
+                  onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                  placeholder="Repeat your project password"
+                  className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-emerald-500 outline-none"
+                />
+                {createPasswordError && <p className="text-[10px] text-rose-300 mt-1">{createPasswordError}</p>}
+              </div>
+
               <div className="p-3 rounded-xl border border-zinc-800/80 bg-zinc-950/60 space-y-1">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-bold text-white">Default Tier</span>
@@ -2012,6 +2052,18 @@ print("TokenCare Response:", data)`;
             <p className="text-[11px] text-zinc-400 leading-relaxed">
               Your current API key will immediately stop working. Any application using the old key will need to be updated with the new key.
             </p>
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-semibold text-zinc-300">Project Password</label>
+              <input
+                type="password"
+                value={rotatePasswordInput}
+                onChange={(e) => { setRotatePasswordInput(e.target.value); setRotatePasswordError(null); }}
+                placeholder="Enter project password"
+                className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-amber-500 outline-none"
+                autoFocus
+              />
+              {rotatePasswordError && <p className="text-[10px] text-rose-300">{rotatePasswordError}</p>}
+            </div>
             <div className="flex items-center gap-2 pt-1">
               <button
                 type="button"
@@ -2029,6 +2081,75 @@ print("TokenCare Response:", data)`;
                 {regeneratingKey && <Loader2 className="w-3 h-3 animate-spin" />}
                 Rotate API Key
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Security: Reveal API Key */}
+      {showRevealKeyModal && project && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-[#090D1A] border border-zinc-800 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-3 shadow-2xl">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center"><Eye className="w-4 h-4" /></div>
+            <h4 className="text-sm sm:text-base font-bold text-white">Reveal API Key</h4>
+            <p className="text-[11px] text-zinc-400">Enter your project password to reveal the current key.</p>
+            <input type="password" value={revealPasswordInput} onChange={(e) => { setRevealPasswordInput(e.target.value); setRevealError(null); }} placeholder="Project password" className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-emerald-500 outline-none" autoFocus />
+            {revealError && <p className="text-[10px] text-rose-300">{revealError}</p>}
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={() => setShowRevealKeyModal(false)} className="flex-1 py-2 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400 hover:text-white">Cancel</button>
+              <button type="button" disabled={verifyingReveal} onClick={handleVerifyAndRevealKey} className="flex-1 py-2 rounded-lg bg-[#00E575] text-black font-bold text-xs flex items-center justify-center gap-1">{verifyingReveal && <Loader2 className="w-3 h-3 animate-spin" />}Reveal Key</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Security: Pause Project */}
+      {showPauseModal && project && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-[#090D1A] border border-orange-500/30 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-3 shadow-2xl">
+            <div className="w-9 h-9 rounded-xl bg-orange-500/10 text-orange-400 flex items-center justify-center"><Pause className="w-4 h-4 fill-current" /></div>
+            <h4 className="text-sm sm:text-base font-bold text-white">Pause Project?</h4>
+            <p className="text-[11px] text-zinc-400">Pausing immediately blocks incoming API requests.</p>
+            <input type="password" value={pausePasswordInput} onChange={(e) => { setPausePasswordInput(e.target.value); setPauseError(null); }} placeholder="Project password" className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-orange-500 outline-none" autoFocus />
+            {pauseError && <p className="text-[10px] text-rose-300">{pauseError}</p>}
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={() => setShowPauseModal(false)} className="flex-1 py-2 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400 hover:text-white">Cancel</button>
+              <button type="button" disabled={pausingProject} onClick={handlePauseProjectWithPassword} className="flex-1 py-2 rounded-lg bg-orange-500 text-black font-bold text-xs flex items-center justify-center gap-1">{pausingProject && <Loader2 className="w-3 h-3 animate-spin" />}Pause Project</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Security: Activate Project */}
+      {showActivateModal && project && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-[#090D1A] border border-zinc-800 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-3 shadow-2xl">
+            <div className="w-9 h-9 rounded-xl bg-zinc-800 text-zinc-200 flex items-center justify-center"><Play className="w-4 h-4 fill-current" /></div>
+            <h4 className="text-sm sm:text-base font-bold text-white">Activate Project?</h4>
+            <p className="text-[11px] text-zinc-400">Activation also generates a fresh API key and invalidates the previous key.</p>
+            <input type="password" value={activatePasswordInput} onChange={(e) => { setActivatePasswordInput(e.target.value); setActivateError(null); }} placeholder="Project password" className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-emerald-500 outline-none" autoFocus />
+            {activateError && <p className="text-[10px] text-rose-300">{activateError}</p>}
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={() => setShowActivateModal(false)} className="flex-1 py-2 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400 hover:text-white">Cancel</button>
+              <button type="button" disabled={activatingProject} onClick={handleActivateProjectWithPassword} className="flex-1 py-2 rounded-lg bg-[#00E575] text-black font-bold text-xs flex items-center justify-center gap-1">{activatingProject && <Loader2 className="w-3 h-3 animate-spin" />}Activate Project</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Security: Change Project Password */}
+      {showChangePasswordModal && project && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-[#090D1A] border border-zinc-800 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-3 shadow-2xl">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center"><Lock className="w-4 h-4" /></div>
+            <h4 className="text-sm sm:text-base font-bold text-white">Change Project Password</h4>
+            <input type="password" value={currentPasswordInput} onChange={(e) => { setCurrentPasswordInput(e.target.value); setChangePasswordError(null); }} placeholder="Current password" className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-emerald-500 outline-none" autoFocus />
+            <input type="password" value={newPasswordInput} onChange={(e) => { setNewPasswordInput(e.target.value); setChangePasswordError(null); }} placeholder="New password (12+ characters)" className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-emerald-500 outline-none" />
+            <input type="password" value={confirmNewPasswordInput} onChange={(e) => { setConfirmNewPasswordInput(e.target.value); setChangePasswordError(null); }} placeholder="Confirm new password" className="w-full p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white text-xs focus:border-emerald-500 outline-none" />
+            {changePasswordError && <p className="text-[10px] text-rose-300">{changePasswordError}</p>}
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={() => setShowChangePasswordModal(false)} className="flex-1 py-2 rounded-lg border border-zinc-800 text-xs font-bold text-zinc-400 hover:text-white">Cancel</button>
+              <button type="button" disabled={changingPassword} onClick={handleChangePassword} className="flex-1 py-2 rounded-lg bg-[#00E575] text-black font-bold text-xs flex items-center justify-center gap-1">{changingPassword && <Loader2 className="w-3 h-3 animate-spin" />}Save Password</button>
             </div>
           </div>
         </div>
