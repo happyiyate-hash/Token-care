@@ -1,0 +1,34 @@
+name: Secure Developer Key Copy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  secure:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require password-protected reveal before copy
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/views/DeveloperView.tsx')
+          s = p.read_text()
+          old = "  const handleCopyKey = async () => {\n    if (!project?.api_key) return;"
+          new = "  const handleCopyKey = async () => {\n    if (!project?.api_key) return;\n    if (!showKey) {\n      handleToggleRevealKey();\n      return;\n    }"
+          if s.count(old) != 1:
+              raise SystemExit('handleCopyKey anchor not found exactly once')
+          p.write_text(s.replace(old, new, 1))
+      - name: Commit and remove one-shot workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/views/DeveloperView.tsx
+          git rm .github/workflows/fix-developer-key-copy.yml
+          git commit -m "Require key reveal before copying API key"
+          git push
