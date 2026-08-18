@@ -44,16 +44,31 @@ export function setCachedDeveloperView(data: CachedDeveloperViewData): void {
   if (!data?.userId || typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(key(data.userId), JSON.stringify(data));
+    if (data.project?.api_key) {
+      localStorage.setItem('tokencare_active_developer_key', data.project.api_key);
+    }
   } catch (err) {
     console.warn('[DeveloperCache] Unable to persist Developer dashboard:', err);
   }
 }
 
 export function clearCachedDeveloperView(userId?: string): void {
-  if (!userId || typeof localStorage === 'undefined') return;
+  if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.removeItem(key(userId));
+    if (userId) {
+      localStorage.removeItem(key(userId));
+    }
+    localStorage.removeItem('tokencare_active_developer_key');
   } catch {
     // Ignore cache cleanup errors.
+  }
+}
+
+export function getActiveDeveloperApiKey(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    return localStorage.getItem('tokencare_active_developer_key') || null;
+  } catch {
+    return null;
   }
 }

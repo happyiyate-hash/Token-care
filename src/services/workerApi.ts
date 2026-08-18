@@ -1,3 +1,16 @@
+import { getActiveDeveloperApiKey } from './developerCache';
+
+function getRequestHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  const activeKey = getActiveDeveloperApiKey();
+  if (activeKey) {
+    headers['x-api-key'] = activeKey;
+  }
+  return headers;
+}
+
 /**
  * Fetches full token details by contract address and chain
  * Payload action: "getTokenDetails"
@@ -78,7 +91,7 @@ export async function executeWorkerGenericAction(
   try {
     const proxyResponse = await fetch('/api/worker-proxy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getRequestHeaders(),
       body: JSON.stringify(payload),
     });
 
@@ -87,16 +100,21 @@ export async function executeWorkerGenericAction(
       return data.result || data;
     }
   } catch (proxyError) {
-    console.warn('[Worker API Proxy] Server route failed, trying direct fetch...', proxyError);
+    console.warn('[Worker API Proxy] Server route note:', proxyError);
   }
 
-  // 2. Direct fetch fallback
+  // 2. Direct fetch fallback with timeout
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), 4000) : null;
+
   try {
     const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getRequestHeaders(),
       body: JSON.stringify(payload),
+      signal: controller?.signal,
     });
+    if (timeoutId) clearTimeout(timeoutId);
 
     let result: any = null;
     try {
@@ -107,10 +125,11 @@ export async function executeWorkerGenericAction(
 
     return result;
   } catch (error: any) {
-    console.error('[Worker API Direct] Execution error:', error);
+    if (timeoutId) clearTimeout(timeoutId);
+    console.warn('[Worker API Direct] Execution fallback note:', error?.message || error);
     return {
       success: false,
-      error: error.message || 'Worker connection failed',
+      error: error?.message || 'Worker connection unavailable',
     };
   }
 }
@@ -155,7 +174,7 @@ export async function getTokenByAddressFromWorker(
   try {
     const proxyResponse = await fetch('/api/get-token-by-address', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getRequestHeaders(),
       body: JSON.stringify(payload),
     });
 
@@ -175,16 +194,21 @@ export async function getTokenByAddressFromWorker(
       };
     }
   } catch (proxyError) {
-    console.warn('[Worker API Lookup Proxy] Failed, trying direct fetch...', proxyError);
+    console.warn('[Worker API Lookup Proxy] Note:', proxyError);
   }
 
-  // 2. Direct client-side fetch fallback
+  // 2. Direct client-side fetch fallback with timeout
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), 4000) : null;
+
   try {
     const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getRequestHeaders(),
       body: JSON.stringify(payload),
+      signal: controller?.signal,
     });
+    if (timeoutId) clearTimeout(timeoutId);
 
     let result: any = null;
     try {
@@ -206,10 +230,11 @@ export async function getTokenByAddressFromWorker(
       raw: result,
     };
   } catch (error: any) {
-    console.error('[Worker API Lookup Direct] Error fetching token by address:', error);
+    if (timeoutId) clearTimeout(timeoutId);
+    console.warn('[Worker API Lookup Direct] Lookup fallback note:', error?.message || error);
     return {
       exists: false,
-      error: error.message || 'Worker connection failed',
+      error: error?.message || 'Worker connection unavailable',
     };
   }
 }
@@ -232,7 +257,7 @@ export async function getAllTokensFromWorker(
   try {
     const proxyResponse = await fetch('/api/get-all-tokens', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getRequestHeaders(),
       body: JSON.stringify(payload),
     });
 
@@ -247,16 +272,21 @@ export async function getAllTokensFromWorker(
       };
     }
   } catch (proxyError) {
-    console.warn('[Worker API Directory Proxy] Failed, trying direct fetch...', proxyError);
+    console.warn('[Worker API Directory Proxy] Note:', proxyError);
   }
 
-  // 2. Direct fetch fallback
+  // 2. Direct fetch fallback with timeout
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), 4000) : null;
+
   try {
     const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getRequestHeaders(),
       body: JSON.stringify(payload),
+      signal: controller?.signal,
     });
+    if (timeoutId) clearTimeout(timeoutId);
 
     let result: any = null;
     try {
@@ -273,10 +303,12 @@ export async function getAllTokensFromWorker(
       raw: result,
     };
   } catch (error: any) {
-    console.error('[Worker API Directory Direct] Error fetching all tokens:', error);
+    if (timeoutId) clearTimeout(timeoutId);
+    console.warn('[Worker API Directory Direct] Directory fetch note:', error?.message || error);
     return {
       success: false,
-      error: error.message || 'Worker directory connection failed',
+      tokens: [],
+      error: error?.message || 'Worker directory connection unavailable',
     };
   }
 }
@@ -310,28 +342,30 @@ export async function uploadTokensToWorker(
   try {
     const proxyResponse = await fetch('/api/upload-tokens', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getRequestHeaders(),
       body: JSON.stringify(payload),
     });
 
     if (proxyResponse.ok) {
       const data = await proxyResponse.json();
-      console.log('[Worker API via Proxy] Success:', data);
       return { success: true, result: data.result };
     }
   } catch (proxyError) {
-    console.warn('[Worker API Proxy] Proxy request failed, attempting direct fetch...', proxyError);
+    console.warn('[Worker API Proxy] Upload proxy note:', proxyError);
   }
 
-  // 2. Direct client-side fetch fallback
+  // 2. Direct client-side fetch fallback with timeout
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), 4000) : null;
+
   try {
     const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getRequestHeaders(),
       body: JSON.stringify(payload),
+      signal: controller?.signal,
     });
+    if (timeoutId) clearTimeout(timeoutId);
 
     let result: any = null;
     try {
@@ -340,13 +374,13 @@ export async function uploadTokensToWorker(
       result = await response.text();
     }
 
-    console.log('[Worker API Direct] Response:', result);
     return { success: response.ok, result };
   } catch (error: any) {
-    console.error('[Worker API Direct] Failed to upload tokens:', error);
+    if (timeoutId) clearTimeout(timeoutId);
+    console.warn('[Worker API Direct] Failed to upload tokens note:', error?.message || error);
     return {
       success: false,
-      error: error.message || 'Failed to connect to Cloudflare Worker endpoint.',
+      error: error?.message || 'Failed to connect to Cloudflare Worker endpoint.',
     };
   }
 }
