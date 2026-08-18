@@ -3,55 +3,102 @@ import { REWARD_RATE_USD } from '../constants/chains';
 import { getAllTokensFromWorker } from './workerApi';
 import { getNetworkInfo } from './chainLogos';
 import { safeSetItem, sanitizeTokenForStorage } from './storage';
-import { fetchAllGlobalTokensFromSupabase } from '../lib/supabase';
 
-const EXPLORE_CACHE_KEY = 'tokencare_explore_directory_v2';
+const EXPLORE_CACHE_KEY = 'tokencare_explore_directory_v3';
+const EXPLORE_CACHE_VERSION = 3;
 
-// Baseline tokens array is kept empty so no fake or hardcoded token documentation/data is baked into the app.
+export interface ExploreDirectoryStatus {
+  state: 'cached' | 'loading' | 'success' | 'unavailable';
+  message?: string;
+}
+
+interface ExploreDirectoryCache {
+  version: number;
+  date: string;
+  tokens: SubmittedToken[];
+  status: 'success' | 'unavailable';
+}
+
+// Explore is intentionally Cloudflare-only. Supabase is NOT called from this directory.
 export const BASELINE_EXPLORE_TOKENS: SubmittedToken[] = [];
 
-/**
- * Gets cached token directory synchronously from localStorage
- */
-export function getCachedExploreTokens(): SubmittedToken[] {
+function getTodayKey(): string {
+  // Calendar-day cache. A new request becomes eligible when the user's local calendar date changes.
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function readCache(): ExploreDirectoryCache | null {
   try {
     const raw = localStorage.getItem(EXPLORE_CACHE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed;
-      }
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      parsed.version === EXPLORE_CACHE_VERSION &&
+      typeof parsed.date === 'string' &&
+      Array.isArray(parsed.tokens) &&
+      (parsed.status === 'success' || parsed.status === 'unavailable')
+    ) {
+      return parsed as ExploreDirectoryCache;
     }
   } catch (err) {
-    console.warn('[ExploreCache] Failed to parse cached directory:', err);
+    console.warn('[ExploreCache] Failed to parse directory cache:', err);
   }
-  return [];
+
+  return null;
 }
 
 /**
- * Saves token list to localStorage cache
+ * Gets today's cached Explore directory. Expired data is deliberately not returned.
  */
-export function saveCachedExploreTokens(tokens: SubmittedToken[]): void {
+export function getCachedExploreTokens(): SubmittedToken[] {
+  const cache = readCache();
+  return cache?.date === getTodayKey() ? cache.tokens : [];
+}
+
+export function getExploreDirectoryStatus(): ExploreDirectoryStatus {
+  const cache = readCache();
+  if (!cache || cache.date !== getTodayKey()) return { state: 'loading' };
+  if (cache.status === 'unavailable') {
+    return {
+      state: 'unavailable',
+      message: 'Token directory is not available right now.',
+    };
+  }
+  return { state: 'cached' };
+}
+
+function saveDirectoryCache(tokens: SubmittedToken[], status: 'success' | 'unavailable'): void {
   try {
-    const sanitized = (tokens || []).slice(0, 60).map(sanitizeTokenForStorage);
-    safeSetItem(EXPLORE_CACHE_KEY, JSON.stringify(sanitized));
+    const sanitized = (tokens || []).slice(0, 100).map(sanitizeTokenForStorage);
+    const cache: ExploreDirectoryCache = {
+      version: EXPLORE_CACHE_VERSION,
+      date: getTodayKey(),
+      tokens: sanitized,
+      status,
+    };
+    safeSetItem(EXPLORE_CACHE_KEY, JSON.stringify(cache));
   } catch (err) {
-    console.warn('[ExploreCache] Notice saving token cache:', err);
+    console.warn('[ExploreCache] Failed to save directory cache:', err);
   }
 }
 
 /**
- * Transforms raw API token item from Worker into full SubmittedToken format
+ * Transforms a raw token item returned by the Cloudflare Worker into SubmittedToken.
  */
 export function normalizeWorkerToken(item: any): SubmittedToken {
   const chainKey = item.blockchain || item.chainId || item.chain || 'polygon';
   const netInfo = getNetworkInfo(chainKey);
 
-  const address = item.contractAddress || item.address || item.tokenAddress || '0x0000000000000000000000000000000000000000';
+  const address = item.contractAddress || item.address || item.tokenAddress || '';
   const symbol = (item.symbol || 'TOK').toUpperCase();
   const name = item.name || item.tokenName || symbol;
   const logoUrl = item.logoUrl || item.logo || netInfo.logoUrl;
-
   const trustScore = Number(item.trustScore || item.safetyScore || item.score || 95);
 
   return {
@@ -106,55 +153,65 @@ export function normalizeWorkerToken(item: any): SubmittedToken {
 }
 
 /**
- * Initializes Explore token directory directly from Cloud Storage (Supabase Database + Worker Endpoint)
- * Architecture:
- * Check local cache -> Fetch live tokens directly from Cloud Storage (Supabase DB & Worker API) -> Update cache & trigger UI callback
+ * Initializes Explore using ONLY the Cloudflare Worker directory.
+ *
+ * Network policy:
+ * - At most ONE Worker directory request per calendar day per browser/device.
+ * - A valid same-day cache causes ZERO network requests, including on refresh.
+ * - A failed Worker request is also cached as unavailable for the day, preventing request storms.
+ * - Search is always local and never triggers another Worker/Supabase request.
  */
 export async function initGlobalExploreDirectory(
   onUpdate?: (tokens: SubmittedToken[]) => void,
-  userTokens: SubmittedToken[] = []
+  onStatus?: (status: ExploreDirectoryStatus) => void
 ): Promise<SubmittedToken[]> {
-  // 1. Immediately read existing local cache
-  const cached = getCachedExploreTokens();
+  const today = getTodayKey();
+  const cached = readCache();
 
-  // Merge helper
-  const mergeLists = (base: SubmittedToken[], extra: SubmittedToken[]) => {
-    const map = new Map<string, SubmittedToken>();
-    base.forEach((t) => map.set(t.address.toLowerCase().trim(), t));
-    extra.forEach((t) => map.set(t.address.toLowerCase().trim(), t));
-    return Array.from(map.values());
-  };
+  // Same-day cache: absolutely no network request.
+  if (cached?.date === today) {
+    const status: ExploreDirectoryStatus =
+      cached.status === 'success'
+        ? { state: 'cached' }
+        : { state: 'unavailable', message: 'Token directory is not available right now.' };
 
-  const initialMerged = mergeLists(cached, userTokens);
+    onStatus?.(status);
+    onUpdate?.(cached.tokens);
+    return cached.tokens;
+  }
 
-  // 2. Fetch live data directly from Cloud Storage (Supabase DB + Worker Endpoint)
-  (async () => {
-    try {
-      const [supabaseTokens, workerRes] = await Promise.all([
-        fetchAllGlobalTokensFromSupabase().catch(() => []),
-        getAllTokensFromWorker(1, 100).catch(() => ({ success: false, tokens: [] })),
-      ]);
+  onStatus?.({ state: 'loading', message: 'Loading token directory…' });
 
-      let fetchedWorkerNormalized: SubmittedToken[] = [];
-      if (workerRes.success && Array.isArray(workerRes.tokens)) {
-        fetchedWorkerNormalized = workerRes.tokens.map(normalizeWorkerToken);
-      }
+  try {
+    const workerRes = await getAllTokensFromWorker(1, 100);
 
-      const allCloudTokens = mergeLists(supabaseTokens, fetchedWorkerNormalized);
-      
-      if (allCloudTokens.length > 0) {
-        const finalUpdated = mergeLists(userTokens, allCloudTokens);
-        saveCachedExploreTokens(finalUpdated);
-        if (onUpdate) {
-          onUpdate(finalUpdated);
-        }
-      } else if (onUpdate) {
-        onUpdate(initialMerged);
-      }
-    } catch (err) {
-      console.warn('[ExploreDirectory] Cloud storage fetch error:', err);
+    if (!workerRes.success || !Array.isArray(workerRes.tokens)) {
+      // Cache the failure so refreshes do NOT repeatedly consume the Worker quota.
+      saveDirectoryCache([], 'unavailable');
+      onUpdate?.([]);
+      onStatus?.({
+        state: 'unavailable',
+        message: 'Token directory is not available right now.',
+      });
+      return [];
     }
-  })();
 
-  return initialMerged;
+    const workerTokens = workerRes.tokens
+      .map(normalizeWorkerToken)
+      .filter((token) => Boolean(token.address));
+
+    saveDirectoryCache(workerTokens, 'success');
+    onUpdate?.(workerTokens);
+    onStatus?.({ state: 'success' });
+    return workerTokens;
+  } catch (err) {
+    console.warn('[ExploreDirectory] Cloudflare Worker request failed:', err);
+    saveDirectoryCache([], 'unavailable');
+    onUpdate?.([]);
+    onStatus?.({
+      state: 'unavailable',
+      message: 'Token directory is not available right now.',
+    });
+    return [];
+  }
 }
