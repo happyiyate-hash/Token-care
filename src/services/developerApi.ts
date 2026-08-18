@@ -163,7 +163,6 @@ export async function getDeveloperProject(): Promise<DeveloperProject | null> {
   }
 }
 
-/** Deprecated compatibility helper. Password verification is authoritative in Supabase. */
 export async function hashProjectPassword(password: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(password);
@@ -185,10 +184,6 @@ export async function verifyProjectPassword(inputPassword: string, _project?: De
   return data === true || data === 'true';
 }
 
-/**
- * Password changes are database-authoritative. The current password must be verified by the UI
- * before this function is called; the database function below performs the actual hash update.
- */
 export async function updateProjectPassword(_projectId: string, newPassword: string, currentPassword?: string): Promise<void> {
   if (!newPassword?.trim()) throw new Error('New project password is required.');
   if (newPassword.trim().length < 12) throw new Error('Project password must be at least 12 characters.');
@@ -341,7 +336,37 @@ export async function deleteDeveloperProject(): Promise<boolean> {
 export async function getDeveloperUsage(days = 30): Promise<DeveloperDailyUsage[]> {
   try {
     const { data, error } = await supabase().rpc('get_my_developer_usage', { p_days: days });
-    if (!error && Array.isArray(data)) return data.map((row: any) => ({ project_id: row.project_id, usage_date: row.usage_date, calls: Number(row.calls ?? row.used ?? 0), successful_calls: Number(row.successful_calls ?? row.successful ?? row.calls ?? 0), blocked_calls: Number(row.blocked_calls ?? row.blocked ?? 0) }));
+    if (!error && Array.isArray(data)) {
+      const rows = data.map((row: any) => ({
+        project_id: row.project_id,
+        usage_date: String(row.usage_date),
+        calls: Number(row.calls ?? row.used ?? 0),
+        successful_calls: Number(row.successful_calls ?? row.successful ?? 0),
+        blocked_calls: Number(row.blocked_calls ?? row.blocked ?? 0),
+      }));
+
+      // Always return a complete calendar window. A missing database row means zero usage,
+      // never synthetic/fake traffic. This prevents DeveloperView's legacy fallback curve
+      // from ever being used and keeps the chart truthful.
+      const byDate = new Map(rows.map((row) => [row.usage_date, row]));
+      const today = new Date();
+      const complete: DeveloperDailyUsage[] = [];
+      for (let offset = days - 1; offset >= 0; offset -= 1) {
+        const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const usageDate = `${year}-${month}-${day}`;
+        complete.push(byDate.get(usageDate) ?? {
+          project_id: rows[0]?.project_id,
+          usage_date: usageDate,
+          calls: 0,
+          successful_calls: 0,
+          blocked_calls: 0,
+        });
+      }
+      return complete;
+    }
   } catch (e) { console.warn('[DeveloperAPI] usage:', e); }
   return [];
 }
