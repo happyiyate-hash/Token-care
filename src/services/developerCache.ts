@@ -27,7 +27,14 @@ export function getCachedDeveloperView(userId?: string): CachedDeveloperViewData
     const raw = localStorage.getItem(key(userId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CachedDeveloperViewData;
-    return parsed?.userId === userId ? parsed : null;
+    if (parsed?.userId !== userId) return null;
+    
+    // Strict project validation: only consider a project cached if it has a real string ID
+    if (!parsed?.project || typeof parsed.project.id !== 'string' || !parsed.project.id.trim()) {
+      return null;
+    }
+    
+    return parsed;
   } catch {
     return null;
   }

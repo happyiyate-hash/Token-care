@@ -42,6 +42,7 @@ import {
   PanelLeftClose,
 } from 'lucide-react';
 import { ToastNotification } from '../components/ToastNotification';
+import { getSupabase } from '../lib/supabase';
 import { getCachedDeveloperView, setCachedDeveloperView, clearCachedDeveloperView } from '../services/developerCache';
 import {
   createDeveloperProject,
@@ -178,6 +179,449 @@ const ENDPOINTS: EndpointDefinition[] = [
   },
 ];
 
+function DeveloperLoadingSkeleton({ onBack }: { onBack?: () => void }) {
+  return (
+    <div className="flex-1 w-full h-full min-h-0 flex flex-col bg-[#030710] text-white overflow-hidden animate-pulse">
+      {/* Header Skeleton */}
+      <header className="shrink-0 z-40 border-b border-zinc-800/80 bg-[#060913]/95 px-2.5 sm:px-5 py-2.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="p-1.5 sm:p-2 rounded-lg border border-zinc-800 bg-zinc-900/80 text-zinc-400 hover:text-white"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+          )}
+          <div className="h-5 w-36 sm:w-48 bg-zinc-800/60 rounded-md" />
+          <div className="h-4 w-12 bg-emerald-500/10 rounded-full border border-emerald-500/20 hidden sm:block" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="h-6 w-28 bg-zinc-800/60 rounded-lg" />
+        </div>
+      </header>
+
+      {/* Body Skeleton with Sidebar and Main Cards */}
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
+        {/* Desktop Sidebar Skeleton */}
+        <aside className="hidden md:flex flex-col w-56 lg:w-60 shrink-0 border-r border-zinc-800/80 bg-[#070A14] p-3 justify-between">
+          <div className="space-y-2">
+            <div className="h-3 w-20 bg-zinc-800/60 rounded px-2 mb-3" />
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="h-10 w-full bg-zinc-900/50 rounded-xl border border-zinc-800/40" />
+            ))}
+          </div>
+          <div className="h-16 w-full bg-zinc-950/60 rounded-xl border border-zinc-800/80" />
+        </aside>
+
+        {/* Main Skeleton */}
+        <main className="flex-1 min-h-0 overflow-y-auto p-2.5 sm:p-4 md:p-6 space-y-3 sm:space-y-4">
+          {/* Top 3-Col Grid Skeleton */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 sm:gap-3">
+            <div className="md:col-span-2 h-28 sm:h-32 rounded-xl sm:rounded-2xl border border-zinc-800/60 bg-zinc-900/40 p-4 space-y-3">
+              <div className="h-4 w-32 bg-zinc-800/60 rounded" />
+              <div className="h-7 w-24 bg-zinc-800/80 rounded" />
+              <div className="h-2 w-full bg-zinc-800/50 rounded-full" />
+            </div>
+            <div className="h-28 sm:h-32 rounded-xl sm:rounded-2xl border border-zinc-800/60 bg-zinc-900/40 p-4 space-y-3">
+              <div className="h-4 w-28 bg-zinc-800/60 rounded" />
+              <div className="space-y-2 pt-1">
+                <div className="h-3 w-full bg-zinc-800/40 rounded" />
+                <div className="h-3 w-3/4 bg-zinc-800/40 rounded" />
+              </div>
+            </div>
+          </div>
+
+          {/* Persistent Call Volume Card Skeleton */}
+          <div className="rounded-xl sm:rounded-2xl border border-zinc-800/60 bg-zinc-900/40 p-4 sm:p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-zinc-800/60" />
+                <div className="space-y-1">
+                  <div className="h-4 w-28 bg-zinc-800/60 rounded" />
+                  <div className="h-3 w-20 bg-zinc-800/40 rounded" />
+                </div>
+              </div>
+              <div className="h-6 w-24 bg-zinc-800/80 rounded" />
+            </div>
+            {/* Chart Area Shimmer */}
+            <div className="h-44 sm:h-52 w-full bg-zinc-950/40 rounded-xl border border-zinc-800/30" />
+            {/* Footer metrics shimmer */}
+            <div className="border-t border-zinc-800/40 pt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="space-y-1">
+                  <div className="h-2.5 w-16 bg-zinc-800/40 rounded" />
+                  <div className="h-4 w-12 bg-zinc-800/60 rounded" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Endpoint preview skeleton */}
+          <div className="h-20 rounded-xl sm:rounded-2xl border border-zinc-800/60 bg-zinc-900/40 p-4 space-y-2">
+            <div className="h-3 w-24 bg-zinc-800/60 rounded" />
+            <div className="h-8 w-full bg-zinc-950/50 rounded-lg" />
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+interface CallVolumeChartCardProps {
+  usage: DeveloperUsage[];
+}
+
+function CallVolumeChartCard({ usage }: CallVolumeChartCardProps) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
+  // Dynamic 30-day chronological timeline derived strictly from database usage records
+  const thirtyDaysData = useMemo(() => {
+    const days: Array<{
+      dateStr: string;
+      label: string;
+      fullDate: string;
+      calls: number;
+    }> = [];
+    const now = new Date();
+
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const dateStr = d.toISOString().slice(0, 10);
+      const month = d.toLocaleDateString('en-US', { month: 'short' });
+      const dayNum = d.getDate();
+      const isToday = i === 0;
+
+      const matched = usage.find((u) => u.usage_date === dateStr);
+      const calls = Number(matched?.calls ?? 0);
+
+      days.push({
+        dateStr,
+        label: isToday ? `${month} ${dayNum} (Today)` : `${month} ${dayNum}`,
+        fullDate: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        calls,
+      });
+    }
+    return days;
+  }, [usage]);
+
+  const totalRequests = useMemo(() => {
+    return thirtyDaysData.reduce((acc, d) => acc + d.calls, 0);
+  }, [thirtyDaysData]);
+
+  const peakDay = useMemo(() => {
+    let max = 0;
+    let peakDate = '—';
+    for (const d of thirtyDaysData) {
+      if (d.calls > max) {
+        max = d.calls;
+        peakDate = d.label.replace(' (Today)', '');
+      }
+    }
+    return { calls: max, date: peakDate };
+  }, [thirtyDaysData]);
+
+  const activeDays = useMemo(() => {
+    return thirtyDaysData.filter((d) => d.calls > 0).length;
+  }, [thirtyDaysData]);
+
+  const avgPerDay = useMemo(() => {
+    return (totalRequests / 30).toFixed(1);
+  }, [totalRequests]);
+
+  // Dynamic Y-axis scale based strictly on actual data
+  const maxY = useMemo(() => {
+    const max = peakDay.calls;
+    if (max <= 0) return 10;
+    if (max <= 10) return 10;
+    if (max <= 50) return 50;
+    if (max <= 100) return 100;
+    if (max <= 250) return 300;
+    if (max <= 500) return 500;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(max)));
+    return Math.ceil(max / magnitude) * magnitude;
+  }, [peakDay.calls]);
+
+  // SVG dimensions
+  const svgWidth = 720;
+  const svgHeight = 180;
+  const padLeft = 40;
+  const padRight = 15;
+  const padTop = 15;
+  const padBottom = 25;
+  const plotWidth = svgWidth - padLeft - padRight;
+  const plotHeight = svgHeight - padTop - padBottom;
+
+  // Calculate points
+  const points = useMemo(() => {
+    return thirtyDaysData.map((d, idx) => {
+      const x = padLeft + (idx / 29) * plotWidth;
+      const yRatio = d.calls / maxY;
+      const y = padTop + plotHeight - yRatio * plotHeight;
+      return { x, y, data: d, index: idx };
+    });
+  }, [thirtyDaysData, maxY, plotWidth, plotHeight]);
+
+  // Smooth SVG path generator
+  const { linePath, areaPath } = useMemo(() => {
+    if (points.length === 0) return { linePath: '', areaPath: '' };
+
+    if (totalRequests === 0) {
+      // Clean flat baseline at y = zero level
+      const zeroY = padTop + plotHeight;
+      const flatLine = `M ${points[0].x} ${zeroY} L ${points[points.length - 1].x} ${zeroY}`;
+      return { linePath: flatLine, areaPath: '' };
+    }
+
+    let path = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i === 0 ? 0 : i - 1];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[i + 2 >= points.length ? points.length - 1 : i + 2];
+
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+      path += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    }
+
+    const zeroY = padTop + plotHeight;
+    const area = `${path} L ${points[points.length - 1].x.toFixed(1)} ${zeroY} L ${points[0].x.toFixed(1)} ${zeroY} Z`;
+
+    return { linePath: path, areaPath: area };
+  }, [points, totalRequests, padTop, plotHeight]);
+
+  // Key X-axis tick indices (5 evenly distributed points: 0, 7, 14, 21, 29)
+  const xTickIndices = [0, 7, 14, 21, 29];
+
+  // Y-axis tick values (0, mid, max)
+  const yTicks = [
+    { value: maxY, y: padTop },
+    { value: Math.round(maxY * 0.66), y: padTop + plotHeight * 0.33 },
+    { value: Math.round(maxY * 0.33), y: padTop + plotHeight * 0.66 },
+    { value: 0, y: padTop + plotHeight },
+  ];
+
+  const hoveredPoint = hoveredIndex !== null ? points[hoveredIndex] : null;
+
+  return (
+    <div className="p-4 sm:p-5 rounded-xl sm:rounded-2xl border border-zinc-800/80 bg-zinc-900/80 backdrop-blur-md space-y-4 shadow-sm">
+      {/* Top Header Row */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-[#00E575] shrink-0">
+            <BarChart3 className="w-4 h-4 text-[#00E575]" />
+          </div>
+          <div>
+            <h3 className="text-xs sm:text-sm font-bold text-white tracking-tight">Call Volume</h3>
+            <p className="text-[11px] text-zinc-400 font-medium">Last 30 Days</p>
+          </div>
+        </div>
+
+        {/* Real Database Request Counter */}
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-xl sm:text-2xl font-extrabold text-white font-mono tracking-tight">
+            {totalRequests.toLocaleString()}
+          </span>
+          <span className="text-xs sm:text-sm font-semibold text-zinc-400">
+            {totalRequests === 1 ? 'request' : 'requests'}
+          </span>
+        </div>
+      </div>
+
+      {/* Clean 30-Day SVG Chart Area */}
+      <div
+        className="relative w-full overflow-hidden select-none"
+        onMouseLeave={() => setHoveredIndex(null)}
+      >
+        <svg
+          viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+          className="w-full h-44 sm:h-52 overflow-visible"
+        >
+          <defs>
+            <linearGradient id="callVolumeGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#00E575" stopOpacity="0.32" />
+              <stop offset="60%" stopColor="#00E575" stopOpacity="0.08" />
+              <stop offset="100%" stopColor="#00E575" stopOpacity="0.0" />
+            </linearGradient>
+          </defs>
+
+          {/* Horizontal Grid Lines */}
+          {yTicks.map((tick, i) => (
+            <g key={i}>
+              <line
+                x1={padLeft}
+                y1={tick.y}
+                x2={svgWidth - padRight}
+                y2={tick.y}
+                stroke="#27272a"
+                strokeWidth="1"
+                strokeDasharray={i === yTicks.length - 1 ? 'none' : '3 3'}
+                strokeOpacity={i === yTicks.length - 1 ? 0.8 : 0.45}
+              />
+              <text
+                x={padLeft - 8}
+                y={tick.y + 3}
+                fill="#71717a"
+                fontSize="10"
+                fontFamily="monospace"
+                textAnchor="end"
+              >
+                {tick.value}
+              </text>
+            </g>
+          ))}
+
+          {/* Area Fill */}
+          {areaPath && (
+            <path
+              d={areaPath}
+              fill="url(#callVolumeGradient)"
+              className="transition-all duration-300"
+            />
+          )}
+
+          {/* Line Stroke */}
+          <path
+            d={linePath}
+            fill="none"
+            stroke={totalRequests > 0 ? '#00E575' : '#3f3f46'}
+            strokeWidth={totalRequests > 0 ? 2.25 : 1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+
+          {/* Hover Guides & Target Areas */}
+          {points.map((p, idx) => (
+            <g key={idx}>
+              {/* Invisible full-height hover column */}
+              <rect
+                x={p.x - (plotWidth / 29) / 2}
+                y={padTop}
+                width={plotWidth / 29}
+                height={plotHeight}
+                fill="transparent"
+                className="cursor-crosshair"
+                onMouseEnter={() => setHoveredIndex(idx)}
+              />
+
+              {/* Data Point Dot */}
+              {totalRequests > 0 && (
+                <circle
+                  cx={p.x}
+                  cy={p.y}
+                  r={hoveredIndex === idx ? 4.5 : (p.data.calls > 0 ? 2.5 : 1.5)}
+                  fill={hoveredIndex === idx ? '#ffffff' : (p.data.calls > 0 ? '#00E575' : '#27272a')}
+                  stroke={hoveredIndex === idx ? '#00E575' : '#09090b'}
+                  strokeWidth={hoveredIndex === idx ? 2 : 1}
+                  className="transition-all duration-150 pointer-events-none"
+                />
+              )}
+            </g>
+          ))}
+
+          {/* Active Hover Vertical Line Indicator */}
+          {hoveredPoint && totalRequests > 0 && (
+            <line
+              x1={hoveredPoint.x}
+              y1={padTop}
+              x2={hoveredPoint.x}
+              y2={padTop + plotHeight}
+              stroke="#00E575"
+              strokeWidth="1"
+              strokeDasharray="2 2"
+              strokeOpacity="0.7"
+              className="pointer-events-none"
+            />
+          )}
+
+          {/* Bottom X-Axis Labels */}
+          {xTickIndices.map((idx) => {
+            const p = points[idx];
+            if (!p) return null;
+            const isLast = idx === 29;
+            return (
+              <text
+                key={idx}
+                x={p.x}
+                y={svgHeight - 4}
+                fill="#71717a"
+                fontSize="10"
+                fontFamily="inherit"
+                textAnchor={idx === 0 ? 'start' : isLast ? 'end' : 'middle'}
+              >
+                {p.data.label}
+              </text>
+            );
+          })}
+        </svg>
+
+        {/* Hover Tooltip */}
+        {hoveredPoint && (
+          <div
+            className="absolute pointer-events-none z-30 transform -translate-x-1/2 -translate-y-full mb-2 bg-zinc-950 border border-zinc-700/80 px-2.5 py-1.5 rounded-lg shadow-xl"
+            style={{
+              left: `${(hoveredPoint.x / svgWidth) * 100}%`,
+              top: `${Math.max(25, (hoveredPoint.y / svgHeight) * 100)}%`,
+            }}
+          >
+            <div className="text-[10px] text-zinc-400 font-medium">{hoveredPoint.data.fullDate}</div>
+            <div className="text-xs font-bold font-mono text-[#00E575]">
+              {hoveredPoint.data.calls.toLocaleString()} {hoveredPoint.data.calls === 1 ? 'call' : 'calls'}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 4-Metric Real Breakdown Row */}
+      <div className="border-t border-zinc-800/70 pt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-left">
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00E575]" />
+            Average / Day
+          </div>
+          <div className="text-sm sm:text-base font-bold font-mono text-white">{avgPerDay}</div>
+        </div>
+
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+            Peak Day
+          </div>
+          <div className="text-sm sm:text-base font-bold font-mono text-white">
+            {peakDay.calls}{' '}
+            <span className="text-[10px] font-normal text-zinc-400 font-sans">{peakDay.calls > 0 ? peakDay.date : ''}</span>
+          </div>
+        </div>
+
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+            Total Requests
+          </div>
+          <div className="text-sm sm:text-base font-bold font-mono text-white">
+            {totalRequests.toLocaleString()}
+          </div>
+        </div>
+
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            Active Days
+          </div>
+          <div className="text-sm sm:text-base font-bold font-mono text-white">
+            {activeDays} <span className="text-[10px] font-normal text-zinc-400 font-sans">of 30 days</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DeveloperView({ onBack, currentUser }: DeveloperViewProps) {
   // State
   const [project, setProject] = useState<DeveloperProject | null>(null);
@@ -270,33 +714,46 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   const endpointBaseUrl = useMemo(() => getDeveloperApiBaseUrl(), []);
   const liveWorkerUrl = WORKER_BASE_URL;
 
-  // Format header title to match: "<name> TC developer" (e.g., "wisdom TC developer")
+  // Format header title to match: "<name> TC developer" (e.g., "TokenCare TC developer")
   const displayName = useMemo(() => {
-    const rawName =
-      project?.project_name?.trim() ||
-      currentUser?.user_metadata?.full_name?.trim() ||
-      currentUser?.username?.trim() ||
-      currentUser?.email?.split('@')[0]?.trim() ||
-      'wisdom';
-
+    const rawName = project?.project_name?.trim() || 'TokenCare';
     if (/TC developer$/i.test(rawName)) {
       return rawName;
     }
     return `${rawName} TC developer`;
-  }, [project?.project_name, currentUser]);
+  }, [project?.project_name]);
 
-  // Cache-first Developer dashboard: render cached data immediately, then refresh in background online.
+  // Robust Developer dashboard loader:
+  // - Online with cached project: hydrate immediately, then verify against Supabase in background
+  // - Online with no cached project: show loading skeleton, check Supabase -> load project or show Create Project
+  // - Online with stale cache (project deleted in DB): clear cache, clear dashboard, show Create Project
+  // - Offline with cached project: show cached dashboard
+  // - Offline with no cached project: show Create Project screen
   const loadData = async (options: { background?: boolean } = {}) => {
     const background = options.background === true;
-    const userId = currentUser?.id;
-    if (!userId) return;
+    
+    // Resolve user ID from props or Supabase session
+    let userId = currentUser?.id;
+    if (!userId) {
+      try {
+        const { data } = await getSupabase().auth.getUser();
+        userId = data?.user?.id;
+      } catch (e) {
+        console.warn('[DeveloperView] auth.getUser error:', e);
+      }
+    }
+
+    if (!userId) {
+      setProject(null);
+      setLoading(false);
+      return;
+    }
 
     const cached = getCachedDeveloperView(userId);
-    const hadCachedProject = !!cached?.project;
+    const hadCachedProject = !!(cached?.project && cached.project.id);
 
-    if (cached?.project) {
-      // Only hydrate the full Developer dashboard from a cache that actually
-      // contains a real project. An empty/partial cache must never render a fake project.
+    if (hadCachedProject && cached?.project) {
+      // Hydrate state immediately from valid cached project for instant UI
       setProject(cached.project);
       setQuota(cached.quota);
       setPlans(Array.isArray(cached.plans) && cached.plans.length ? cached.plans : DEFAULT_DEVELOPER_PLANS);
@@ -307,50 +764,50 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       setShowCreateModal(false);
       setLoading(false);
     } else if (!background) {
-      // There is no cached Developer project. Do not display the Developer
-      // dashboard while waiting for Supabase to tell us whether one exists.
+      // No valid cached project: show loading skeleton while checking Supabase
       setProject(null);
       setShowCreateModal(false);
       setLoading(true);
     }
 
     setError('');
+
+    // Offline Handling: Cache is authoritative temporarily; do not query Supabase
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      if (!cached?.project) {
-        // No local Developer project exists, so there is nothing legitimate to
-        // show offline. Return to the main app instead of showing a fake dashboard.
+      if (!hadCachedProject) {
         setProject(null);
         setShowCreateModal(false);
         setLoading(false);
-        onBack?.();
         return;
       }
       setLoading(false);
       return;
     }
 
+    // Online Handling: Supabase is authoritative source of truth
     try {
       const proj = await getDeveloperProject();
       if (!proj) {
-        const wasPreviouslyCached = hadCachedProject;
-        if (wasPreviouslyCached) {
+        // Supabase confirms no project exists for this account
+        if (hadCachedProject) {
           clearCachedDeveloperView(userId);
           showToast('Project deleted. Create a new developer project.', 'info');
         }
-        // No project exists in Supabase. Never remain on/render the Developer
-        // dashboard. Return to the main page so the app can offer project creation
-        // from its normal entry flow.
         setProject(null);
         setQuota(null);
         setUsage([]);
         setLogs([]);
         setSubscriptions([]);
         setShowCreateModal(false);
-        onBack?.();
+        setLoading(false);
         return;
       }
 
-      setProject(proj); setShowCreateModal(false); setEditProjectName(proj.project_name || '');
+      // Valid project found on database
+      setProject(proj);
+      setShowCreateModal(false);
+      setEditProjectName(proj.project_name || '');
+
       const [quotaData, plansData, usageData, logData, subsData] = await Promise.all([
         getDeveloperQuota().catch(() => null),
         getDeveloperPlans().catch(() => DEFAULT_DEVELOPER_PLANS),
@@ -358,15 +815,33 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
         getDeveloperApiLogs(100).catch(() => []),
         getDeveloperSubscriptions().catch(() => []),
       ]);
+
       const finalPlans = Array.isArray(plansData) && plansData.length ? plansData : DEFAULT_DEVELOPER_PLANS;
       const finalUsage = Array.isArray(usageData) ? usageData : [];
       const finalLogs = Array.isArray(logData) ? logData : [];
       const finalSubs = Array.isArray(subsData) ? subsData : [];
-      setQuota(quotaData); setPlans(finalPlans); setUsage(finalUsage); setLogs(finalLogs); setSubscriptions(finalSubs);
-      setCachedDeveloperView({ userId, project: proj, quota: quotaData, plans: finalPlans, subscriptions: finalSubs, usage: finalUsage, logs: finalLogs, lastSyncTimestamp: Date.now() });
+
+      setQuota(quotaData);
+      setPlans(finalPlans);
+      setUsage(finalUsage);
+      setLogs(finalLogs);
+      setSubscriptions(finalSubs);
+
+      setCachedDeveloperView({
+        userId,
+        project: proj,
+        quota: quotaData,
+        plans: finalPlans,
+        subscriptions: finalSubs,
+        usage: finalUsage,
+        logs: finalLogs,
+        lastSyncTimestamp: Date.now(),
+      });
     } catch (err: any) {
       console.warn('[DeveloperView] refresh failed; preserving cached dashboard:', err);
-      if (!cached) setError(err?.message || 'Unable to load developer project from Supabase.');
+      if (!hadCachedProject) {
+        setError(err?.message || 'Unable to load developer project from database.');
+      }
     } finally {
       setLoading(false);
     }
@@ -1114,11 +1589,8 @@ print("TokenCare Response:", data)`;
       )}
 
       {/* 3. MAIN WORKSPACE */}
-      {loading ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-          <Loader2 className="w-6 h-6 text-[#00E575] animate-spin mb-2" />
-          <p className="text-xs text-zinc-400 font-medium">Loading developer credentials...</p>
-        </div>
+      {loading && !project ? (
+        <DeveloperLoadingSkeleton onBack={onBack} />
       ) : !project ? (
         /* ZERO PROJECT STATE - SLIM, COMPACT, BACKGROUND-BLENDED FULL SCREEN */
         <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 lg:p-10 flex flex-col items-center justify-center relative">
@@ -1404,48 +1876,8 @@ print("TokenCare Response:", data)`;
                   </div>
                 </div>
 
-                {/* 2. Interactive 30-Day Calls Chart */}
-                <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-2 sm:space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <BarChart3 className="w-3.5 h-3.5 text-emerald-400" />
-                      <h3 className="text-xs sm:text-sm font-bold text-white">Call Volume (Last 30 Days)</h3>
-                    </div>
-                    <span className="text-[10px] text-zinc-400">
-                      Total: {usage.reduce((acc, curr) => acc + curr.calls, 0)} requests
-                    </span>
-                  </div>
-
-                  {/* Responsive Bar Chart */}
-                  <div className="h-28 sm:h-36 md:h-44 flex items-end gap-1 sm:gap-1.5 pt-3 pb-1.5 px-2 bg-zinc-950/50 rounded-xl border border-zinc-800/40">
-                    {usage.map((day, idx) => {
-                      const heightPercent = Math.min(100, Math.max(8, (day.calls / Math.max(1, dailyLimit)) * 100));
-                      const isToday = day.usage_date === todayStr;
-                      return (
-                        <div
-                          key={idx}
-                          className="flex-1 flex flex-col items-center h-full justify-end group relative"
-                        >
-                          <div
-                            className={`w-full rounded-t transition-all ${
-                              isToday
-                                ? 'bg-[#00E575] shadow-md shadow-[#00E575]/30'
-                                : 'bg-emerald-500/50 group-hover:bg-emerald-400'
-                            }`}
-                            style={{ height: `${heightPercent}%` }}
-                          />
-
-                          {/* Hover Tooltip */}
-                          <div className="absolute bottom-full mb-1.5 hidden group-hover:flex flex-col items-center pointer-events-none z-30">
-                            <div className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-[9px] font-mono text-white whitespace-nowrap shadow-xl">
-                              <span className="text-emerald-400 font-bold">{day.calls} calls</span> ({day.usage_date.slice(5)})
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                {/* 2. Persistent 30-Day Call Volume Dashboard Card */}
+                <CallVolumeChartCard usage={usage} />
 
                 {/* 3. Quick Start & Live Worker Endpoint Preview */}
                 <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-2">
