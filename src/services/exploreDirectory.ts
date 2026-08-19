@@ -1,11 +1,13 @@
 import { SubmittedToken } from '../types';
 import { REWARD_RATE_USD } from '../constants/chains';
-import { getAllTokensFromWorker } from './workerApi';
 import { getNetworkInfo } from './chainLogos';
 import { safeSetItem, sanitizeTokenForStorage } from './storage';
 
-const EXPLORE_CACHE_KEY = 'tokencare_explore_directory_v3';
-const EXPLORE_CACHE_VERSION = 3;
+const EXPLORE_CACHE_KEY = 'tokencare_explore_directory_v4';
+const EXPLORE_CACHE_VERSION = 4;
+const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes TTL
+
+const WORKER_ENDPOINT = 'https://rough-meadow-6435.happyiyate.workers.dev/';
 
 export interface ExploreDirectoryStatus {
   state: 'cached' | 'loading' | 'success' | 'unavailable';
@@ -14,16 +16,16 @@ export interface ExploreDirectoryStatus {
 
 interface ExploreDirectoryCache {
   version: number;
-  date: string;
+  timestamp: number; // exact epoch timestamp
+  date: string; // YYYY-MM-DD
   tokens: SubmittedToken[];
   status: 'success' | 'unavailable';
 }
 
-// Explore is intentionally Cloudflare-only. Supabase is NOT called from this directory.
+// Baseline tokens array is kept empty so no fake or database fallback tokens are injected
 export const BASELINE_EXPLORE_TOKENS: SubmittedToken[] = [];
 
 function getTodayKey(): string {
-  // Calendar-day cache. A new request becomes eligible when the user's local calendar date changes.
   const now = new Date();
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
@@ -40,7 +42,7 @@ function readCache(): ExploreDirectoryCache | null {
     if (
       parsed &&
       parsed.version === EXPLORE_CACHE_VERSION &&
-      typeof parsed.date === 'string' &&
+      typeof parsed.timestamp === 'number' &&
       Array.isArray(parsed.tokens) &&
       (parsed.status === 'success' || parsed.status === 'unavailable')
     ) {
@@ -53,31 +55,45 @@ function readCache(): ExploreDirectoryCache | null {
   return null;
 }
 
+function isCacheFresh(cache: ExploreDirectoryCache | null): boolean {
+  if (!cache) return false;
+  const now = Date.now();
+  // Valid if within 15 minutes and same calendar date
+  const isWithinTTL = now - cache.timestamp < CACHE_TTL_MS;
+  const isSameDay = cache.date === getTodayKey();
+  return isWithinTTL && isSameDay;
+}
+
 /**
- * Gets today's cached Explore directory. Expired data is deliberately not returned.
+ * Gets cached Explore tokens synchronously from localStorage
  */
 export function getCachedExploreTokens(): SubmittedToken[] {
   const cache = readCache();
-  return cache?.date === getTodayKey() ? cache.tokens : [];
+  // Return cached tokens if valid
+  return cache ? cache.tokens : [];
 }
 
 export function getExploreDirectoryStatus(): ExploreDirectoryStatus {
   const cache = readCache();
-  if (!cache || cache.date !== getTodayKey()) return { state: 'loading' };
-  if (cache.status === 'unavailable') {
-    return {
-      state: 'unavailable',
-      message: 'Token directory is not available right now.',
-    };
+  if (!cache) return { state: 'loading' };
+  if (isCacheFresh(cache)) {
+    if (cache.status === 'unavailable') {
+      return {
+        state: 'unavailable',
+        message: 'Token directory is not available right now.',
+      };
+    }
+    return { state: 'cached' };
   }
-  return { state: 'cached' };
+  return { state: 'loading' };
 }
 
 function saveDirectoryCache(tokens: SubmittedToken[], status: 'success' | 'unavailable'): void {
   try {
-    const sanitized = (tokens || []).slice(0, 100).map(sanitizeTokenForStorage);
+    const sanitized = (tokens || []).slice(0, 150).map(sanitizeTokenForStorage);
     const cache: ExploreDirectoryCache = {
       version: EXPLORE_CACHE_VERSION,
+      timestamp: Date.now(),
       date: getTodayKey(),
       tokens: sanitized,
       status,
@@ -91,18 +107,21 @@ function saveDirectoryCache(tokens: SubmittedToken[], status: 'success' | 'unava
 /**
  * Transforms a raw token item returned by the Cloudflare Worker into SubmittedToken.
  */
-export function normalizeWorkerToken(item: any): SubmittedToken {
+export function normalizeWorkerToken(item: any, index?: number): SubmittedToken {
   const chainKey = item.blockchain || item.chainId || item.chain || 'polygon';
   const netInfo = getNetworkInfo(chainKey);
 
-  const address = item.contractAddress || item.address || item.tokenAddress || '';
+  const address = String(item.contractAddress || item.address || item.tokenAddress || item.id || '').trim();
   const symbol = (item.symbol || 'TOK').toUpperCase();
   const name = item.name || item.tokenName || symbol;
-  const logoUrl = item.logoUrl || item.logo || netInfo.logoUrl;
+  const logoUrl = item.logoUrl || item.logo || item.image || item.icon || netInfo.logoUrl;
   const trustScore = Number(item.trustScore || item.safetyScore || item.score || 95);
 
+  const idSuffix = typeof index === 'number' ? `-${index}` : '';
+  const id = item.id ? `${item.id}${idSuffix}` : `worker-${netInfo.id}-${address.toLowerCase()}-${symbol.toLowerCase()}${idSuffix}`;
+
   return {
-    id: item.id || `worker-${netInfo.id}-${address}-${symbol.toLowerCase()}`,
+    id,
     address,
     chainId: netInfo.id,
     submittedBy: item.submittedBy || 'TokenCare Global Network',
@@ -153,23 +172,79 @@ export function normalizeWorkerToken(item: any): SubmittedToken {
 }
 
 /**
+ * Direct call to Cloudflare Worker to fetch all tokens.
+ * Features:
+ * - Direct call to https://rough-meadow-6435.happyiyate.workers.dev/
+ * - 1 automatic retry on failure
+ * - If still failing after 1 retry, gracefully stops retrying
+ */
+async function fetchTokensFromCloudflareWorker(): Promise<any[]> {
+  const payload = { action: 'getAllTokens', page: 1, limit: 150 };
+
+  const attemptFetch = async (): Promise<any[]> => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), 6000) : null;
+
+    try {
+      const response = await fetch(WORKER_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller?.signal,
+      });
+
+      if (timeoutId) clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`Worker HTTP ${response.status}`);
+      }
+
+      const json = await response.json();
+      const rawList = json?.tokens || json?.data || (Array.isArray(json) ? json : []);
+      if (Array.isArray(rawList)) {
+        return rawList;
+      }
+      return [];
+    } catch (err) {
+      if (timeoutId) clearTimeout(timeoutId);
+      throw err;
+    }
+  };
+
+  // Attempt 1
+  try {
+    return await attemptFetch();
+  } catch (firstErr) {
+    console.warn('[ExploreDirectory] Worker fetch attempt 1 failed, retrying once...', firstErr);
+    // Exactly 1 retry after 800ms
+    await new Promise((res) => setTimeout(res, 800));
+    try {
+      return await attemptFetch();
+    } catch (retryErr) {
+      console.warn('[ExploreDirectory] Worker fetch retry failed. Halting further retries.', retryErr);
+      throw retryErr;
+    }
+  }
+}
+
+/**
  * Initializes Explore using ONLY the Cloudflare Worker directory.
  *
- * Network policy:
- * - At most ONE Worker directory request per calendar day per browser/device.
- * - A valid same-day cache causes ZERO network requests, including on refresh.
- * - A failed Worker request is also cached as unavailable for the day, preventing request storms.
- * - Search is always local and never triggers another Worker/Supabase request.
+ * Rules:
+ * - Only fetches from Cloudflare Worker (https://rough-meadow-6435.happyiyate.workers.dev/).
+ * - No database calls.
+ * - If cached and within TTL (15 mins / same day), ZERO network requests.
+ * - Saves logos, tokens, metadata into localStorage.
+ * - 1 retry on network error, then stops.
  */
 export async function initGlobalExploreDirectory(
   onUpdate?: (tokens: SubmittedToken[]) => void,
   onStatus?: (status: ExploreDirectoryStatus) => void
 ): Promise<SubmittedToken[]> {
-  const today = getTodayKey();
   const cached = readCache();
 
-  // Same-day cache: absolutely no network request.
-  if (cached?.date === today) {
+  // Fresh cache in localStorage: return immediately without making any network request
+  if (isCacheFresh(cached) && cached) {
     const status: ExploreDirectoryStatus =
       cached.status === 'success'
         ? { state: 'cached' }
@@ -180,38 +255,48 @@ export async function initGlobalExploreDirectory(
     return cached.tokens;
   }
 
-  onStatus?.({ state: 'loading', message: 'Loading token directory…' });
+  // If we have stale cache, show it immediately while background fetch executes
+  if (cached && cached.tokens.length > 0) {
+    onUpdate?.(cached.tokens);
+  }
+
+  onStatus?.({ state: 'loading', message: 'Fetching tokens from Cloudflare...' });
 
   try {
-    const workerRes = await getAllTokensFromWorker(1, 100);
+    const rawTokens = await fetchTokensFromCloudflareWorker();
 
-    if (!workerRes.success || !Array.isArray(workerRes.tokens)) {
-      // Cache the failure so refreshes do NOT repeatedly consume the Worker quota.
-      saveDirectoryCache([], 'unavailable');
-      onUpdate?.([]);
-      onStatus?.({
-        state: 'unavailable',
-        message: 'Token directory is not available right now.',
-      });
-      return [];
+    // Deduplicate incoming worker tokens by unique chain + contract address key
+    const seen = new Set<string>();
+    const deduplicatedRaw: any[] = [];
+    for (const item of rawTokens) {
+      if (!item) continue;
+      const chain = String(item.blockchain || item.chainId || item.chain || 'polygon').trim().toLowerCase();
+      const addr = String(item.contractAddress || item.address || item.tokenAddress || item.id || '').trim().toLowerCase();
+      const compositeKey = `${chain}:${addr}`;
+      if (!seen.has(compositeKey)) {
+        seen.add(compositeKey);
+        deduplicatedRaw.push(item);
+      }
     }
 
-    const workerTokens = workerRes.tokens
-      .map(normalizeWorkerToken)
-      .filter((token) => Boolean(token.address));
+    const workerTokens = deduplicatedRaw
+      .map((t, idx) => normalizeWorkerToken(t, idx))
+      .filter((t) => Boolean(t.address));
 
     saveDirectoryCache(workerTokens, 'success');
     onUpdate?.(workerTokens);
     onStatus?.({ state: 'success' });
     return workerTokens;
   } catch (err) {
-    console.warn('[ExploreDirectory] Cloudflare Worker request failed:', err);
-    saveDirectoryCache([], 'unavailable');
-    onUpdate?.([]);
+    // If request failed after 1 retry, mark unavailable for the current window and stop retrying
+    if (!cached || cached.tokens.length === 0) {
+      saveDirectoryCache([], 'unavailable');
+      onUpdate?.([]);
+    }
     onStatus?.({
       state: 'unavailable',
       message: 'Token directory is not available right now.',
     });
-    return [];
+    return cached?.tokens || [];
   }
 }

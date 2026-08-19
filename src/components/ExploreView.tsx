@@ -18,6 +18,7 @@ import { SubmittedToken } from '../types';
 import { resolveChainLogo, NEUTRAL_CHAIN_LOGO } from '../services/chainLogos';
 import { getCachedExploreTokens, initGlobalExploreDirectory } from '../services/exploreDirectory';
 import { PromoCarousel } from './PromoCarousel';
+import { CachedTokenLogo } from './CachedTokenLogo';
 import { formatSmartCurrency, formatSmartNumber } from '../utils/numberFormatting';
 import { useTranslation } from '../utils/i18n';
 
@@ -81,16 +82,13 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
     // Perform silent background update on mount
     initGlobalExploreDirectory((freshTokens) => {
       setCachedDirectory(freshTokens);
-    }, propTokens);
-  }, [propTokens]);
+    });
+  }, []);
 
-  // Merge cached directory with prop tokens
+  // Tokens strictly source from Cloudflare Worker directory stored in local storage cache
   const allTokens = useMemo(() => {
-    const map = new Map<string, SubmittedToken>();
-    cachedDirectory.forEach((t) => map.set(t.address.toLowerCase().trim(), t));
-    propTokens.forEach((t) => map.set(t.address.toLowerCase().trim(), t));
-    return Array.from(map.values());
-  }, [cachedDirectory, propTokens]);
+    return cachedDirectory;
+  }, [cachedDirectory]);
 
   // Instant local search & local chain filtering
   const filteredTokens = useMemo(() => {
@@ -282,29 +280,30 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
           </div>
         ) : (
           <div className="divide-y divide-zinc-800/40">
-            {filteredTokens.map((t) => {
+            {filteredTokens.map((t, idx) => {
               const chainInfo = resolveChainLogo(
                 t.metadata.blockchainName || (t.metadata as any).chainName,
                 t.chainId || t.metadata.chainId
               );
               const isPositive = (t.marketData?.change24h || 0) >= 0;
+              const uniqueKey = `${t.id || t.address}-${t.chainId || 'chain'}-${idx}`;
 
               return (
                 <div
-                  key={t.id || t.address}
+                  key={uniqueKey}
                   onClick={() => setSelectedTokenDetails(t)}
                   className="py-2.5 px-1 hover:bg-white/[0.03] active:bg-white/[0.06] transition-colors cursor-pointer group flex items-center justify-between gap-2.5 rounded-lg"
                 >
                   {/* Left Column: Token Logo + Overlapping Circular Chain Badge + Name/Symbol */}
                   <div className="flex items-center space-x-3 min-w-0">
                     <div className="relative shrink-0">
-                      <img
+                      <CachedTokenLogo
                         src={t.metadata.logoUrl || chainInfo.logoUrl || NEUTRAL_TOKEN_FALLBACK}
+                        chain={t.metadata.blockchainName || (t.metadata as any).chainName || t.chainId || 'polygon'}
+                        address={t.address || t.id}
                         alt={t.metadata.name}
                         className="w-9 h-9 rounded-full object-cover bg-zinc-900 border border-zinc-800/80 p-0.5"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = chainInfo.logoUrl || NEUTRAL_TOKEN_FALLBACK;
-                        }}
+                        fallbackSrc={chainInfo.logoUrl || NEUTRAL_TOKEN_FALLBACK}
                       />
                       {/* Small circular chain logo badge at bottom-right corner */}
                       <div
