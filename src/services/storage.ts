@@ -129,6 +129,8 @@ export function getSubmittedTokens(userId?: string): SubmittedToken[] {
 
 /**
  * Save cached tokens for a specific authenticated user
+ * - Stores immediately in localStorage
+ * - Synchronizes directly to Cloudflare User Token Cache Worker (small-pine-71f9)
  */
 export function saveSubmittedTokens(tokens: SubmittedToken[], userId?: string): void {
   if (!userId) return;
@@ -136,6 +138,24 @@ export function saveSubmittedTokens(tokens: SubmittedToken[], userId?: string): 
     const key = `tokencare_user_tokens_${userId}`;
     const sanitized = (tokens || []).slice(0, 80).map(sanitizeTokenForStorage);
     safeSetItem(key, JSON.stringify(sanitized));
+
+    // Asynchronously synchronize to Cloudflare User Token Cache Worker
+    if (tokens && tokens.length > 0) {
+      import('./userTokenCacheWorker')
+        .then(({ saveUserTokensToWorker }) => {
+          const workerItems = tokens.map((t) => ({
+            blockchain: t.metadata?.blockchainName || t.chainId || 'polygon',
+            id: t.address || t.id,
+            name: t.metadata?.name,
+            symbol: t.metadata?.symbol,
+            logoUrl: t.metadata?.logoUrl,
+          }));
+          saveUserTokensToWorker(userId, workerItems, false).catch((err) => {
+            console.warn('[Storage] Cloudflare Worker sync note:', err);
+          });
+        })
+        .catch(() => {});
+    }
   } catch (e) {
     console.warn('[Storage] Notice saving user tokens:', e);
   }

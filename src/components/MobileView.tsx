@@ -91,6 +91,7 @@ interface MobileViewProps {
   onOpenHowItWorks: () => void;
   onOpenRewardModal: () => void;
   onOpenWalletModal: () => void;
+  onOpenTransferModal?: () => void;
   onSwitchToDesktop: () => void;
   unreadCount?: number;
   onUnreadCountChange?: (count: number) => void;
@@ -129,6 +130,7 @@ export const MobileView: React.FC<MobileViewProps> = ({
   onOpenHowItWorks,
   onOpenRewardModal,
   onOpenWalletModal,
+  onOpenTransferModal,
   onSwitchToDesktop,
   unreadCount = 0,
   onUnreadCountChange,
@@ -515,6 +517,7 @@ export const MobileView: React.FC<MobileViewProps> = ({
               onNavigateAddToken={() => handleTabChange('donate')}
               onOpenHowItWorks={onOpenHowItWorks}
               onOpenRewardModal={onOpenRewardModal}
+              onOpenTransferModal={onOpenTransferModal}
             />
           </div>
         )}

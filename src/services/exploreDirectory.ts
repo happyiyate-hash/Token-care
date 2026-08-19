@@ -3,8 +3,8 @@ import { REWARD_RATE_USD } from '../constants/chains';
 import { getNetworkInfo } from './chainLogos';
 import { safeSetItem, sanitizeTokenForStorage } from './storage';
 
-const EXPLORE_CACHE_KEY = 'tokencare_explore_directory_v4';
-const EXPLORE_CACHE_VERSION = 4;
+const EXPLORE_CACHE_KEY = 'tokencare_explore_directory_v5';
+const EXPLORE_CACHE_VERSION = 5;
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes TTL
 
 const WORKER_ENDPOINT = 'https://rough-meadow-6435.happyiyate.workers.dev/';

@@ -6,6 +6,7 @@ interface CachedTokenLogoProps {
   src?: string;
   chain: string;
   address: string;
+  symbol?: string;
   alt: string;
   className?: string;
   fallbackSrc?: string;
@@ -15,12 +16,13 @@ export const CachedTokenLogo: React.FC<CachedTokenLogoProps> = ({
   src,
   chain,
   address,
+  symbol,
   alt,
   className = 'w-9 h-9 rounded-full object-cover',
   fallbackSrc = NEUTRAL_TOKEN_FALLBACK,
 }) => {
   const [currentSrc, setCurrentSrc] = useState<string>(() => {
-    const cached = getCachedLogoDataUrl(chain, address);
+    const cached = getCachedLogoDataUrl(chain, address, symbol);
     if (cached && !cached.startsWith('hash:')) {
       return cached;
     }
@@ -28,27 +30,42 @@ export const CachedTokenLogo: React.FC<CachedTokenLogoProps> = ({
   });
 
   const [hasError, setHasError] = useState(false);
+  const [retryAttempt, setRetryAttempt] = useState(0);
 
   useEffect(() => {
-    if (!src || !address) return;
+    setHasError(false);
+    if (!src && !address && !symbol) {
+      setCurrentSrc(fallbackSrc);
+      return;
+    }
 
-    // Check if we already have a cached dataURL
-    const cached = getCachedLogoDataUrl(chain, address);
+    // Check if we already have a cached dataURL (shared between Tokens and Explore)
+    const cached = getCachedLogoDataUrl(chain, address, symbol);
     if (cached && !cached.startsWith('hash:')) {
       setCurrentSrc(cached);
       return;
     }
 
-    // Enqueue for sequential, one-by-one background download and storage
-    logoDownloadQueue.enqueue(chain, address, src, (downloadedDataUrl) => {
-      if (downloadedDataUrl && !downloadedDataUrl.startsWith('hash:')) {
-        setCurrentSrc(downloadedDataUrl);
-      }
-    });
-  }, [src, chain, address]);
+    // Use current URL if provided
+    if (src) {
+      setCurrentSrc(src);
+
+      // Enqueue for sequential background download and local storage caching
+      logoDownloadQueue.enqueue(chain, address, src, symbol, (downloadedDataUrl) => {
+        if (downloadedDataUrl && !downloadedDataUrl.startsWith('hash:')) {
+          setCurrentSrc(downloadedDataUrl);
+        }
+      });
+    }
+  }, [src, chain, address, symbol, retryAttempt]);
 
   const handleError = () => {
-    if (!hasError) {
+    if (retryAttempt === 0 && src && !src.startsWith('data:')) {
+      // Retry via high-availability image proxy before falling back
+      setRetryAttempt(1);
+      const proxiedUrl = `https://wsrv.nl/?url=${encodeURIComponent(src)}&w=96&h=96&fit=cover&output=png`;
+      setCurrentSrc(proxiedUrl);
+    } else if (!hasError) {
       setHasError(true);
       setCurrentSrc(fallbackSrc);
     }

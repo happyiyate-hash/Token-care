@@ -45,6 +45,7 @@ import { HowItWorksModal } from './components/HowItWorksModal';
 import { RewardWalletModal } from './components/RewardWalletModal';
 import { WalletConnectModal } from './components/WalletConnectModal';
 import { DashboardOverview } from './components/DashboardOverview';
+import { TransferTokensModal } from './components/TransferTokensModal';
 import { ExploreView } from './components/ExploreView';
 import { SettingsView } from './components/SettingsView';
 import { WithdrawalView } from './components/WithdrawalView';
@@ -142,6 +143,7 @@ export default function App() {
   const [isRewardModalOpen, setIsRewardModalOpen] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [isApiConsoleOpen, setIsApiConsoleOpen] = useState(false);
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
 
   // Form State
   const [currentStep, setCurrentStep] = useState(1);
@@ -195,18 +197,56 @@ export default function App() {
     };
   }, [currentUser?.id]);
 
-  // Load User Profile and Tokens from Supabase
+  // Load User Profile and Tokens from Cloudflare Token Cache Worker (small-pine-71f9) & local storage
   const loadUserAndTokens = async (userId?: string, sessionUser?: any) => {
     if (!userId) {
       setTokens([]);
       return;
     }
-    // Load saved tokens from Supabase for this user
-    const supabaseTokens = await fetchTokensFromSupabase(userId);
-    if (supabaseTokens && supabaseTokens.length > 0) {
-      setTokens(supabaseTokens);
-    } else {
-      setTokens(getSubmittedTokens(userId));
+
+    // 1. Check local cache first for instantaneous offline render
+    const localTokens = getSubmittedTokens(userId);
+    if (localTokens && localTokens.length > 0) {
+      setTokens(localTokens);
+    }
+
+    // 2. Fetch user tokens from Cloudflare User Token Cache Worker (Cloudflare B)
+    try {
+      const { getUserTokensFromWorker } = await import('./services/userTokenCacheWorker');
+      const workerRes = await getUserTokensFromWorker(userId);
+      if (workerRes && Array.isArray(workerRes.tokens) && workerRes.tokens.length > 0) {
+        // Normalize worker items into SubmittedToken list
+        const { normalizeWorkerToken } = await import('./services/exploreDirectory');
+        const formattedTokens: SubmittedToken[] = workerRes.tokens.map((t, idx) => {
+          return normalizeWorkerToken({
+            ...t,
+            contractAddress: t.id,
+            address: t.id,
+            blockchain: t.blockchain,
+          }, idx);
+        });
+
+        setTokens(formattedTokens);
+        // Update local storage cache
+        saveSubmittedTokens(formattedTokens, userId);
+      } else {
+        // If not in Cloudflare B yet, fetch from Supabase database
+        const supabaseTokens = await fetchTokensFromSupabase(userId);
+        if (supabaseTokens && supabaseTokens.length > 0) {
+          setTokens(supabaseTokens);
+          saveSubmittedTokens(supabaseTokens, userId);
+        } else if (!localTokens || localTokens.length === 0) {
+          setTokens([]);
+        }
+      }
+    } catch (e) {
+      console.warn('[UserTokens] Cloudflare Worker fetch note, querying database/cache:', e);
+      const supabaseTokens = await fetchTokensFromSupabase(userId).catch(() => []);
+      if (supabaseTokens && supabaseTokens.length > 0) {
+        setTokens(supabaseTokens);
+      } else if (localTokens && localTokens.length > 0) {
+        setTokens(localTokens);
+      }
     }
 
     loadUserProfile(userId, sessionUser);
@@ -1049,53 +1089,27 @@ export default function App() {
         return;
       }
 
-      // 3. Direct RPC Check via token_exists_for_user
-      if (currentUser?.id) {
-        const alreadyExists = await checkTokenAlreadySaved(
-          currentUser.id,
-          targetChain,
-          fetchedToken.address
-        );
+      // 3. Save / Merge Token into Cloudflare User Token Cache Worker (small-pine-71f9)
+      const userId = currentUser?.id || wallet.walletAddress || 'anonymous_user';
+      const tokenBlockchain = fetchedToken.metadata.blockchainName || fetchedToken.chainId || selectedChain;
 
-        console.log('TOKEN ALREADY EXISTS:', alreadyExists);
-
-        if (alreadyExists) {
-          setErrorMessage('This token is already saved in your account.');
-          setIsSavingToken(false);
-          return;
-        }
-      }
-
-      // 4. Verify Duplicate Address in Supabase Database for this user
-      const dupCheck = await verifyTokenContractUnique(
-        fetchedToken.address,
-        targetChain,
-        currentUser?.id,
-        bType
+      const { saveUserTokensToWorker } = await import('./services/userTokenCacheWorker');
+      const saveWorkerRes = await saveUserTokensToWorker(
+        userId,
+        [
+          {
+            blockchain: tokenBlockchain,
+            id: fetchedToken.address,
+            name: fetchedToken.metadata.name,
+            symbol: fetchedToken.metadata.symbol,
+            logoUrl: fetchedToken.metadata.logoUrl || '',
+          },
+        ],
+        true // merge=true to add without replacing existing tokens
       );
-      if (!dupCheck.isUnique) {
-        setErrorMessage(
-          dupCheck.error ||
-            `This token is already saved in your account.`
-        );
-        setIsSavingToken(false);
-        return;
-      }
 
-      // 5. Save Token to Supabase Database (Atomic catalog + user relation)
-      const supabaseResult = await addTokenToUserInSupabase(fetchedToken, currentUser?.id);
-      if (!supabaseResult.success) {
-        setErrorMessage(
-          supabaseResult.error || `Failed to save token address "${fetchedToken.address}" to Supabase database.`
-        );
-        setIsSavingToken(false);
-        return;
-      }
-
-      if (supabaseResult.alreadyExists) {
-        setErrorMessage(`This token is already saved in your account.`);
-        setIsSavingToken(false);
-        return;
+      if (!saveWorkerRes.success) {
+        console.warn('[UserTokenCacheWorker] Notice saving token to worker:', saveWorkerRes.error);
       }
 
       // 4. Record Reward & Update Local State
@@ -1110,7 +1124,7 @@ export default function App() {
       setTokens(updatedTokens);
       saveSubmittedTokens(updatedTokens, currentUser?.id);
 
-      // 5. Automatically post token payload to Cloudflare Worker endpoint
+      // 5. Automatically post token payload to Cloudflare Global Worker endpoint
       const chainInfo = getChainInfo(fetchedToken.chainId || selectedChain);
       const chainKey =
         fetchedToken.metadata.blockchainName ||
@@ -1236,11 +1250,51 @@ export default function App() {
           onOpenHowItWorks={() => setIsHowItWorksOpen(true)}
           onOpenRewardModal={() => setIsRewardModalOpen(true)}
           onOpenWalletModal={() => setIsWalletModalOpen(true)}
+          onOpenTransferModal={() => setIsTransferModalOpen(true)}
           onSwitchToDesktop={() => setViewMode('desktop')}
           unreadCount={unreadNotificationCount}
           onUnreadCountChange={(count) => setUnreadNotificationCount(count)}
           isVerifying={isVerifying}
           verificationStage={verificationStage}
+        />
+
+        {/* Modals for Mobile View */}
+        <HowItWorksModal
+          isOpen={isHowItWorksOpen}
+          onClose={() => setIsHowItWorksOpen(false)}
+        />
+
+        <RewardWalletModal
+          isOpen={isRewardModalOpen}
+          onClose={() => setIsRewardModalOpen(false)}
+          wallet={wallet}
+          onUpdateWallet={setWallet}
+          userId={currentUser?.id}
+        />
+
+        <WalletConnectModal
+          isOpen={isWalletModalOpen}
+          onClose={() => setIsWalletModalOpen(false)}
+          wallet={wallet}
+          onUpdateWallet={setWallet}
+          userId={currentUser?.id}
+        />
+
+        <TransferTokensModal
+          isOpen={isTransferModalOpen}
+          onClose={() => setIsTransferModalOpen(false)}
+          currentUser={currentUser}
+          tokens={tokens}
+          onTransferComplete={(transferredTokens) => {
+            setTokens(transferredTokens);
+          }}
+        />
+
+        <ApiConsoleModal
+          isOpen={isApiConsoleOpen}
+          onClose={() => setIsApiConsoleOpen(false)}
+          apiKeys={apiKeys}
+          onSaveApiKeys={setApiKeys}
         />
       </>
     );
@@ -1494,6 +1548,7 @@ export default function App() {
               tokens={tokens}
               wallet={wallet}
               onNavigateAddToken={() => setActiveTab('add-token')}
+              onOpenTransferModal={() => setIsTransferModalOpen(true)}
               onSelectToken={(tok) => {
                 setFetchedToken(tok);
                 setSelectedChain(tok.chainId);
@@ -1671,6 +1726,16 @@ export default function App() {
         wallet={wallet}
         onUpdateWallet={setWallet}
         userId={currentUser?.id}
+      />
+
+      <TransferTokensModal
+        isOpen={isTransferModalOpen}
+        onClose={() => setIsTransferModalOpen(false)}
+        currentUser={currentUser}
+        tokens={tokens}
+        onTransferComplete={(transferredTokens) => {
+          setTokens(transferredTokens);
+        }}
       />
 
       <ApiConsoleModal

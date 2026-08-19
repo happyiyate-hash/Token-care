@@ -5,11 +5,13 @@ import {
   SlidersHorizontal,
   CheckCircle2,
   PlusCircle,
+  Zap,
   X,
 } from 'lucide-react';
 import { SubmittedToken } from '../types';
 import { getChainInfo } from '../constants/chains';
 import { resolveChainLogo, NEUTRAL_CHAIN_LOGO } from '../services/chainLogos';
+import { CachedTokenLogo } from './CachedTokenLogo';
 import { PromoCarousel } from './PromoCarousel';
 import { TickerNumber } from './TickerNumber';
 import { useTranslation } from '../utils/i18n';
@@ -30,6 +32,7 @@ interface MyTokensViewProps {
   onSelectToken?: (token: SubmittedToken) => void;
   onOpenHowItWorks?: () => void;
   onOpenRewardModal?: () => void;
+  onOpenTransferModal?: () => void;
 }
 
 // Default sample tokens with realistic total supplies if user has no tokens
@@ -124,6 +127,7 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
   tokens,
   onNavigateAddToken,
   onSelectToken,
+  onOpenTransferModal,
 }) => {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
@@ -335,13 +339,14 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
                   {/* Left Column: Token Logo + Circular Chain Badge + Name & Network */}
                   <div className="flex items-center space-x-3 min-w-0">
                     <div className="relative shrink-0">
-                      <img
-                        src={item.logoUrl || chainInfo.logoUrl || NEUTRAL_TOKEN_FALLBACK}
+                      <CachedTokenLogo
+                        src={item.logoUrl || chainInfo.logoUrl}
+                        chain={item.chain || item.chainId || 'polygon'}
+                        address={item.id}
+                        symbol={item.symbol}
                         alt={item.name}
                         className="w-9 h-9 rounded-full object-cover bg-zinc-900 border border-zinc-800/80 p-0.5"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = chainInfo.logoUrl || NEUTRAL_TOKEN_FALLBACK;
-                        }}
+                        fallbackSrc={chainInfo.logoUrl}
                       />
                       {/* Small circular chain logo badge at bottom-right corner */}
                       <div
@@ -403,6 +408,18 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
           <PlusCircle className="w-4 h-4 text-black fill-black/20" />
           <span className="uppercase tracking-wider">{t('tokens.addNewToken')}</span>
         </button>
+
+        {/* Transfer Your Tokens Now Action Button */}
+        {onOpenTransferModal && (
+          <button
+            type="button"
+            onClick={onOpenTransferModal}
+            className="w-full py-2.5 px-3 bg-zinc-900 hover:bg-zinc-800 border border-emerald-500/40 hover:border-emerald-500/70 text-emerald-400 font-extrabold text-xs rounded-xl flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-sm active:scale-[0.99] mb-2"
+          >
+            <Zap className="w-3.5 h-3.5 text-[#22C55E]" />
+            <span>Transfer your tokens now</span>
+          </button>
+        )}
       </div>
     </div>
   );

@@ -28,6 +28,7 @@ interface DashboardOverviewProps {
   onSelectToken?: (token: SubmittedToken) => void;
   onOpenRewardModal?: () => void;
   onOpenWithdraw?: () => void;
+  onOpenTransferModal?: () => void;
   sessionStatus?: string;
   isOnline?: boolean;
   isSyncing?: boolean;
@@ -42,6 +43,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   onSelectToken,
   onOpenRewardModal,
   onOpenWithdraw,
+  onOpenTransferModal,
 }) => {
   const { t } = useTranslation();
   const safeTokensCount = tokens.filter((t) => t.safety?.rating === 'SAFE').length;
@@ -189,6 +191,29 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Action Buttons at Bottom of Tokens Directory */}
+        <div className="pt-3 border-t border-zinc-800/80 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+          <button
+            type="button"
+            onClick={onNavigateAddToken}
+            className="w-full sm:w-auto px-4 py-2 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center space-x-1.5"
+          >
+            <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Add Another Token</span>
+          </button>
+
+          {onOpenTransferModal && (
+            <button
+              type="button"
+              onClick={onOpenTransferModal}
+              className="w-full sm:w-auto px-4 py-2 bg-zinc-900 hover:bg-zinc-800 border border-emerald-500/40 text-emerald-400 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-sm hover:border-emerald-500/70"
+            >
+              <Zap className="w-3.5 h-3.5 text-[#22C55E]" />
+              <span>Transfer Your Tokens Now</span>
+            </button>
+          )}
         </div>
       </div>
     </div>
