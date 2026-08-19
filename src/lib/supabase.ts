@@ -38,6 +38,58 @@ export function saveSupabaseConfig(url: string, anonKey: string) {
   localStorage.setItem(SUPABASE_ANON_KEY_STORAGE, anonKey.trim());
 }
 
+/**
+ * Resilient storage adapter for Supabase Auth that automatically catches QuotaExceeded
+ * errors, purges non-essential cached assets (like heavy cached logos or temporary blobs),
+ * and retries storing the auth token so the user can log in without interruption.
+ */
+const safeSupabaseAuthStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      console.warn('[SupabaseAuthStorage] Storage quota exceeded. Evicting non-essential caches to make room for auth session...');
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (
+            k &&
+            !k.startsWith('sb-') && // Never delete auth session tokens
+            (k.startsWith('tokencare_logo_') ||
+              k.startsWith('tokencare_cached_logo_') ||
+              k.startsWith('token_hub_') ||
+              k.startsWith('tokencare_temp_') ||
+              k.startsWith('tokencare_explore_directory_'))
+          ) {
+            keysToRemove.push(k);
+          }
+        }
+        keysToRemove.forEach((k) => {
+          try {
+            localStorage.removeItem(k);
+          } catch {}
+        });
+        localStorage.setItem(key, value);
+      } catch (retryErr) {
+        console.error('[SupabaseAuthStorage] Critical: Unable to save auth session token even after cache eviction:', retryErr);
+      }
+    }
+  },
+  removeItem: (key: string): void => {
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+  },
+};
+
 let supabaseInstance: SupabaseClient | null = null;
 
 export function getSupabase(): SupabaseClient {
@@ -46,6 +98,7 @@ export function getSupabase(): SupabaseClient {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
+        storage: safeSupabaseAuthStorage,
       },
     });
   }

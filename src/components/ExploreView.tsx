@@ -18,9 +18,9 @@ import { SubmittedToken } from '../types';
 import { resolveChainLogo, NEUTRAL_CHAIN_LOGO } from '../services/chainLogos';
 import { getCachedExploreTokens, initGlobalExploreDirectory } from '../services/exploreDirectory';
 import { PromoCarousel } from './PromoCarousel';
-import { CachedTokenLogo } from './CachedTokenLogo';
 import { formatSmartCurrency, formatSmartNumber } from '../utils/numberFormatting';
 import { useTranslation } from '../utils/i18n';
+import { DirectTokenLogo } from './DirectTokenLogo';
 
 interface ExploreViewProps {
   tokens?: SubmittedToken[];
@@ -70,12 +70,6 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedChainFilter, setSelectedChainFilter] = useState('ALL');
   const [activeCategory, setActiveCategory] = useState<CategoryTab>('recently_verified');
-  const [displayLimit, setDisplayLimit] = useState(30);
-
-  // Reset display limit to 30 when filter or category changes
-  useEffect(() => {
-    setDisplayLimit(30);
-  }, [searchTerm, selectedChainFilter, activeCategory]);
 
   // Modals & Sheets
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
@@ -89,12 +83,15 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
     initGlobalExploreDirectory((freshTokens) => {
       setCachedDirectory(freshTokens);
     });
-  }, []);
+  }, [propTokens]);
 
-  // Tokens strictly source from Cloudflare Worker directory stored in local storage cache
+  // Merge cached directory with prop tokens
   const allTokens = useMemo(() => {
-    return cachedDirectory;
-  }, [cachedDirectory]);
+    const map = new Map<string, SubmittedToken>();
+    cachedDirectory.forEach((t) => map.set(t.address.toLowerCase().trim(), t));
+    propTokens.forEach((t) => map.set(t.address.toLowerCase().trim(), t));
+    return Array.from(map.values());
+  }, [cachedDirectory, propTokens]);
 
   // Instant local search & local chain filtering
   const filteredTokens = useMemo(() => {
@@ -147,23 +144,6 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
 
     return result;
   }, [allTokens, searchTerm, selectedChainFilter, activeCategory]);
-
-  // Paginate tokens smoothly in chunks of 30 to prevent UI lag/freezing
-  const visibleTokens = useMemo(() => {
-    return filteredTokens.slice(0, displayLimit);
-  }, [filteredTokens, displayLimit]);
-
-  const hasMore = visibleTokens.length < filteredTokens.length;
-
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const target = e.currentTarget;
-    // When user scrolls within 180px of the bottom, load the next batch of 30
-    if (target.scrollHeight - target.scrollTop - target.clientHeight < 180) {
-      if (hasMore) {
-        setDisplayLimit((prev) => Math.min(prev + 30, filteredTokens.length));
-      }
-    }
-  };
 
   const handleCopy = (address: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -289,10 +269,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
       </div>
 
       {/* 2. SCROLLABLE CONTENT AREA (Only the Token Directory List Scrolls!) */}
-      <div
-        onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto px-2 py-1 pb-28 scrollbar-thin"
-      >
+      <div className="flex-1 min-h-0 overflow-y-auto px-2 py-1 pb-28 scrollbar-thin">
         {/* Flat Native Token Directory List */}
         {filteredTokens.length === 0 ? (
           <div className="bg-[#0B0E17] border border-zinc-800/80 rounded-2xl p-8 text-center space-y-2 mt-2">
@@ -306,31 +283,26 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
           </div>
         ) : (
           <div className="divide-y divide-zinc-800/40">
-            {visibleTokens.map((t, idx) => {
+            {filteredTokens.map((t) => {
               const chainInfo = resolveChainLogo(
                 t.metadata.blockchainName || (t.metadata as any).chainName,
                 t.chainId || t.metadata.chainId
               );
               const isPositive = (t.marketData?.change24h || 0) >= 0;
-              const uniqueKey = `${t.id || t.address}-${t.chainId || 'chain'}-${idx}`;
 
               return (
                 <div
-                  key={uniqueKey}
+                  key={t.id || t.address}
                   onClick={() => setSelectedTokenDetails(t)}
                   className="py-2.5 px-1 hover:bg-white/[0.03] active:bg-white/[0.06] transition-colors cursor-pointer group flex items-center justify-between gap-2.5 rounded-lg"
                 >
                   {/* Left Column: Token Logo + Overlapping Circular Chain Badge + Name/Symbol */}
                   <div className="flex items-center space-x-3 min-w-0">
                     <div className="relative shrink-0">
-                      <CachedTokenLogo
-                        src={t.metadata.logoUrl || chainInfo.logoUrl}
-                        chain={t.metadata.blockchainName || (t.metadata as any).chainName || t.chainId || 'polygon'}
-                        address={t.address || t.id}
-                        symbol={t.metadata.symbol}
+                      <DirectTokenLogo
+                        src={t.metadata.logoUrl}
                         alt={t.metadata.name}
                         className="w-9 h-9 rounded-full object-cover bg-zinc-900 border border-zinc-800/80 p-0.5"
-                        fallbackSrc={chainInfo.logoUrl}
                       />
                       {/* Small circular chain logo badge at bottom-right corner */}
                       <div
@@ -385,22 +357,6 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                 </div>
               );
             })}
-          </div>
-        )}
-
-        {/* Dynamic progressive load indicator / counter */}
-        {filteredTokens.length > 0 && (
-          <div className="py-4 text-center">
-            {hasMore ? (
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#0B0E17] border border-zinc-800/80 rounded-full text-[10px] text-zinc-400 font-mono">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#4ADE80] animate-pulse" />
-                <span>Showing {visibleTokens.length} of {filteredTokens.length} · Scroll for more</span>
-              </div>
-            ) : filteredTokens.length > 30 ? (
-              <div className="text-[10px] text-zinc-600 font-mono">
-                All {filteredTokens.length} tokens loaded
-              </div>
-            ) : null}
           </div>
         )}
       </div>
@@ -510,19 +466,10 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
             <div className="flex items-start justify-between">
               <div className="flex items-center space-x-3">
                 <div className="relative shrink-0">
-                  <img
-                    src={
-                      selectedTokenDetails.metadata.logoUrl ||
-                      resolveChainLogo(
-                        selectedTokenDetails.metadata.blockchainName || (selectedTokenDetails.metadata as any).chainName,
-                        selectedTokenDetails.chainId || selectedTokenDetails.metadata.chainId
-                      ).logoUrl
-                    }
+                  <DirectTokenLogo
+                    src={selectedTokenDetails.metadata.logoUrl}
                     alt={selectedTokenDetails.metadata.name}
                     className="w-12 h-12 rounded-xl object-cover bg-zinc-900 border border-zinc-800 p-0.5"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = NEUTRAL_TOKEN_FALLBACK;
-                    }}
                   />
                   <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-zinc-900 border border-black flex items-center justify-center overflow-hidden">
                     <img

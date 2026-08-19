@@ -340,13 +340,12 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
                   <div className="flex items-center space-x-3 min-w-0">
                     <div className="relative shrink-0">
                       <CachedTokenLogo
-                        src={item.logoUrl || chainInfo.logoUrl}
+                        src={item.logoUrl}
                         chain={item.chain || item.chainId || 'polygon'}
                         address={item.id}
                         symbol={item.symbol}
                         alt={item.name}
                         className="w-9 h-9 rounded-full object-cover bg-zinc-900 border border-zinc-800/80 p-0.5"
-                        fallbackSrc={chainInfo.logoUrl}
                       />
                       {/* Small circular chain logo badge at bottom-right corner */}
                       <div

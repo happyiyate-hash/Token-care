@@ -68,13 +68,15 @@ export function safeSetItem(key: string, value: string): boolean {
       const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && k !== key) {
+        if (k && k !== key && !k.startsWith('sb-')) {
           if (
             k.startsWith('token_hub_explore_tokens') ||
             k.startsWith('tokencare_cache_') ||
             k.startsWith('tokencare_otp_') ||
             k.startsWith('tokencare_temp_') ||
-            k.startsWith('tokencare_device_tracked_')
+            k.startsWith('tokencare_device_tracked_') ||
+            k.startsWith('tokencare_logo_') ||
+            k.startsWith('tokencare_cached_logo_')
           ) {
             keysToRemove.push(k);
           }

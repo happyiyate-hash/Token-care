@@ -114,7 +114,7 @@ export function normalizeWorkerToken(item: any, index?: number): SubmittedToken 
   const address = String(item.contractAddress || item.address || item.tokenAddress || item.id || '').trim();
   const symbol = (item.symbol || 'TOK').toUpperCase();
   const name = item.name || item.tokenName || symbol;
-  const logoUrl = item.logoUrl || item.logo || item.image || item.icon || netInfo.logoUrl;
+  const logoUrl = item.logoUrl || item.logo || item.image || item.icon || '';
   const trustScore = Number(item.trustScore || item.safetyScore || item.score || 95);
 
   const idSuffix = typeof index === 'number' ? `-${index}` : '';
