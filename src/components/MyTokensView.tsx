@@ -340,7 +340,7 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
                   <div className="flex items-center space-x-3 min-w-0">
                     <div className="relative shrink-0">
                       <CachedTokenLogo
-                        src={item.logoUrl}
+                        src={item.logoUrl || chainInfo.logoUrl}
                         chain={item.chain || item.chainId || 'polygon'}
                         address={item.id}
                         symbol={item.symbol}

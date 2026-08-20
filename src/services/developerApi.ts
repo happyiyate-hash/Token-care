@@ -63,20 +63,205 @@ export interface DeveloperRequestLog {
   id?: string;
   request_id?: string;
   project_id?: string;
-  endpoint: string;
-  method: string;
+  action_key?: string;
+  action?: string;
+  outcome?: 'succeeded' | 'failed' | 'blocked' | 'processing' | 'pending' | string;
+  message?: string | null;
+  error_message?: string | null;
+  error_code?: string | null;
   status_code?: number;
   status?: number;
+  requested_at?: string;
+  completed_at?: string | null;
   latency_ms: number;
-  error_code?: string | null;
-  quota_consumed?: number;
-  action?: string;
+  quota_consumed?: boolean | number;
+  details?: any;
+  endpoint?: string;
+  method?: string;
   created_at?: string;
-  completed_at?: string;
   timestamp?: string;
   user_agent?: string;
 }
 export type DeveloperApiLog = DeveloperRequestLog;
+
+export function normalizeDeveloperLog(row: any): DeveloperRequestLog {
+  const reqId = String(row.request_id || row.id || `req_${Date.now()}`);
+  const actionKey = row.action_key || row.action || (row.endpoint ? row.endpoint.replace(/^\/api\/?/, '') : 'api_call');
+  
+  // Determine normalized outcome: 'succeeded' | 'failed' | 'blocked' | 'processing'
+  let outcome = 'succeeded';
+  if (row.outcome) {
+    outcome = String(row.outcome).toLowerCase();
+  } else if (!row.completed_at && row.status_code === undefined && !row.error_code) {
+    outcome = 'processing';
+  } else if (Number(row.status_code) === 429 || row.error_code === 'QUOTA_EXHAUSTED' || row.error_code === 'RATE_LIMIT_EXCEEDED') {
+    outcome = 'blocked';
+  } else if (row.error_code || (row.status_code !== undefined && Number(row.status_code) >= 400)) {
+    outcome = 'failed';
+  } else if (row.status_code !== undefined && Number(row.status_code) < 400) {
+    outcome = 'succeeded';
+  }
+
+  const requestedAt = row.requested_at || row.created_at || row.timestamp || new Date().toISOString();
+
+  let detailsObj = row.details;
+  if (typeof detailsObj === 'string') {
+    try {
+      detailsObj = JSON.parse(detailsObj);
+    } catch {
+      // keep string
+    }
+  }
+
+  const statusCode = Number(
+    row.status_code ??
+      row.status ??
+      (outcome === 'succeeded' ? 200 : outcome === 'blocked' ? 429 : outcome === 'processing' ? 102 : 500)
+  );
+
+  let quotaConsumed: boolean = true;
+  if (typeof row.quota_consumed === 'boolean') {
+    quotaConsumed = row.quota_consumed;
+  } else if (typeof row.quota_consumed === 'number') {
+    quotaConsumed = row.quota_consumed > 0;
+  } else if (typeof row.quota_consumed === 'string') {
+    quotaConsumed = row.quota_consumed.toLowerCase() === 'true' || row.quota_consumed === '1';
+  } else {
+    quotaConsumed = outcome !== 'blocked';
+  }
+
+  return {
+    id: String(row.id || reqId),
+    request_id: reqId,
+    project_id: row.project_id,
+    action_key: actionKey,
+    action: actionKey,
+    outcome: outcome,
+    message: row.message ?? null,
+    error_message: row.error_message ?? null,
+    error_code: row.error_code ?? null,
+    status_code: statusCode,
+    status: statusCode,
+    requested_at: requestedAt,
+    created_at: requestedAt,
+    timestamp: requestedAt,
+    completed_at: row.completed_at ?? null,
+    latency_ms: Number(row.latency_ms ?? 0),
+    quota_consumed: quotaConsumed,
+    details: detailsObj,
+    endpoint: row.endpoint || (actionKey ? `/api/${actionKey}` : '/api'),
+    method: row.method || 'POST',
+    user_agent: row.user_agent,
+  };
+}
+
+/**
+ * Subscribes to realtime INSERT and UPDATE Postgres Changes on public.developer_request_logs
+ * filtered strictly by the project_id.
+ */
+export function subscribeToDeveloperLogs(
+  supabaseClient: any,
+  projectId: string,
+  onInsert: (log: DeveloperRequestLog) => void,
+  onUpdate: (log: DeveloperRequestLog) => void
+) {
+  const channel = supabaseClient
+    .channel(`developer-logs-${projectId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'developer_request_logs',
+        filter: `project_id=eq.${projectId}`,
+      },
+      (payload: any) => {
+        if (payload?.new) {
+          onInsert(normalizeDeveloperLog(payload.new));
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'developer_request_logs',
+        filter: `project_id=eq.${projectId}`,
+      },
+      (payload: any) => {
+        if (payload?.new) {
+          onUpdate(normalizeDeveloperLog(payload.new));
+        }
+      }
+    )
+    .subscribe((status: string) => {
+      console.log(`[Supabase Realtime] developer_request_logs (${projectId}):`, status);
+    });
+
+  return channel;
+}
+
+/**
+ * Subscribes to realtime INSERT and UPDATE Postgres Changes on public.developer_daily_usage
+ * filtered strictly by the project_id.
+ */
+export function subscribeToDeveloperDailyUsage(
+  supabaseClient: any,
+  projectId: string,
+  onInsert: (usage: DeveloperDailyUsage) => void,
+  onUpdate: (usage: DeveloperDailyUsage) => void
+) {
+  const channel = supabaseClient
+    .channel(`developer-usage-${projectId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'developer_daily_usage',
+        filter: `project_id=eq.${projectId}`,
+      },
+      (payload: any) => {
+        if (payload?.new) {
+          const row: DeveloperDailyUsage = {
+            project_id: payload.new.project_id,
+            usage_date: String(payload.new.usage_date),
+            calls: Number(payload.new.calls ?? payload.new.used ?? 0),
+            successful_calls: Number(payload.new.successful_calls ?? payload.new.successful ?? 0),
+            blocked_calls: Number(payload.new.blocked_calls ?? payload.new.blocked ?? 0),
+          };
+          onInsert(row);
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'developer_daily_usage',
+        filter: `project_id=eq.${projectId}`,
+      },
+      (payload: any) => {
+        if (payload?.new) {
+          const row: DeveloperDailyUsage = {
+            project_id: payload.new.project_id,
+            usage_date: String(payload.new.usage_date),
+            calls: Number(payload.new.calls ?? payload.new.used ?? 0),
+            successful_calls: Number(payload.new.successful_calls ?? payload.new.successful ?? 0),
+            blocked_calls: Number(payload.new.blocked_calls ?? payload.new.blocked ?? 0),
+          };
+          onUpdate(row);
+        }
+      }
+    )
+    .subscribe((status: string) => {
+      console.log(`[Supabase Realtime] developer_daily_usage (${projectId}):`, status);
+    });
+
+  return channel;
+}
 
 export interface DeveloperQuota {
   has_project: boolean;
@@ -346,8 +531,7 @@ export async function getDeveloperUsage(days = 30): Promise<DeveloperDailyUsage[
       }));
 
       // Always return a complete calendar window. A missing database row means zero usage,
-      // never synthetic/fake traffic. This prevents DeveloperView's legacy fallback curve
-      // from ever being used and keeps the chart truthful.
+      // never synthetic/fake traffic.
       const byDate = new Map(rows.map((row) => [row.usage_date, row]));
       const today = new Date();
       const complete: DeveloperDailyUsage[] = [];
@@ -367,15 +551,80 @@ export async function getDeveloperUsage(days = 30): Promise<DeveloperDailyUsage[
       }
       return complete;
     }
-  } catch (e) { console.warn('[DeveloperAPI] usage:', e); }
+  } catch (e) { console.warn('[DeveloperAPI] usage RPC error:', e); }
+
+  // Direct table query fallback
+  try {
+    const proj = await getDeveloperProject();
+    if (proj?.id) {
+      const today = new Date();
+      const startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
+      const startStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+      
+      const { data: rows, error: tblError } = await supabase()
+        .from('developer_daily_usage')
+        .select('*')
+        .eq('project_id', proj.id)
+        .gte('usage_date', startStr)
+        .order('usage_date', { ascending: true });
+
+      if (!tblError) {
+        const byDate = new Map((rows || []).map((row: any) => [row.usage_date, {
+          project_id: row.project_id,
+          usage_date: String(row.usage_date),
+          calls: Number(row.calls ?? 0),
+          successful_calls: Number(row.successful_calls ?? 0),
+          blocked_calls: Number(row.blocked_calls ?? 0),
+        }]));
+
+        const complete: DeveloperDailyUsage[] = [];
+        for (let offset = days - 1; offset >= 0; offset -= 1) {
+          const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset);
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const usageDate = `${year}-${month}-${day}`;
+          complete.push(byDate.get(usageDate) ?? {
+            project_id: proj.id,
+            usage_date: usageDate,
+            calls: 0,
+            successful_calls: 0,
+            blocked_calls: 0,
+          });
+        }
+        return complete;
+      }
+    }
+  } catch (e2) {
+    console.warn('[DeveloperAPI] usage direct fallback error:', e2);
+  }
+
   return [];
 }
 
 export async function getDeveloperApiLogs(limit = 100): Promise<DeveloperRequestLog[]> {
   try {
+    const proj = await getDeveloperProject();
+    if (proj?.id) {
+      const { data: rows, error: tblErr } = await supabase()
+        .from('developer_request_logs')
+        .select('*')
+        .eq('project_id', proj.id)
+        .order('requested_at', { ascending: false })
+        .limit(limit);
+
+      if (!tblErr && Array.isArray(rows) && rows.length > 0) {
+        return rows.map((row: any) => normalizeDeveloperLog(row));
+      }
+    }
+
     const { data, error } = await supabase().rpc('get_my_developer_logs', { p_limit: limit });
-    if (!error && Array.isArray(data)) return data.map((row: any) => ({ id: String(row.request_id || row.id || ''), request_id: String(row.request_id || row.id || ''), project_id: row.project_id, timestamp: row.created_at || row.timestamp || new Date().toISOString(), created_at: row.created_at || row.timestamp || new Date().toISOString(), completed_at: row.completed_at, method: row.method || 'POST', endpoint: row.endpoint || '/api', action: row.action, status: Number(row.status_code ?? row.status ?? 200), status_code: Number(row.status_code ?? row.status ?? 200), latency_ms: Number(row.latency_ms ?? 0), error_code: row.error_code ?? null, quota_consumed: Number(row.quota_consumed ?? 1), user_agent: row.user_agent }));
-  } catch (e) { console.warn('[DeveloperAPI] logs:', e); }
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return data.map((row: any) => normalizeDeveloperLog(row));
+    }
+  } catch (e) {
+    console.warn('[DeveloperAPI] logs error:', e);
+  }
   return [];
 }
 
@@ -387,9 +636,49 @@ export async function completeDeveloperCall(requestId: string, statusCode: numbe
   return await supabase().rpc('complete_developer_call', { p_request_id: requestId, p_status_code: statusCode, p_latency_ms: latencyMs, p_error_code: errorCode });
 }
 
-export function recordDeveloperApiCall(options: { endpoint: string; method?: string; action?: string; status: number; latency_ms: number; error_code?: string | null; user_agent?: string }): DeveloperRequestLog {
+export function recordDeveloperApiCall(options: {
+  endpoint: string;
+  method?: string;
+  action_key?: string;
+  action?: string;
+  outcome?: string;
+  message?: string;
+  error_message?: string | null;
+  error_code?: string | null;
+  status?: number;
+  status_code?: number;
+  latency_ms: number;
+  quota_consumed?: boolean | number;
+  details?: any;
+  user_agent?: string;
+}): DeveloperRequestLog {
   const id = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  return { id, request_id: id, timestamp: new Date().toISOString(), created_at: new Date().toISOString(), method: options.method || 'POST', endpoint: options.endpoint, action: options.action || 'api_call', status: options.status, status_code: options.status, latency_ms: options.latency_ms, error_code: options.error_code ?? null, quota_consumed: 1, user_agent: options.user_agent };
+  const statusCode = options.status_code ?? options.status ?? 200;
+  const outcome = options.outcome || (statusCode < 400 ? 'succeeded' : (statusCode === 429 ? 'blocked' : 'failed'));
+  const actionKey = options.action_key || options.action || (options.endpoint ? options.endpoint.replace(/^\/api\/?/, '') : 'api_call');
+
+  return normalizeDeveloperLog({
+    id,
+    request_id: id,
+    action_key: actionKey,
+    action: actionKey,
+    outcome: outcome,
+    message: options.message || (outcome === 'succeeded' ? 'Request succeeded.' : options.error_message || 'Request completed.'),
+    error_message: options.error_message ?? null,
+    error_code: options.error_code ?? null,
+    status_code: statusCode,
+    status: statusCode,
+    latency_ms: options.latency_ms,
+    quota_consumed: options.quota_consumed !== undefined ? options.quota_consumed : (outcome !== 'blocked'),
+    details: options.details,
+    requested_at: new Date().toISOString(),
+    completed_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+    timestamp: new Date().toISOString(),
+    endpoint: options.endpoint,
+    method: options.method || 'POST',
+    user_agent: options.user_agent,
+  });
 }
 
 export function clearDeveloperApiLogs(): void {}
@@ -412,5 +701,142 @@ export async function revokeDeveloperApiKey(_id: string, projectPassword?: strin
   return true;
 }
 
-export function getDeveloperApiBaseUrl(): string { return (import.meta.env.VITE_DEVELOPER_API_URL || '').trim().replace(/\/$/, ''); }
-export const WORKER_BASE_URL = (import.meta.env.VITE_WORKER_BASE_URL || '').trim().replace(/\/$/, '');
+export const DEVELOPER_API_URL = "https://back-end-gamma-ebon.vercel.app/api/developer";
+
+export function getDeveloperGatewayBaseUrl(): string {
+  return DEVELOPER_API_URL;
+}
+
+export function getDeveloperRpcEndpoint(): string {
+  return DEVELOPER_API_URL;
+}
+
+export function getDeveloperApiBaseUrl(): string {
+  return DEVELOPER_API_URL;
+}
+
+export interface RpcPresetAction {
+  id: string;
+  name: string;
+  actionKey: 'getAllTokens' | 'getBlockchainTokens' | 'getTokenByAddress';
+  method: 'POST';
+  description: string;
+  defaultPayload: Record<string, any>;
+  sampleCurl: (apiKey?: string) => string;
+}
+
+export const RPC_PRESET_ACTIONS: RpcPresetAction[] = [
+  {
+    id: 'get-all-tokens',
+    name: 'Get All Tokens',
+    actionKey: 'getAllTokens',
+    method: 'POST',
+    description: 'Fetch the full multi-chain directory of verified tokens from the indexer.',
+    defaultPayload: {
+      action: 'getAllTokens',
+      page: 1,
+      limit: 100,
+    },
+    sampleCurl: (apiKey = 'YOUR_API_KEY') =>
+`curl -X POST ${DEVELOPER_API_URL} \\
+  -H "X-API-Key: ${apiKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+  "action": "getAllTokens",
+  "page": 1,
+  "limit": 100
+}'`,
+  },
+  {
+    id: 'get-blockchain-tokens',
+    name: 'Get Tokens by Blockchain',
+    actionKey: 'getBlockchainTokens',
+    method: 'POST',
+    description: 'Retrieve verified tokens filtered specifically for a chosen blockchain network.',
+    defaultPayload: {
+      action: 'getBlockchainTokens',
+      blockchain: 'polygon',
+      page: 1,
+      limit: 100,
+    },
+    sampleCurl: (apiKey = 'YOUR_API_KEY') =>
+`curl -X POST ${DEVELOPER_API_URL} \\
+  -H "X-API-Key: ${apiKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+  "action": "getBlockchainTokens",
+  "blockchain": "polygon",
+  "page": 1,
+  "limit": 100
+}'`,
+  },
+  {
+    id: 'get-token-by-address',
+    name: 'Get Token by Contract Address',
+    actionKey: 'getTokenByAddress',
+    method: 'POST',
+    description: 'Lookup detailed token metadata, verification state, and parameters by contract address.',
+    defaultPayload: {
+      action: 'getTokenByAddress',
+      address: '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270',
+    },
+    sampleCurl: (apiKey = 'YOUR_API_KEY') =>
+`curl -X POST ${DEVELOPER_API_URL} \\
+  -H "X-API-Key: ${apiKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+  "action": "getTokenByAddress",
+  "address": "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270"
+}'`,
+  },
+];
+
+export async function executeDeveloperRpcCall(
+  payload: Record<string, any>,
+  apiKey?: string
+): Promise<{ status: number; ok: boolean; latencyMs: number; data: any }> {
+  const endpoint = DEVELOPER_API_URL;
+  const start = performance.now();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (apiKey && apiKey.trim()) {
+    headers['X-API-Key'] = apiKey.trim();
+  }
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+    const latencyMs = Math.max(1, Math.round(performance.now() - start));
+    let data: any;
+    const text = await res.text();
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { text };
+    }
+    return {
+      status: res.status,
+      ok: res.ok,
+      latencyMs,
+      data,
+    };
+  } catch (err: any) {
+    const latencyMs = Math.max(1, Math.round(performance.now() - start));
+    return {
+      status: 500,
+      ok: false,
+      latencyMs,
+      data: {
+        success: false,
+        error: {
+          code: 'NETWORK_ERROR',
+          message: err?.message || 'Failed to connect to Developer RPC gateway.',
+        },
+      },
+    };
+  }
+}
