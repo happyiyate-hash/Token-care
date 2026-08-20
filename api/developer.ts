@@ -29,24 +29,26 @@ function getApiKey(req: VercelRequest): string {
   return '';
 }
 
-function getRequestKey(body: Record<string, unknown>, req: VercelRequest): string {
-  const candidate = body.key ?? body.action ?? body.request ?? body.type ?? body.operation;
-  if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
-  return req.url?.split('?')[0] || 'unknown';
-}
-
 function getBody(req: VercelRequest): Record<string, unknown> {
   if (!req.body) return {};
-  if (typeof req.body === 'object' && !Array.isArray(req.body)) return req.body as Record<string, unknown>;
+  if (typeof req.body === 'object' && !Array.isArray(req.body)) {
+    return req.body as Record<string, unknown>;
+  }
   if (typeof req.body === 'string') {
     try {
       const parsed = JSON.parse(req.body);
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed
+        : {};
     } catch {
       return {};
     }
   }
   return {};
+}
+
+function getRequestKey(body: Record<string, unknown>): string {
+  return typeof body.key === 'string' ? body.key.trim() : '';
 }
 
 async function writeLog(params: {
@@ -61,6 +63,7 @@ async function writeLog(params: {
   quotaConsumed: boolean;
 }) {
   const latencyMs = Math.max(0, Date.now() - params.startedAt);
+
   const { error } = await supabase.from('developer_request_logs').insert({
     project_id: params.projectId,
     endpoint: params.requestKey,
@@ -82,22 +85,37 @@ async function writeLog(params: {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'authorization, x-api-key, content-type');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
 
   if (req.method === 'OPTIONS') return res.status(204).end();
+  if (req.method !== 'POST') {
+    return send(res, 405, {
+      success: false,
+      code: 'METHOD_NOT_ALLOWED',
+      error: 'Only POST requests are supported',
+    });
+  }
 
   const startedAt = Date.now();
   const requestId = crypto.randomUUID();
   const body = getBody(req);
-  const requestKey = getRequestKey(body, req);
-  const method = req.method || 'POST';
-
+  const requestKey = getRequestKey(body);
   const apiKey = getApiKey(req);
+
   if (!apiKey) {
     return send(res, 401, {
       success: false,
       code: 'API_KEY_REQUIRED',
       error: 'API key required',
+      request_id: requestId,
+    });
+  }
+
+  if (!requestKey) {
+    return send(res, 400, {
+      success: false,
+      code: 'REQUEST_KEY_REQUIRED',
+      error: 'The request body must contain a string "key" field',
       request_id: requestId,
     });
   }
@@ -114,8 +132,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let projectId: string | null = null;
 
   try {
-    // The service-role client intentionally bypasses RLS so this gateway can
-    // resolve the API key and write project-owned usage/log records safely.
     const { data: project, error: projectError } = await supabase
       .from('developer_projects')
       .select('id, daily_limit, is_active, subscription_status')
@@ -143,8 +159,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     projectId = project.id;
 
-    // PostgreSQL owns the daily counter. It creates today's row when needed
-    // and atomically increments the existing project/day row.
     const { data: quotaData, error: quotaError } = await supabase.rpc(
       'consume_developer_call',
       {
@@ -160,7 +174,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         projectId,
         requestId,
         requestKey,
-        method,
+        method: 'POST',
         statusCode: 500,
         startedAt,
         errorCode: 'QUOTA_CHECK_FAILED',
@@ -183,7 +197,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         projectId,
         requestId,
         requestKey,
-        method,
+        method: 'POST',
         statusCode: 429,
         startedAt,
         errorCode: 'QUOTA_EXCEEDED',
@@ -204,12 +218,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // The exact Cloudflare request contract will be wired after the app's
-    // final JSON shape is supplied. Until then, forward the body unchanged.
+    // The engine sends one stable operation key plus optional parameters.
+    // The backend forwards the same JSON contract to the configured upstream.
     const upstreamResponse = await fetch(upstreamUrl, {
-      method: method === 'GET' ? 'GET' : 'POST',
+      method: 'POST',
       headers: { 'content-type': 'application/json' },
-      ...(method === 'GET' ? {} : { body: JSON.stringify(body) }),
+      body: JSON.stringify(body),
     });
 
     const text = await upstreamResponse.text();
@@ -225,7 +239,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       projectId,
       requestId,
       requestKey,
-      method,
+      method: 'POST',
       statusCode: upstreamResponse.status,
       startedAt,
       errorCode: succeeded ? null : `UPSTREAM_${upstreamResponse.status}`,
@@ -235,6 +249,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return send(res, upstreamResponse.status, {
       success: succeeded,
+      key: requestKey,
       data: upstreamBody,
       usage: {
         used: quota.calls,
@@ -251,7 +266,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         projectId,
         requestId,
         requestKey,
-        method,
+        method: 'POST',
         statusCode: 500,
         startedAt,
         errorCode: 'INTERNAL_ERROR',
