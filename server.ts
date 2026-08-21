@@ -3,7 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import nodemailer from 'nodemailer';
 import { validateAndConsumeDeveloperQuota, finalizeDeveloperRequestLog } from './src/server/developerUsage';
-import { verifyToken } from './backend';
+import { uploadToken } from './backend';
 
 // Shared Nodemailer transporter instance
 let cachedTransporter: nodemailer.Transporter | null = null;
@@ -227,49 +227,30 @@ async function startServer() {
     });
   });
 
-  // 3. POST /api/token/details & POST /api/token-details
-  const handleTokenDetails = async (req: express.Request, res: express.Response) => {
-    const blockchain = req.body?.blockchain || req.body?.chain || req.body?.chainId || req.query?.blockchain || req.query?.chain || 'polygon';
-    const chainId = req.body?.chainId || req.query?.chainId;
-    const contractAddress = (req.body?.contractAddress || req.body?.address || req.query?.address || req.query?.contractAddress || '').trim();
-
-    if (!contractAddress) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'MISSING_CONTRACT_ADDRESS',
-          message: "Field 'contractAddress' is required in request body."
-        }
-      });
-    }
+  // 3. POST /api/upload-token, POST /api/tokens/upload (Token Submission Skeleton)
+  const handleTokenUpload = async (req: express.Request, res: express.Response) => {
+    const authHeader = req.headers.authorization;
+    const payload = req.body || req.query;
 
     try {
-      const result = await verifyToken({
-        blockchain,
-        chain: blockchain,
-        chainId,
-        contractAddress,
-      });
-
-      if (!result.success) {
-        return res.status(400).json(result);
-      }
-
-      return res.status(200).json(result);
+      const result = await uploadToken(payload, authHeader);
+      return res.status(result.success ? 200 : 400).json(result);
     } catch (err: any) {
       return res.status(500).json({
         success: false,
+        status: 'failed',
         error: {
-          code: 'VERIFICATION_ERROR',
-          message: err?.message || 'Unable to resolve and verify token from blockchain providers.'
-        }
+          code: 'UPLOAD_ERROR',
+          message: err?.message || 'Error executing token upload workflow',
+        },
+        timestamp: new Date().toISOString(),
       });
     }
   };
 
-  app.post('/api/token/details', handleTokenDetails);
-  app.post('/api/token-details', handleTokenDetails);
-  app.get('/api/token-details', handleTokenDetails);
+  app.post('/api/upload-token', handleTokenUpload);
+  app.post('/api/tokens/upload', handleTokenUpload);
+  app.get('/api/upload-token', handleTokenUpload);
 
   // 4. POST /api/token/price
   app.post('/api/token/price', async (req, res) => {

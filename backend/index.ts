@@ -1,62 +1,43 @@
-import { tokenVerificationEngine } from './core/verificationEngine';
-import { blockchainRegistry } from './core/blockchainRegistry';
+import { uploadTokenWorkflow } from './upload/orchestrator';
 import {
-  TokenDetailsRequest,
-  BackendTokenDetailsResponse,
-  NormalizedTokenDetails,
-  TokenVerificationReport,
-  VerifiedTokenResult,
-  AssetStandard,
-  OnChainTokenInspection,
-} from './types/tokenDetails';
+  TokenUploadRequest,
+  TokenUploadResponse,
+  AuthContext,
+  ValidationResult,
+  VerificationResult,
+  StorageResult,
+  RewardResult,
+} from './types/upload';
 
 /**
- * Public Verification Engine API
+ * Main Token Upload API entry point.
  *
- * The frontend app simply sends the JSON:
- *   {
- *     blockchain: "polygon", // or "ethereum", "solana", "xrpl", "ton", "base", etc.
- *     contractAddress: "0x...",
- *     chainId?: 137
- *   }
- *
- * The backend engine resolves the proper adapter via BlockchainRegistry,
- * inspects the token on-chain, gathers provider evidence, evaluates security risk,
- * and returns the normalized verification response.
+ * Orchestrates:
+ * 1. User Authentication
+ * 2. Token Input Validation
+ * 3. Token Verification (placeholder)
+ * 4. Storing Token for User (placeholder)
+ * 5. Publishing Token to Public Directory (placeholder)
+ * 6. Reward Calculation (placeholder)
+ * 7. Crediting User Reward (placeholder)
  */
-export async function verifyToken(
-  request: TokenDetailsRequest
-): Promise<BackendTokenDetailsResponse> {
-  return tokenVerificationEngine.verify(request);
-}
-
-/**
- * Helper to maintain backward compatibility with previous call signature
- */
-export async function getBackendTokenDetails(
-  chainOrBlockchain: string,
-  contractAddress: string,
-  chainId?: string | number
-): Promise<BackendTokenDetailsResponse> {
-  return verifyToken({
-    blockchain: chainOrBlockchain,
-    chain: chainOrBlockchain,
-    contractAddress,
-    chainId,
-  });
+export async function uploadToken(
+  payload: any,
+  authHeader?: string
+): Promise<TokenUploadResponse> {
+  return uploadTokenWorkflow(payload, authHeader);
 }
 
 export {
-  tokenVerificationEngine,
-  blockchainRegistry,
+  uploadTokenWorkflow,
 };
 
 export type {
-  TokenDetailsRequest,
-  BackendTokenDetailsResponse,
-  NormalizedTokenDetails,
-  TokenVerificationReport,
-  VerifiedTokenResult,
-  AssetStandard,
-  OnChainTokenInspection,
+  TokenUploadRequest,
+  TokenUploadResponse,
+  AuthContext,
+  ValidationResult,
+  VerificationResult,
+  StorageResult,
+  RewardResult,
 };

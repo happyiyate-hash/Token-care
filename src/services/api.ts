@@ -541,38 +541,46 @@ export async function lookupBlockchainForToken(
   };
 }
 
-export interface BackendVerificationPayload {
+export interface BackendUploadPayload {
   blockchain: string;
   chainId: string | number;
   contractAddress: string;
-  tokenStandard?: string;
-  rpcUrl?: string;
+  name: string;
+  symbol: string;
+  decimals?: number;
+  totalSupply?: string;
+  logoUrl?: string;
+  websiteUrl?: string;
+  twitterUrl?: string;
+  telegramUrl?: string;
 }
 
 /**
- * Sends token JSON to backend verification engine
+ * Sends token submission to the Backend Upload Workflow:
+ * POST /api/upload-token
  */
-export async function fetchTokenVerificationFromBackend(
-  payload: BackendVerificationPayload
+export async function uploadTokenToBackend(
+  payload: BackendUploadPayload,
+  accessToken?: string
 ): Promise<any> {
-  try {
-    const res = await fetch('/api/token-details', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => null);
-      throw new Error(errJson?.error?.message || `Backend verification returned status ${res.status}`);
-    }
-
-    return await res.json();
-  } catch (err: any) {
-    console.warn('[fetchTokenVerificationFromBackend] Backend call note:', err);
-    throw err;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
   }
+
+  const res = await fetch('/api/upload-token', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const errJson = await res.json().catch(() => null);
+    throw new Error(errJson?.error?.message || `Backend upload returned status ${res.status}`);
+  }
+
+  return await res.json();
 }
 

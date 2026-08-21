@@ -20,7 +20,7 @@ import {
 import { ChainId, SubmittedToken, UserRewardWallet, LogoStatus } from './types';
 import { SUPPORTED_CHAINS, RAW_EVM_CHAINS, REWARD_RATE_USD, getChainInfo, normalizeChainKey, isEvmChain, validateTokenIdentifier } from './constants/chains';
 import { fetchERC20MetadataFromBlockchain, detectEVMChainForContractAddress } from './services/ethers';
-import { fetchDexScreenerData, fetchCoinGeckoSupplyData, discoverToken, lookupBlockchainForToken, fetchTokenVerificationFromBackend } from './services/api';
+import { fetchDexScreenerData, fetchCoinGeckoSupplyData, discoverToken, lookupBlockchainForToken, uploadTokenToBackend } from './services/api';
 import { analyzeTokenSafety } from './services/security';
 import { verifyToken, VerificationReport } from './services/verificationEngine';
 import { verifyTokenLogo, LogoVerificationReport, downloadAndPrepareImageSource } from './services/logoVerificationEngine';
@@ -930,33 +930,13 @@ export default function App() {
         );
       }
 
-      // Prepare the JSON to send to the backend engine
-      const backendPayload = {
-        blockchain: lookup?.blockchain || getChainInfo(activeChainKey).name,
-        chain: activeChainKey,
-        chainId: activeChainKey,
-        contractAddress: addr,
-        tokenStandard: lookup?.tokenStandard,
-      };
-
-      // Query backend verification engine
-      let backendData: any = null;
-      try {
-        const beRes = await fetchTokenVerificationFromBackend(backendPayload);
-        if (beRes?.success && beRes?.data) {
-          backendData = beRes.data;
-        }
-      } catch (beErr) {
-        console.warn('[handleFetchToken] Backend engine call note:', beErr);
-      }
-
-      // 1. Fetch smart contract metadata directly via Ethers.js for EVM chains or from backend
+      // 1. Fetch smart contract metadata directly via Ethers.js for EVM chains
       let erc20Meta = isEvmChain(activeChainKey, blockchainType)
         ? await fetchERC20MetadataFromBlockchain(addr, activeChainKey, apiKeys)
         : null;
 
       // If erc20Meta wasn't found on selected EVM chain, check if contract exists on other major EVM chains
-      if (!erc20Meta && !backendData && isEvmChain(activeChainKey, blockchainType)) {
+      if (!erc20Meta && isEvmChain(activeChainKey, blockchainType)) {
         const majorChainsToTest = ['1', '137', '8453', '42161', '56'].filter((c) => c !== activeChainKey);
         for (const testChain of majorChainsToTest) {
           const testMeta = await fetchERC20MetadataFromBlockchain(addr, testChain, apiKeys);
