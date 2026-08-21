@@ -1,4 +1,8 @@
-import { verifyToken as runMultichainVerification } from '../../backend/verification/tokenVerifier';
+import { ChainId, ERC20Metadata, MarketData } from '../types';
+import { fetchERC20MetadataFromBlockchain } from './ethers';
+import { discoverToken, fetchDexScreenerData, fetchCoinGeckoSupplyData, lookupBlockchainForToken } from './api';
+import { analyzeTokenSafety } from './security';
+import { isEvmChain } from '../constants/chains';
 
 export interface TrustScoreCategory { id: string; name: string; score: number; maxScore: number; weightPct: number; details: string; }
 export interface CategoryScores { security: TrustScoreCategory; liquidity: TrustScoreCategory; marketData: TrustScoreCategory; tradingActivity: TrustScoreCategory; holders: TrustScoreCategory; blockchainMetadata: TrustScoreCategory; contractVerification: TrustScoreCategory; logoQuality: TrustScoreCategory; community: TrustScoreCategory; }
@@ -8,83 +12,146 @@ export interface VerificationReport {
   contractAddress: string; chainId: string; rawScore: number; maxRawScore: number; trustScore: number; securityScore: number; marketMaturityScore: number; verdict: AuditVerdict; verdictLabel: string; status: 'APPROVED' | 'NEEDS_REVIEW' | 'HIGH_RISK' | 'REJECTED'; riskRating: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'; recommendation: string; actionableRecommendation: string; warnings: string[]; passedSecurity: string[]; passedMarket: string[]; maturityWarnings: string[]; securityWarnings: string[]; whyNotApproved: string[]; isNewToken: boolean; categories: CategoryScores; providers: ProviderEvidence[]; autoRejected?: boolean; autoRejectReasons?: string[]; onChainFallback: { contractExists: boolean; isSourceVerified: boolean; deploymentInfo: string; hasFallbackMetadata: boolean }; securityChecks: { isHoneypot: boolean; isMintable: boolean; isProxy: boolean; isBlacklisted: boolean; isOwnershipRenounced: boolean; isSourceCodeVerified: boolean; buyTaxPct: number; sellTaxPct: number; liquidityLockedPct: number; top10HoldersPct: number; holdersCount: number; pairAgeDays: number }; summaryText: string; timestamp: string;
 }
 
-function makeCategory(id: string, name: string, score: number, weightPct: number, details: string): TrustScoreCategory { return { id, name, score: Math.max(0, Math.min(100, score)), maxScore: 100, weightPct, details }; }
-function legacyProviderId(id: string): ProviderEvidence['providerId'] { if (id === 'on_chain') return 'explorer'; if (id === 'goplus') return 'goplus'; if (id === 'honeypot') return 'honeypotis'; if (id === 'coingecko') return 'coingecko'; if (id === 'dexscreener') return 'dexscreener'; if (id === 'geckoterminal') return 'geckoterminal'; return 'explorer'; }
-
-function normalizeVerificationChain(blockchainType?: string, chainId?: string | number): { blockchain: string; chainId: string | number } {
-  const blockchain = String(blockchainType || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-  const chain = String(chainId ?? '').trim().toLowerCase();
-
-  // Solana providers can expose the chain as `solana`, `sol`, `mainnet-beta`,
-  // or the observed `metadata` label. All of these must route to the Solana verifier.
-  if (['solana', 'sol', 'mainnetbeta', 'solanamainnet', 'metadata'].includes(blockchain) ||
-      ['solana', 'sol', 'mainnet-beta', 'solana-mainnet', 'metadata'].includes(chain)) {
-    return { blockchain: 'solana', chainId: 'solana' };
-  }
-
-  if (['tron', 'trx'].includes(blockchain) || ['tron', 'trx'].includes(chain)) {
-    return { blockchain: 'tron', chainId: 'tron' };
-  }
-
-  if (['ton', 'tonnetwork'].includes(blockchain) || ['ton', 'ton-network'].includes(chain)) {
-    return { blockchain: 'ton', chainId: 'ton' };
-  }
-
-  if (['xrpl', 'xrp', 'ripple'].includes(blockchain) || ['xrpl', 'xrp', 'ripple'].includes(chain)) {
-    return { blockchain: 'xrpl', chainId: 'xrpl' };
-  }
-
-  return { blockchain: blockchainType || 'evm', chainId: chainId ?? '' };
+function makeCategory(id: string, name: string, score: number, weightPct: number, details: string): TrustScoreCategory {
+  return { id, name, score: Math.max(0, Math.min(100, Math.round(score))), maxScore: 100, weightPct, details };
 }
 
-/** Compatibility API for the existing UI. Real verification is performed by the shared multichain verifier. */
+function normalizeChain(blockchainType?: string, chainId?: string | number) {
+  const b = String(blockchainType || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  const c = String(chainId ?? '').trim().toLowerCase();
+  if (['metadata', 'solana', 'sol', 'mainnetbeta', 'solanamainnet'].includes(b) || ['metadata', 'solana', 'sol', 'mainnet-beta'].includes(c)) {
+    return { blockchain: 'solana', chainId: 'mainnet-beta' as ChainId, name: 'Solana', standard: 'SPL' };
+  }
+  if (['tron', 'trx'].includes(b) || ['tron', 'trx'].includes(c)) return { blockchain: 'tron', chainId: 'mainnet' as ChainId, name: 'TRON', standard: 'TRC-20' };
+  if (['ton', 'tonnetwork'].includes(b) || ['ton', 'tonnetwork'].includes(c)) return { blockchain: 'ton', chainId: 'ton' as ChainId, name: 'TON Network', standard: 'Jetton' };
+  if (['xrpl', 'xrp', 'ripple'].includes(b) || ['xrpl', 'xrp', 'ripple', 'mainnet'].includes(c)) return { blockchain: 'xrpl', chainId: 'mainnet' as ChainId, name: 'XRP Ledger', standard: 'issued_asset' };
+  return { blockchain: blockchainType || 'evm', chainId: String(chainId || '137') as ChainId, name: blockchainType || 'Unknown', standard: 'ERC-20' };
+}
+
+function emptyMarket(): MarketData {
+  return { priceUsd: 0, priceNative: 0, priceChange24h: 0, volume24h: 0, liquidityUsd: 0, marketCapUsd: 0, fdvUsd: 0, pairAddress: '', dexName: '', pairUrl: '' } as MarketData;
+}
+
+/**
+ * Device-only token verification.
+ * No backend endpoint is called. Provider requests are made directly from the user's device.
+ */
 export async function verifyToken(address: string, chainId: string | number, _logoUrl?: string, blockchainType?: string): Promise<VerificationReport> {
-  const normalized = normalizeVerificationChain(blockchainType, chainId);
-  const result = await runMultichainVerification({
-    contractAddress: address,
-    chainId: normalized.chainId,
-    blockchain: normalized.blockchain,
-  });
+  const startedAt = new Date().toISOString();
+  const lookup = await lookupBlockchainForToken(address, String(chainId || '137') as ChainId).catch(() => null);
+  const detected = normalizeChain(lookup?.blockchainType || blockchainType, lookup?.chainId || chainId);
+  const effectiveChain = lookup?.chainId || detected.chainId;
+  const effectiveBlockchain = lookup?.blockchainType || detected.blockchain;
+
+  const providerStatus: Record<string, 'verified' | 'unlisted' | 'failed' | 'unsupported'> = {};
+  let metadata: ERC20Metadata | null = null;
+  let discovered: any = null;
+  let market: MarketData = emptyMarket();
+  let gecko: any = null;
+
+  // Run independent provider calls concurrently. One failure must never abort the whole verification.
+  const discoveryPromise = discoverToken(address, effectiveChain as ChainId).catch(() => null);
+  const dexPromise = fetchDexScreenerData(address, effectiveChain as ChainId).catch(() => null);
+  const geckoPromise = fetchCoinGeckoSupplyData(address, effectiveChain as ChainId).catch(() => null);
+  const metadataPromise = isEvmChain(effectiveChain, effectiveBlockchain)
+    ? fetchERC20MetadataFromBlockchain(address, effectiveChain as ChainId).catch(() => null)
+    : Promise.resolve(null);
+
+  [discovered, market, gecko, metadata] = await Promise.all([discoveryPromise, dexPromise, geckoPromise, metadataPromise]);
+
+  if (discovered) providerStatus.dexscreener = discovered.source === 'dexscreener' ? 'verified' : 'unlisted';
+  else providerStatus.dexscreener = 'failed';
+  providerStatus.geckoterminal = 'unlisted';
+  providerStatus.coingecko = gecko ? 'verified' : 'unlisted';
+  providerStatus.on_chain = metadata ? 'verified' : isEvmChain(effectiveChain, effectiveBlockchain) ? 'failed' : 'unsupported';
+  providerStatus.goplus = 'unlisted';
+  providerStatus.honeypot = 'unlisted';
+
+  const tokenName = metadata?.name || discovered?.name || gecko?.name || 'Unknown Token';
+  const tokenSymbol = metadata?.symbol || discovered?.symbol || gecko?.symbol || 'UNKNOWN';
+  const decimals = metadata?.decimals ?? discovered?.decimals ?? 0;
+  const mergedMarket = { ...emptyMarket(), ...(market || {}) } as MarketData;
+  if (!mergedMarket.priceUsd && gecko?.priceUsd) mergedMarket.priceUsd = gecko.priceUsd;
+  if (!mergedMarket.marketCapUsd && gecko?.marketCapUsd) mergedMarket.marketCapUsd = gecko.marketCapUsd;
+  const security = await analyzeTokenSafety(
+    metadata || ({ address, name: tokenName, symbol: tokenSymbol, decimals, totalSupply: metadata?.totalSupply || gecko?.totalSupplyCG || 0, ownerAddress: metadata?.ownerAddress, isRenounced: metadata?.isRenounced, blockchainType: effectiveBlockchain } as any),
+    mergedMarket,
+    effectiveChain as ChainId,
+  ).catch(() => null);
+
+  const score = security?.score ?? (metadata || discovered ? 50 : 0);
+  const warnings = security?.warnings || [];
+  const risk: VerificationReport['riskRating'] = score >= 80 ? 'LOW' : score >= 60 ? 'MEDIUM' : score >= 40 ? 'HIGH' : 'CRITICAL';
+  const verdict: AuditVerdict = security?.isHoneypot || score < 40 ? 'REJECTED' : score < 70 ? 'ACCEPTED_MEDIUM_RISK' : score < 85 ? 'APPROVED_LOW_RISK' : 'APPROVED_EXCELLENT';
+  const status: VerificationReport['status'] = verdict === 'REJECTED' ? 'REJECTED' : risk === 'HIGH' || risk === 'CRITICAL' ? 'HIGH_RISK' : warnings.length ? 'NEEDS_REVIEW' : 'APPROVED';
+  const exists = Boolean(metadata || discovered);
   const now = new Date().toISOString();
 
-  if (!result.success || !result.data) {
-    const message = result.error?.message || 'Token verification failed.';
-    return {
-      contractAddress: address, chainId: String(normalized.chainId), rawScore: 0, maxRawScore: 100, trustScore: 0, securityScore: 0, marketMaturityScore: 0,
-      verdict: 'REJECTED', verdictLabel: 'Verification failed', status: 'REJECTED', riskRating: 'CRITICAL', recommendation: message,
-      actionableRecommendation: 'Do not rely on this token until verification succeeds.', warnings: [message], passedSecurity: [], passedMarket: [], maturityWarnings: [], securityWarnings: [message], whyNotApproved: [message], isNewToken: false,
-      categories: { security: makeCategory('security','Security',0,40,message), liquidity: makeCategory('liquidity','Liquidity',0,15,'Unavailable.'), marketData: makeCategory('market','Market Data',0,10,'Unavailable.'), tradingActivity: makeCategory('trading','Trading Activity',0,10,'Unavailable.'), holders: makeCategory('holders','Holders',0,10,'Unavailable.'), blockchainMetadata: makeCategory('metadata','Blockchain Metadata',0,10,'Unavailable.'), contractVerification: makeCategory('contract','Contract Verification',0,5,'Unavailable.'), logoQuality: makeCategory('logo','Logo Quality',0,5,'Unavailable.'), community: makeCategory('community','Community',0,5,'Unavailable.') },
-      providers: [], autoRejected: true, autoRejectReasons: [message], onChainFallback: { contractExists: false, isSourceVerified: false, deploymentInfo: 'Verification failed', hasFallbackMetadata: false },
-      securityChecks: { isHoneypot:false,isMintable:false,isProxy:false,isBlacklisted:false,isOwnershipRenounced:false,isSourceCodeVerified:false,buyTaxPct:0,sellTaxPct:0,liquidityLockedPct:0,top10HoldersPct:0,holdersCount:0,pairAgeDays:0 }, summaryText: message, timestamp: now,
-    };
-  }
+  const providers: ProviderEvidence[] = Object.entries(providerStatus).map(([id, state]) => ({
+    providerId: (id === 'on_chain' ? 'explorer' : id) as ProviderEvidence['providerId'],
+    name: id === 'on_chain' ? 'Blockchain RPC' : id,
+    endpoint: id,
+    status: state === 'verified' ? 'verified' : state === 'failed' ? 'failed' : 'unlisted',
+    score: state === 'verified' ? 100 : 0,
+    maxScore: 100,
+    weightPct: 0,
+    dataPoints: [],
+    lastChecked: now,
+  }));
 
-  const { token, verification } = result.data;
-  const warnings = verification.securityIssues;
-  const reportStatus: VerificationReport['status'] = verification.verdict === 'REJECTED' ? 'REJECTED' : verification.riskLevel === 'CRITICAL' || verification.riskLevel === 'HIGH' ? 'HIGH_RISK' : verification.isPartial ? 'NEEDS_REVIEW' : 'APPROVED';
-  const providerEntries: ProviderEvidence[] = Object.entries(verification.providerStatus).map(([id,status]) => ({ providerId: legacyProviderId(id), name: id === 'on_chain' ? 'Blockchain RPC' : id, endpoint: id, status: status === 'verified' ? 'verified' : status === 'failed' ? 'failed' : 'unlisted', score: status === 'verified' ? 100 : 0, maxScore: 100, weightPct: 0, dataPoints: [], lastChecked: verification.verifiedAt }));
-  const exists = verification.providerStatus.on_chain === 'verified';
-  const categoryScores = verification.categoryScores;
+  const categories: CategoryScores = {
+    security: makeCategory('security', 'Security', security?.score ?? 0, 40, 'Local security analysis.'),
+    liquidity: makeCategory('liquidity', 'Liquidity', mergedMarket.liquidityUsd > 50000 ? 100 : mergedMarket.liquidityUsd > 5000 ? 70 : 30, 15, 'DexScreener liquidity when available.'),
+    marketData: makeCategory('market', 'Market Data', gecko || market ? 100 : 0, 10, 'Provider market data.'),
+    tradingActivity: makeCategory('trading', 'Trading Activity', mergedMarket.volume24h > 0 ? 100 : 0, 10, '24h DEX volume when available.'),
+    holders: makeCategory('holders', 'Holders', security?.holdersCount ? 50 : 0, 10, 'Holder data unavailable unless a provider supplies it.'),
+    blockchainMetadata: makeCategory('metadata', 'Blockchain Metadata', exists ? 100 : 0, 10, `${detected.name} token metadata.`),
+    contractVerification: makeCategory('contract', 'Contract Verification', metadata ? 100 : discovered ? 60 : 0, 5, metadata ? 'Direct on-chain metadata read.' : 'Indexer metadata only.'),
+    logoQuality: makeCategory('logo', 'Logo Quality', discovered?.logoUrl || gecko?.logoUrl ? 100 : 0, 5, 'Provider logo availability.'),
+    community: makeCategory('community', 'Community', 0, 5, 'No local community verification performed.'),
+  };
 
   return {
-    contractAddress: token.contractAddress, chainId: String(token.chainId), rawScore: verification.trustScore, maxRawScore: 100, trustScore: verification.trustScore, securityScore: verification.securityScore, marketMaturityScore: verification.marketMaturityScore,
-    verdict: verification.verdict as AuditVerdict, verdictLabel: verification.verdict.replace(/_/g,' '), status: reportStatus, riskRating: verification.riskLevel,
-    recommendation: warnings.length ? 'Review the reported security findings before interacting with this token.' : 'No critical issues were reported by the available providers.', actionableRecommendation: warnings.join(' ') || 'No critical issues were reported.',
-    warnings, passedSecurity: verification.passedChecks, passedMarket: verification.passedChecks, maturityWarnings: verification.isPartial ? ['Some provider data was unavailable, unsupported, or unlisted.'] : [], securityWarnings: warnings, whyNotApproved: reportStatus === 'APPROVED' ? [] : warnings, isNewToken: false,
-    categories: {
-      security: makeCategory('security','Security',categoryScores.security || 0,40,'Normalized security result.'),
-      liquidity: makeCategory('liquidity','Liquidity',categoryScores.liquidity || 0,15,'Normalized liquidity result.'),
-      marketData: makeCategory('market','Market Data',categoryScores.market || 0,10,'Normalized market result.'),
-      tradingActivity: makeCategory('trading','Trading Activity',categoryScores.trading || 0,10,'Normalized trading result.'),
-      holders: makeCategory('holders','Holders',verification.holders.totalHoldersEstimate ? 50 : 0,10,'Holder data depends on provider coverage.'),
-      blockchainMetadata: makeCategory('metadata','Blockchain Metadata',exists ? 100 : 0,10,'On-chain token metadata.'),
-      contractVerification: makeCategory('contract','Contract Verification',exists ? 100 : 0,5,'Blockchain RPC inspection.'),
-      logoQuality: makeCategory('logo','Logo Quality',token.logoUrl ? 100 : 0,5,token.logoUrl ? 'Logo source found.' : 'No provider logo was found.'),
-      community: makeCategory('community','Community',token.websiteUrl || token.twitterUrl || token.telegramUrl ? 100 : 0,5,'Social metadata coverage.'),
+    contractAddress: address,
+    chainId: String(effectiveChain),
+    rawScore: score,
+    maxRawScore: 100,
+    trustScore: score,
+    securityScore: security?.score ?? 0,
+    marketMaturityScore: categories.marketData.score,
+    verdict,
+    verdictLabel: verdict.replace(/_/g, ' '),
+    status,
+    riskRating: risk,
+    recommendation: security?.recommendation || 'Verification completed with the available device-side data.',
+    actionableRecommendation: warnings.join(' ') || 'No critical issue was identified from the available device-side evidence.',
+    warnings,
+    passedSecurity: security?.flags.filter((f: any) => f.type === 'pass').map((f: any) => f.title) || [],
+    passedMarket: mergedMarket.liquidityUsd > 0 ? ['Market data received from available provider.'] : [],
+    maturityWarnings: [],
+    securityWarnings: warnings,
+    whyNotApproved: status === 'APPROVED' ? [] : warnings,
+    isNewToken: false,
+    categories,
+    providers,
+    autoRejected: verdict === 'REJECTED',
+    autoRejectReasons: verdict === 'REJECTED' ? warnings : [],
+    onChainFallback: { contractExists: exists, isSourceVerified: Boolean(metadata), deploymentInfo: `${detected.name} / ${effectiveChain}`, hasFallbackMetadata: Boolean(tokenName || tokenSymbol) },
+    securityChecks: {
+      isHoneypot: security?.isHoneypot ?? false,
+      isMintable: security?.isMintable ?? false,
+      isProxy: security?.isProxy ?? false,
+      isBlacklisted: warnings.some(w => w.toLowerCase().includes('blacklist')),
+      isOwnershipRenounced: security?.isOwnershipRenounced ?? false,
+      isSourceCodeVerified: security?.isOpenSource ?? false,
+      buyTaxPct: security?.buyTaxPct ?? 0,
+      sellTaxPct: security?.sellTaxPct ?? 0,
+      liquidityLockedPct: security?.liquidityLockedPct ?? 0,
+      top10HoldersPct: security?.top10HoldersPct ?? 0,
+      holdersCount: security?.holdersCount ?? 0,
+      pairAgeDays: security?.pairAgeDays ?? 0,
     },
-    providers: providerEntries, autoRejected: reportStatus === 'REJECTED', autoRejectReasons: reportStatus === 'REJECTED' ? warnings : [],
-    onChainFallback: { contractExists: exists, isSourceVerified: verification.providerStatus.goplus === 'verified', deploymentInfo: `${token.blockchain} / ${token.chainId}`, hasFallbackMetadata: Boolean(token.name || token.symbol || token.decimals !== null) },
-    securityChecks: { isHoneypot: verification.honeypot.isHoneypot === true, isMintable: verification.ownership.canMint === true, isProxy: verification.ownership.isProxy === true, isBlacklisted: warnings.some(w => w.toLowerCase().includes('blacklist')), isOwnershipRenounced: verification.ownership.isRenounced === true, isSourceCodeVerified: verification.providerStatus.goplus === 'verified', buyTaxPct: verification.honeypot.buyTax ?? 0, sellTaxPct: verification.honeypot.sellTax ?? 0, liquidityLockedPct: verification.liquidity.lockedPercentage ?? 0, top10HoldersPct: verification.holders.top10HoldersPercent ?? 0, holdersCount: verification.holders.totalHoldersEstimate ?? 0, pairAgeDays: 0 },
-    summaryText: warnings.length ? warnings.join(' ') : 'Verification completed without reported critical issues.', timestamp: verification.verifiedAt || now,
+    summaryText: `${tokenName} (${tokenSymbol}) detected on ${detected.name}. Verification ran locally on the device.`,
+    timestamp: startedAt || now,
   };
 }
