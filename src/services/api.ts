@@ -430,3 +430,149 @@ export async function fetchCoinGeckoSupplyData(
     return null;
   }
 }
+
+export interface BlockchainLookupResult {
+  blockchain: string;
+  chainId: string;
+  blockchainType: string;
+  tokenStandard: string;
+  source: string;
+  name?: string;
+  symbol?: string;
+}
+
+/**
+ * Frontend Blockchain Lookup: Identifies the exact blockchain for a token address
+ * so the frontend can automatically switch the active network before dispatching the JSON to backend.
+ */
+export async function lookupBlockchainForToken(
+  rawAddress: string,
+  preferredChainId: ChainId = '137'
+): Promise<BlockchainLookupResult> {
+  const address = (rawAddress || '').trim();
+  if (!address) {
+    const defaultInfo = getChainInfo(preferredChainId);
+    return {
+      blockchain: defaultInfo.name,
+      chainId: String(defaultInfo.id || preferredChainId),
+      blockchainType: isEvmChain(preferredChainId) ? 'evm' : 'unknown',
+      tokenStandard: isEvmChain(preferredChainId) ? 'ERC-20' : 'token',
+      source: 'default',
+    };
+  }
+
+  // 1. Non-EVM syntax inspection
+  if (isTonAddress(address)) {
+    return {
+      blockchain: 'TON Network',
+      chainId: 'ton',
+      blockchainType: 'ton',
+      tokenStandard: 'Jetton',
+      source: 'address_pattern',
+    };
+  }
+
+  if (isXrplAddress(address)) {
+    return {
+      blockchain: 'XRP Ledger',
+      chainId: 'mainnet',
+      blockchainType: 'xrpl',
+      tokenStandard: 'issued_asset',
+      source: 'address_pattern',
+    };
+  }
+
+  if (isSolanaAddress(address)) {
+    return {
+      blockchain: 'Solana',
+      chainId: 'mainnet-beta',
+      blockchainType: 'solana',
+      tokenStandard: 'SPL',
+      source: 'address_pattern',
+    };
+  }
+
+  if (isTronAddress(address)) {
+    return {
+      blockchain: 'TRON',
+      chainId: 'mainnet',
+      blockchainType: 'tron',
+      tokenStandard: 'TRC-20',
+      source: 'address_pattern',
+    };
+  }
+
+  // 2. EVM Address: Look up exact blockchain via DexScreener liquidity index
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.pairs && data.pairs.length > 0) {
+        const sorted = [...data.pairs].sort(
+          (a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0)
+        );
+        const topPair = sorted[0];
+        const rawChainId = (topPair.chainId || '').toLowerCase().trim();
+        const resolved = resolveNetworkFromProviderChainId(rawChainId, address, preferredChainId);
+        return {
+          blockchain: resolved.blockchainName,
+          chainId: resolved.chainId,
+          blockchainType: resolved.blockchainType,
+          tokenStandard: resolved.tokenStandard,
+          name: topPair.baseToken?.name,
+          symbol: topPair.baseToken?.symbol?.toUpperCase(),
+          source: 'dexscreener_lookup',
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[lookupBlockchainForToken] DexScreener lookup error:', err);
+  }
+
+  // 3. Fallback to preferred or default chain info
+  const prefInfo = getChainInfo(preferredChainId);
+  const isEvm = isEvmChain(preferredChainId);
+  return {
+    blockchain: prefInfo.name,
+    chainId: String(prefInfo.id || preferredChainId),
+    blockchainType: isEvm ? 'evm' : 'unknown',
+    tokenStandard: isEvm ? 'ERC-20' : 'token',
+    source: 'preferred_chain',
+  };
+}
+
+export interface BackendVerificationPayload {
+  blockchain: string;
+  chainId: string | number;
+  contractAddress: string;
+  tokenStandard?: string;
+  rpcUrl?: string;
+}
+
+/**
+ * Sends token JSON to backend verification engine
+ */
+export async function fetchTokenVerificationFromBackend(
+  payload: BackendVerificationPayload
+): Promise<any> {
+  try {
+    const res = await fetch('/api/token-details', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      throw new Error(errJson?.error?.message || `Backend verification returned status ${res.status}`);
+    }
+
+    return await res.json();
+  } catch (err: any) {
+    console.warn('[fetchTokenVerificationFromBackend] Backend call note:', err);
+    throw err;
+  }
+}
+

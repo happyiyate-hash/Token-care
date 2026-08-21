@@ -20,7 +20,7 @@ import {
 import { ChainId, SubmittedToken, UserRewardWallet, LogoStatus } from './types';
 import { SUPPORTED_CHAINS, RAW_EVM_CHAINS, REWARD_RATE_USD, getChainInfo, normalizeChainKey, isEvmChain, validateTokenIdentifier } from './constants/chains';
 import { fetchERC20MetadataFromBlockchain, detectEVMChainForContractAddress } from './services/ethers';
-import { fetchDexScreenerData, fetchCoinGeckoSupplyData, discoverToken } from './services/api';
+import { fetchDexScreenerData, fetchCoinGeckoSupplyData, discoverToken, lookupBlockchainForToken, fetchTokenVerificationFromBackend } from './services/api';
 import { analyzeTokenSafety } from './services/security';
 import { verifyToken, VerificationReport } from './services/verificationEngine';
 import { verifyTokenLogo, LogoVerificationReport, downloadAndPrepareImageSource } from './services/logoVerificationEngine';
@@ -803,13 +803,13 @@ export default function App() {
 
     const timer = setTimeout(async () => {
       try {
-        const autoDetected = await detectEVMChainForContractAddress(cleanAddr);
-        if (autoDetected && autoDetected.chainId) {
-          const normKey = normalizeChainKey(autoDetected.chainId);
+        const lookup = await lookupBlockchainForToken(cleanAddr, selectedChain);
+        if (lookup && lookup.chainId) {
+          const normKey = normalizeChainKey(lookup.chainId);
           if (normKey !== normalizeChainKey(selectedChain)) {
             setSelectedChain(normKey);
             setAutoSwitchNotice(
-              `⚡ Auto-switched network to ${autoDetected.name} (Chain ID: ${normKey}) where contract was verified!`
+              `⚡ Auto-switched network to ${lookup.blockchain} where token is deployed!`
             );
           }
         }
@@ -819,7 +819,7 @@ export default function App() {
     }, 450);
 
     return () => clearTimeout(timer);
-  }, [addressInput]);
+  }, [addressInput, selectedChain]);
 
   // Handle Token Fetching with Network-Aware Discovery
   const handleFetchToken = async (targetAddress?: string) => {
@@ -918,26 +918,45 @@ export default function App() {
     }, 3000);
 
     try {
-      // 0. Perform normalized token discovery across networks & providers
-      const discovery = await discoverToken(addr, selectedChain);
-
-      let activeChainKey = discovery?.chainId || normalizeChainKey(selectedChain);
-      let blockchainType = discovery?.blockchainType || (isEvmChain(activeChainKey) ? 'evm' : 'unknown');
+      // 0. Perform frontend blockchain lookup to find exact network
+      const lookup = await lookupBlockchainForToken(addr, selectedChain);
+      let activeChainKey = lookup?.chainId || normalizeChainKey(selectedChain);
+      let blockchainType = lookup?.blockchainType || (isEvmChain(activeChainKey) ? 'evm' : 'unknown');
 
       if (activeChainKey !== normalizeChainKey(selectedChain) && SUPPORTED_CHAINS[activeChainKey]) {
         setSelectedChain(activeChainKey);
         setAutoSwitchNotice(
-          `⚡ Auto-switched network to ${discovery?.blockchainName || activeChainKey} where asset was identified!`
+          `⚡ Auto-switched network to ${lookup?.blockchain || activeChainKey} where asset was identified!`
         );
       }
 
-      // 1. Fetch smart contract metadata directly via Ethers.js for EVM chains
+      // Prepare the JSON to send to the backend engine
+      const backendPayload = {
+        blockchain: lookup?.blockchain || getChainInfo(activeChainKey).name,
+        chain: activeChainKey,
+        chainId: activeChainKey,
+        contractAddress: addr,
+        tokenStandard: lookup?.tokenStandard,
+      };
+
+      // Query backend verification engine
+      let backendData: any = null;
+      try {
+        const beRes = await fetchTokenVerificationFromBackend(backendPayload);
+        if (beRes?.success && beRes?.data) {
+          backendData = beRes.data;
+        }
+      } catch (beErr) {
+        console.warn('[handleFetchToken] Backend engine call note:', beErr);
+      }
+
+      // 1. Fetch smart contract metadata directly via Ethers.js for EVM chains or from backend
       let erc20Meta = isEvmChain(activeChainKey, blockchainType)
         ? await fetchERC20MetadataFromBlockchain(addr, activeChainKey, apiKeys)
         : null;
 
       // If erc20Meta wasn't found on selected EVM chain, check if contract exists on other major EVM chains
-      if (!erc20Meta && !discovery && isEvmChain(activeChainKey, blockchainType)) {
+      if (!erc20Meta && !backendData && isEvmChain(activeChainKey, blockchainType)) {
         const majorChainsToTest = ['1', '137', '8453', '42161', '56'].filter((c) => c !== activeChainKey);
         for (const testChain of majorChainsToTest) {
           const testMeta = await fetchERC20MetadataFromBlockchain(addr, testChain, apiKeys);
@@ -954,12 +973,12 @@ export default function App() {
       }
 
       // 2. Fetch DEX price, volume & liquidity via DexScreener API and CoinGecko API
-      const dexData = discovery?.marketData || (await fetchDexScreenerData(addr, activeChainKey));
+      const dexData = await fetchDexScreenerData(addr, activeChainKey);
       const cgData = await fetchCoinGeckoSupplyData(addr, activeChainKey);
 
       // Verify whether ANY valid token metadata or smart contract was actually found
-      const hasValidName = discovery?.name || cgData?.name || erc20Meta?.name;
-      const hasValidSymbol = discovery?.symbol || cgData?.symbol || erc20Meta?.symbol;
+      const hasValidName = backendData?.token?.name || cgData?.name || erc20Meta?.name;
+      const hasValidSymbol = backendData?.token?.symbol || cgData?.symbol || erc20Meta?.symbol;
 
       if (!hasValidName && !hasValidSymbol) {
         clearTimeout(timer1);
@@ -976,7 +995,9 @@ export default function App() {
 
       // Multi-Source Total Supply Resolution Algorithm
       let resolvedSupplyNum = 0;
-      if (cgData?.totalSupplyCG && cgData.totalSupplyCG > 0) {
+      if (backendData?.token?.totalSupply && parseFloat(backendData.token.totalSupply) > 0) {
+        resolvedSupplyNum = parseFloat(backendData.token.totalSupply);
+      } else if (cgData?.totalSupplyCG && cgData.totalSupplyCG > 0) {
         resolvedSupplyNum = cgData.totalSupplyCG;
       } else if (cgData?.maxSupplyCG && cgData.maxSupplyCG > 0) {
         resolvedSupplyNum = cgData.maxSupplyCG;
@@ -995,38 +1016,38 @@ export default function App() {
       const chainMeta = getChainInfo(activeChainKey);
       const chainLogoUrl = getChainLogoUrl(activeChainKey);
 
-      const tokenName = discovery?.name || cgData?.name || erc20Meta?.name || 'Unknown Token';
-      const tokenSymbol = discovery?.symbol || cgData?.symbol || erc20Meta?.symbol || 'TOK';
-      const rawLogoUrl = discovery?.logoUrl || erc20Meta?.logoUrl || cgData?.logoUrl || (dexData as any)?.logoUrl || '';
+      const tokenName = backendData?.token?.name || cgData?.name || erc20Meta?.name || 'Unknown Token';
+      const tokenSymbol = backendData?.token?.symbol || cgData?.symbol || erc20Meta?.symbol || 'TOK';
+      const rawLogoUrl = backendData?.token?.logoUrl || erc20Meta?.logoUrl || cgData?.logoUrl || (dexData as any)?.logoUrl || '';
       const preparedLogoUrl = rawLogoUrl ? await downloadAndPrepareImageSource(rawLogoUrl) : '';
 
       erc20Meta = {
         address: addr,
         chainId: activeChainKey,
-        chainName: discovery?.blockchainName || chainMeta.name,
-        network: discovery?.blockchainName || chainMeta.name,
+        chainName: lookup?.blockchain || chainMeta.name,
+        network: lookup?.blockchain || chainMeta.name,
         chainSymbol: chainMeta.symbol,
         chainLogoUrl: chainLogoUrl,
         name: tokenName,
         symbol: tokenSymbol,
-        decimals: discovery?.decimals || erc20Meta?.decimals || 18,
+        decimals: backendData?.token?.decimals || erc20Meta?.decimals || 18,
         totalSupply: resolvedSupplyNum.toString(),
         rawTotalSupply: String(resolvedSupplyNum),
         logoUrl: preparedLogoUrl,
-        ownerAddress: erc20Meta?.ownerAddress,
-        isRenounced: erc20Meta?.isRenounced ?? true,
+        ownerAddress: backendData?.token?.ownerAddress || erc20Meta?.ownerAddress,
+        isRenounced: backendData?.token?.isRenounced ?? erc20Meta?.isRenounced ?? true,
         blockchainType,
-        tokenStandard: discovery?.tokenStandard,
-        asset_identifier_type: discovery?.asset_identifier_type || (blockchainType === 'xrpl' ? 'issued_asset' : 'contract_address'),
+        tokenStandard: lookup?.tokenStandard || (blockchainType === 'xrpl' ? 'issued_asset' : blockchainType === 'ton' ? 'Jetton' : blockchainType === 'solana' ? 'SPL' : 'ERC-20'),
+        asset_identifier_type: blockchainType === 'xrpl' ? 'issued_asset' : 'contract_address',
       } as any;
 
-      const priceUsd = dexData?.priceUsd ?? cgData?.priceUsd ?? 0;
-      const priceNative = dexData?.priceNative ?? 0;
-      const priceChange24h = dexData?.priceChange24h ?? cgData?.priceChange24h ?? 0;
-      const volume24h = dexData?.volume24h ?? 0;
-      const liquidityUsd = dexData?.liquidityUsd ?? 0;
-      const marketCapUsd = dexData?.marketCapUsd ?? cgData?.marketCapUsd ?? (priceUsd > 0 ? Math.round(priceUsd * resolvedSupplyNum) : 0);
-      const fdvUsd = dexData?.fdvUsd ?? (priceUsd > 0 ? Math.round(priceUsd * resolvedSupplyNum) : 0);
+      const priceUsd = backendData?.token?.priceUsd ?? dexData?.priceUsd ?? cgData?.priceUsd ?? 0;
+      const priceNative = backendData?.token?.priceNative ?? dexData?.priceNative ?? 0;
+      const priceChange24h = backendData?.token?.priceChange24h ?? dexData?.priceChange24h ?? cgData?.priceChange24h ?? 0;
+      const volume24h = backendData?.token?.volume24hUsd ?? dexData?.volume24h ?? 0;
+      const liquidityUsd = backendData?.token?.liquidityUsd ?? dexData?.liquidityUsd ?? 0;
+      const marketCapUsd = backendData?.token?.marketCapUsd ?? dexData?.marketCapUsd ?? cgData?.marketCapUsd ?? (priceUsd > 0 ? Math.round(priceUsd * resolvedSupplyNum) : 0);
+      const fdvUsd = backendData?.token?.fdvUsd ?? dexData?.fdvUsd ?? (priceUsd > 0 ? Math.round(priceUsd * resolvedSupplyNum) : 0);
 
       const marketData = {
         priceUsd,
@@ -1036,8 +1057,8 @@ export default function App() {
         liquidityUsd,
         marketCapUsd,
         fdvUsd,
-        pairAddress: dexData?.pairAddress,
-        dexName: dexData?.dexName || 'DEX',
+        pairAddress: backendData?.token?.pairAddress || dexData?.pairAddress,
+        dexName: backendData?.token?.dexName || dexData?.dexName || 'DEX',
         pairUrl: dexData?.pairUrl,
         circulatingSupply: cgData?.circulatingSupply || resolvedSupplyNum,
       };

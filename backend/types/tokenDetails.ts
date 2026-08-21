@@ -1,12 +1,41 @@
+export interface TokenDetailsRequest {
+  blockchain?: string;
+  chain?: string;
+  contractAddress: string;
+  address?: string;
+  chainId?: string | number;
+}
+
+export type AssetStandard = 'ERC20' | 'SPL' | 'BEP20' | 'XRPL_ISSUED' | 'JETTON' | 'NATIVE' | 'UNKNOWN';
+
+export interface OnChainTokenInspection {
+  isValidContract: boolean;
+  name?: string;
+  symbol?: string;
+  decimals?: number;
+  totalSupply?: string;
+  rawTotalSupply?: string;
+  ownerAddress?: string | null;
+  isRenounced?: boolean;
+  canMint?: boolean;
+  isProxy?: boolean;
+  implementationAddress?: string | null;
+  freezeAuthority?: string | null;
+  mintAuthority?: string | null;
+  isBlacklistable?: boolean;
+  hasBytecode?: boolean;
+  inspectedVia: string;
+}
+
 export interface NormalizedTokenDetails {
   name: string;
   symbol: string;
   decimals: number;
   contractAddress: string;
   chain: string;
-  chainId: string;
+  chainId: string | number;
   blockchain: string;
-  assetStandard: 'ERC20' | 'SPL' | 'BEP20' | 'NATIVE' | 'UNKNOWN';
+  assetStandard: AssetStandard;
   logoUrl?: string;
   bannerUrl?: string;
   websiteUrl?: string;
@@ -14,6 +43,7 @@ export interface NormalizedTokenDetails {
   twitterUrl?: string;
   discordUrl?: string;
   priceUsd?: number;
+  priceNative?: number;
   liquidityUsd?: number;
   fdvUsd?: number;
   marketCapUsd?: number;
@@ -22,46 +52,94 @@ export interface NormalizedTokenDetails {
   pairAddress?: string;
   dexName?: string;
   totalSupply?: string;
-  resolvedVia: 'dexscreener' | 'geckoterminal' | 'coingecko' | 'alchemy' | 'moralis' | 'chain_rpc' | 'fallback_heuristic';
+  ownerAddress?: string | null;
+  isRenounced?: boolean;
+  canMint?: boolean;
+  isProxy?: boolean;
+  resolvedVia: 'onchain_rpc' | 'dexscreener' | 'geckoterminal' | 'coingecko' | 'hybrid';
+}
+
+export interface HoneypotAnalysis {
+  isHoneypot: boolean;
+  buyTax: number;
+  sellTax: number;
+  transferTax?: number;
+  canModifyTax: boolean;
+}
+
+export interface OwnershipAnalysis {
+  isRenounced: boolean;
+  ownerAddress?: string | null;
+  canMint: boolean;
+  isProxy: boolean;
+  canBlacklist: boolean;
+  mintAuthority?: string | null;
+  freezeAuthority?: string | null;
+}
+
+export interface LiquidityAnalysis {
+  isLocked: boolean;
+  lockedPercentage: number;
+  totalLiquidityUsd: number;
+  pairAddress?: string;
+  dexName?: string;
+}
+
+export interface HolderDistribution {
+  top10HoldersPercent: number;
+  totalHoldersEstimate: number;
 }
 
 export interface TokenVerificationReport {
   isVerified: boolean;
-  trustScore: number;
+  trustScore: number; // 0 - 100
+  securityScore: number;
+  marketMaturityScore: number;
   riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-  honeypot: {
-    isHoneypot: boolean;
-    buyTax: number;
-    sellTax: number;
-    transferTax?: number;
-    canModifyTax: boolean;
-  };
+  verdict: 'APPROVED_LOW_RISK' | 'NEEDS_OBSERVATION' | 'HIGH_RISK_WARNING' | 'REJECTED_CRITICAL_RISK';
+  auditBadge: string;
+  honeypot: HoneypotAnalysis;
+  ownership: OwnershipAnalysis;
+  liquidity: LiquidityAnalysis;
+  holders: HolderDistribution;
   securityIssues: string[];
-  ownership: {
-    isRenounced: boolean;
-    ownerAddress?: string;
-    canMint: boolean;
-    isProxy: boolean;
-    canBlacklist: boolean;
-  };
-  liquidity: {
-    isLocked: boolean;
-    lockedPercentage: number;
-    totalLiquidityUsd: number;
-  };
-  holders: {
-    top10HoldersPercent: number;
-    totalHoldersEstimate: number;
+  passedChecks: string[];
+  categoryScores: {
+    security: number;
+    liquidity: number;
+    marketData: number;
+    tradingActivity: number;
+    holders: number;
+    contractVerification: number;
+    metadata: number;
   };
   verifiedAt: string;
-  auditBadge: string;
+}
+
+export interface VerifiedTokenResult {
+  token: NormalizedTokenDetails;
+  onChainInspection?: OnChainTokenInspection;
+  verification: TokenVerificationReport;
+  market?: {
+    priceUsd?: number;
+    volume24hUsd?: number;
+    liquidityUsd?: number;
+    fdvUsd?: number;
+    marketCapUsd?: number;
+    priceChange24h?: number;
+    pairAddress?: string;
+    dexName?: string;
+  };
 }
 
 export interface BackendTokenDetailsResponse {
   success: boolean;
-  data?: {
-    token: NormalizedTokenDetails;
-    verification: TokenVerificationReport;
-  };
-  error?: string;
+  data?: VerifiedTokenResult;
+  token?: NormalizedTokenDetails; // For backward compatibility
+  verification?: TokenVerificationReport; // For backward compatibility
+  error?: {
+    code: string;
+    message: string;
+    details?: unknown;
+  } | string;
 }

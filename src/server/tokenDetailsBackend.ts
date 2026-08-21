@@ -1,28 +1,23 @@
 /**
  * TokenCare Token Details Backend
  *
- * This is the backend-first implementation for the donation token lookup flow.
- *
- * IMPORTANT:
- * - This file is intentionally separate from the existing Cloudflare save-token
- *   Edge Functions and from the existing frontend workerApi.ts.
- * - The frontend contract must remain unchanged.
- * - Do not deploy this as an Edge Function yet.
- * - Provider implementations should be migrated here incrementally after the
- *   existing donation flow has been fully mapped.
+ * Unified backend verification pipeline for the donation token lookup flow.
  *
  * Input:
- *   chain + contractAddress
+ *   { blockchain: string, contractAddress: string, chainId?: number | string }
  *
  * Output:
- *   The complete token-detail shape consumed by the existing donation UI:
- *   metadata + marketData + safety + verificationReport (+ logo verification
- *   information where the existing flow supplies it).
+ *   The complete token-detail shape consumed by the donation UI:
+ *   metadata + marketData + safety + verificationReport.
  */
 
+import { verifyToken, TokenDetailsRequest as BackendRequest } from '../../backend';
+
 export interface TokenDetailsRequest {
-  chain: string;
+  blockchain?: string;
+  chain?: string;
   contractAddress: string;
+  chainId?: number | string;
 }
 
 export interface TokenMetadataResult {
@@ -42,6 +37,10 @@ export interface TokenMetadataResult {
   ownerAddress?: string | null;
   renounced?: boolean;
   logoUrl?: string | null;
+  bannerUrl?: string | null;
+  websiteUrl?: string | null;
+  twitterUrl?: string | null;
+  telegramUrl?: string | null;
   [key: string]: unknown;
 }
 
@@ -101,8 +100,6 @@ export interface TokenVerificationReport {
   isNewToken?: boolean;
   categoryScores?: Record<string, number>;
   providerEvidence?: Record<string, unknown>;
-  automaticRejection?: unknown;
-  onChainFallback?: unknown;
   securityChecks?: unknown[];
   summary?: string;
   timestamp?: string;
@@ -119,6 +116,7 @@ export interface TokenDetailsBackendResult {
     logoReport?: unknown;
     [key: string]: unknown;
   };
+  data?: unknown;
   error?: {
     code: string;
     message: string;
@@ -127,50 +125,21 @@ export interface TokenDetailsBackendResult {
 }
 
 export function normalizeTokenDetailsRequest(
-  request: TokenDetailsRequest,
-): TokenDetailsRequest {
+  request: TokenDetailsRequest
+): BackendRequest {
   return {
-    chain: (request.chain || 'ethereum').trim().toLowerCase(),
-    contractAddress: (request.contractAddress || '').trim().toLowerCase(),
+    blockchain: (request.blockchain || request.chain || 'polygon').trim().toLowerCase(),
+    chain: (request.chain || request.blockchain || 'polygon').trim().toLowerCase(),
+    contractAddress: (request.contractAddress || '').trim(),
+    chainId: request.chainId,
   };
 }
 
 /**
- * Provider aggregation boundary.
- *
- * Each existing provider/verification operation should be moved behind this
- * boundary without changing the response consumed by the frontend.
- */
-export interface TokenDetailsProviders {
-  getTokenDetails: (
-    request: TokenDetailsRequest,
-  ) => Promise<unknown>;
-  getTokenPrice?: (
-    request: TokenDetailsRequest,
-  ) => Promise<unknown>;
-  inspectToken?: (
-    request: TokenDetailsRequest,
-  ) => Promise<unknown>;
-  getMarketData?: (
-    request: TokenDetailsRequest,
-  ) => Promise<unknown>;
-  getSecurityData?: (
-    request: TokenDetailsRequest,
-  ) => Promise<unknown>;
-  getVerificationData?: (
-    request: TokenDetailsRequest,
-  ) => Promise<unknown>;
-}
-
-/**
- * MVP orchestration entry point.
- *
- * Deliberately does not call providers yet. The existing frontend behaviour
- * must be mapped provider-by-provider before implementation is copied here.
+ * Main token details backend invocation that routes through the dynamic verification engine.
  */
 export async function getTokenDetailsBackend(
-  request: TokenDetailsRequest,
-  _providers?: TokenDetailsProviders,
+  request: TokenDetailsRequest
 ): Promise<TokenDetailsBackendResult> {
   const normalized = normalizeTokenDetailsRequest(request);
 
@@ -184,15 +153,84 @@ export async function getTokenDetailsBackend(
     };
   }
 
+  const result = await verifyToken(normalized);
+
+  if (!result.success || !result.data) {
+    const errObj =
+      typeof result.error === 'object' && result.error !== null
+        ? result.error
+        : { code: 'VERIFICATION_FAILED', message: String(result.error || 'Failed to verify token') };
+
+    return {
+      success: false,
+      error: errObj,
+    };
+  }
+
+  const verified = result.data;
+  const token = verified.token;
+  const rep = verified.verification;
+
   return {
-    success: false,
-    error: {
-      code: 'TOKEN_DETAILS_BACKEND_NOT_IMPLEMENTED',
-      message:
-        'Token details backend scaffold created. Provider aggregation is intentionally pending the complete donation-flow migration.',
-      details: {
-        chain: normalized.chain,
-        contractAddress: normalized.contractAddress,
+    success: true,
+    data: verified,
+    token: {
+      metadata: {
+        address: token.contractAddress,
+        chainId: token.chainId,
+        blockchain: token.blockchain,
+        tokenStandard: token.assetStandard,
+        name: token.name,
+        symbol: token.symbol,
+        decimals: token.decimals,
+        formattedTotalSupply: token.totalSupply,
+        ownerAddress: token.ownerAddress,
+        renounced: token.isRenounced,
+        logoUrl: token.logoUrl,
+        bannerUrl: token.bannerUrl,
+        websiteUrl: token.websiteUrl,
+        twitterUrl: token.twitterUrl,
+        telegramUrl: token.telegramUrl,
+      },
+      marketData: {
+        priceUsd: token.priceUsd,
+        priceNative: token.priceNative,
+        change24h: token.priceChange24h,
+        tradingVolume24h: token.volume24hUsd,
+        liquidityUsd: token.liquidityUsd,
+        marketCap: token.marketCapUsd,
+        fdv: token.fdvUsd,
+        pairAddress: token.pairAddress,
+        dexName: token.dexName,
+        totalSupply: token.totalSupply,
+      },
+      safety: {
+        score: rep.trustScore,
+        rating: rep.riskLevel,
+        recommendation: rep.verdict,
+        buyTax: rep.honeypot.buyTax,
+        sellTax: rep.honeypot.sellTax,
+        honeypot: rep.honeypot.isHoneypot,
+        mintable: rep.ownership.canMint,
+        proxy: rep.ownership.isProxy,
+        ownershipRenounced: rep.ownership.isRenounced,
+        liquidityLocked: rep.liquidity.isLocked,
+        liquidityLockedPercent: rep.liquidity.lockedPercentage,
+        top10HolderPercent: rep.holders.top10HoldersPercent,
+        holderCount: rep.holders.totalHoldersEstimate,
+        warnings: rep.securityIssues,
+      },
+      verificationReport: {
+        trustScore: rep.trustScore,
+        securityScore: rep.securityScore,
+        marketMaturityScore: rep.marketMaturityScore,
+        verdict: rep.verdict,
+        status: rep.isVerified ? 'VERIFIED' : 'UNVERIFIED',
+        riskRating: rep.riskLevel,
+        warnings: rep.securityIssues,
+        passedSecurityChecks: rep.passedChecks,
+        categoryScores: rep.categoryScores,
+        timestamp: rep.verifiedAt,
       },
     },
   };

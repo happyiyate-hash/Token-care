@@ -3,6 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import nodemailer from 'nodemailer';
 import { validateAndConsumeDeveloperQuota, finalizeDeveloperRequestLog } from './src/server/developerUsage';
+import { verifyToken } from './backend';
 
 // Shared Nodemailer transporter instance
 let cachedTransporter: nodemailer.Transporter | null = null;
@@ -226,10 +227,11 @@ async function startServer() {
     });
   });
 
-  // 3. POST /api/token/details
-  app.post('/api/token/details', async (req, res) => {
-    const chain = (req.body?.chain || req.body?.chainId || 'ethereum').toLowerCase();
-    const contractAddress = (req.body?.contractAddress || req.body?.address || '').trim().toLowerCase();
+  // 3. POST /api/token/details & POST /api/token-details
+  const handleTokenDetails = async (req: express.Request, res: express.Response) => {
+    const blockchain = req.body?.blockchain || req.body?.chain || req.body?.chainId || req.query?.blockchain || req.query?.chain || 'polygon';
+    const chainId = req.body?.chainId || req.query?.chainId;
+    const contractAddress = (req.body?.contractAddress || req.body?.address || req.query?.address || req.query?.contractAddress || '').trim();
 
     if (!contractAddress) {
       return res.status(400).json({
@@ -242,62 +244,32 @@ async function startServer() {
     }
 
     try {
-      let dexData: any = null;
-      if (contractAddress.length > 10) {
-        try {
-          const dexRes = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${contractAddress}`);
-          if (dexRes.ok) {
-            const dexJson = await dexRes.json();
-            dexData = dexJson.pairs?.[0];
-          }
-        } catch (e) {
-          console.warn('[Vercel API] DexScreener lookup note:', e);
-        }
-      }
-
-      const priceUsd = parseFloat(dexData?.priceUsd || '0');
-      const name = dexData?.baseToken?.name || null;
-      const symbol = dexData?.baseToken?.symbol ? dexData.baseToken.symbol.toUpperCase() : null;
-      const logo = dexData?.info?.imageUrl || null;
-
-      if (!name && !symbol && priceUsd === 0 && contractAddress !== '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984') {
-        return res.status(400).json({
-          success: false,
-          error: {
-            code: 'TOKEN_NOT_FOUND',
-            message: 'Unable to resolve token from the configured providers.'
-          }
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        token: {
-          name: name || 'Uniswap',
-          symbol: symbol || 'UNI',
-          contractAddress,
-          chain,
-          decimals: 18,
-          logo: logo,
-          price: priceUsd || 6.85,
-          priceUsd: priceUsd || 6.85,
-          marketCap: Math.round(parseFloat(dexData?.fdv || dexData?.marketCap || '4110000000')),
-          liquidity: Math.round(parseFloat(dexData?.liquidity?.usd || '125000000')),
-          volume24h: Math.round(parseFloat(dexData?.volume?.h24 || '45000000')),
-          priceChange24h: parseFloat(dexData?.priceChange?.h24 || '2.5'),
-          verified: true
-        }
+      const result = await verifyToken({
+        blockchain,
+        chain: blockchain,
+        chainId,
+        contractAddress,
       });
+
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      return res.status(200).json(result);
     } catch (err: any) {
-      return res.status(400).json({
+      return res.status(500).json({
         success: false,
         error: {
-          code: 'TOKEN_NOT_FOUND',
-          message: 'Unable to resolve token from the configured providers.'
+          code: 'VERIFICATION_ERROR',
+          message: err?.message || 'Unable to resolve and verify token from blockchain providers.'
         }
       });
     }
-  });
+  };
+
+  app.post('/api/token/details', handleTokenDetails);
+  app.post('/api/token-details', handleTokenDetails);
+  app.get('/api/token-details', handleTokenDetails);
 
   // 4. POST /api/token/price
   app.post('/api/token/price', async (req, res) => {

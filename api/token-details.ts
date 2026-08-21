@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getBackendTokenDetails } from '../backend/tokenDetails';
+import { verifyToken } from '../backend';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS Headers
@@ -16,22 +16,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const chain = (req.query.chain as string) || (req.body?.chain as string) || '137';
-    const address = (req.query.address as string) || (req.body?.address as string) || (req.body?.contractAddress as string) || '';
+    const blockchain = (req.query.blockchain as string) || (req.body?.blockchain as string) || (req.query.chain as string) || (req.body?.chain as string) || 'polygon';
+    const chainId = (req.query.chainId as string) || (req.body?.chainId as string);
+    const contractAddress = (req.query.address as string) || (req.query.contractAddress as string) || (req.body?.contractAddress as string) || (req.body?.address as string) || '';
 
-    if (!address) {
+    if (!contractAddress) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required query or body parameter: "address"',
+        error: {
+          code: 'MISSING_CONTRACT_ADDRESS',
+          message: 'Missing required parameter: "contractAddress" or "address"',
+        },
       });
     }
 
-    const result = await getBackendTokenDetails(chain, address);
-    return res.status(200).json(result);
+    const result = await verifyToken({
+      blockchain,
+      chain: blockchain,
+      chainId,
+      contractAddress,
+    });
+
+    return res.status(result.success ? 200 : 400).json(result);
   } catch (err: any) {
     return res.status(500).json({
       success: false,
-      error: err?.message || 'Internal Server Error while resolving token details',
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: err?.message || 'Internal Server Error while verifying token',
+      },
     });
   }
 }
