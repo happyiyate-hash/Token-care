@@ -11,19 +11,46 @@ export interface VerificationReport {
 function makeCategory(id: string, name: string, score: number, weightPct: number, details: string): TrustScoreCategory { return { id, name, score: Math.max(0, Math.min(100, score)), maxScore: 100, weightPct, details }; }
 function legacyProviderId(id: string): ProviderEvidence['providerId'] { if (id === 'on_chain') return 'explorer'; if (id === 'goplus') return 'goplus'; if (id === 'honeypot') return 'honeypotis'; if (id === 'coingecko') return 'coingecko'; if (id === 'dexscreener') return 'dexscreener'; if (id === 'geckoterminal') return 'geckoterminal'; return 'explorer'; }
 
+function normalizeVerificationChain(blockchainType?: string, chainId?: string | number): { blockchain: string; chainId: string | number } {
+  const blockchain = String(blockchainType || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  const chain = String(chainId ?? '').trim().toLowerCase();
+
+  // Solana providers can expose the chain as `solana`, `sol`, `mainnet-beta`,
+  // or the observed `metadata` label. All of these must route to the Solana verifier.
+  if (['solana', 'sol', 'mainnetbeta', 'solanamainnet', 'metadata'].includes(blockchain) ||
+      ['solana', 'sol', 'mainnet-beta', 'solana-mainnet', 'metadata'].includes(chain)) {
+    return { blockchain: 'solana', chainId: 'solana' };
+  }
+
+  if (['tron', 'trx'].includes(blockchain) || ['tron', 'trx'].includes(chain)) {
+    return { blockchain: 'tron', chainId: 'tron' };
+  }
+
+  if (['ton', 'tonnetwork'].includes(blockchain) || ['ton', 'ton-network'].includes(chain)) {
+    return { blockchain: 'ton', chainId: 'ton' };
+  }
+
+  if (['xrpl', 'xrp', 'ripple'].includes(blockchain) || ['xrpl', 'xrp', 'ripple'].includes(chain)) {
+    return { blockchain: 'xrpl', chainId: 'xrpl' };
+  }
+
+  return { blockchain: blockchainType || 'evm', chainId: chainId ?? '' };
+}
+
 /** Compatibility API for the existing UI. Real verification is performed by the shared multichain verifier. */
 export async function verifyToken(address: string, chainId: string | number, _logoUrl?: string, blockchainType?: string): Promise<VerificationReport> {
+  const normalized = normalizeVerificationChain(blockchainType, chainId);
   const result = await runMultichainVerification({
     contractAddress: address,
-    chainId,
-    blockchain: blockchainType === 'solana' ? 'solana' : blockchainType || 'evm',
+    chainId: normalized.chainId,
+    blockchain: normalized.blockchain,
   });
   const now = new Date().toISOString();
 
   if (!result.success || !result.data) {
     const message = result.error?.message || 'Token verification failed.';
     return {
-      contractAddress: address, chainId: String(chainId), rawScore: 0, maxRawScore: 100, trustScore: 0, securityScore: 0, marketMaturityScore: 0,
+      contractAddress: address, chainId: String(normalized.chainId), rawScore: 0, maxRawScore: 100, trustScore: 0, securityScore: 0, marketMaturityScore: 0,
       verdict: 'REJECTED', verdictLabel: 'Verification failed', status: 'REJECTED', riskRating: 'CRITICAL', recommendation: message,
       actionableRecommendation: 'Do not rely on this token until verification succeeds.', warnings: [message], passedSecurity: [], passedMarket: [], maturityWarnings: [], securityWarnings: [message], whyNotApproved: [message], isNewToken: false,
       categories: { security: makeCategory('security','Security',0,40,message), liquidity: makeCategory('liquidity','Liquidity',0,15,'Unavailable.'), marketData: makeCategory('market','Market Data',0,10,'Unavailable.'), tradingActivity: makeCategory('trading','Trading Activity',0,10,'Unavailable.'), holders: makeCategory('holders','Holders',0,10,'Unavailable.'), blockchainMetadata: makeCategory('metadata','Blockchain Metadata',0,10,'Unavailable.'), contractVerification: makeCategory('contract','Contract Verification',0,5,'Unavailable.'), logoQuality: makeCategory('logo','Logo Quality',0,5,'Unavailable.'), community: makeCategory('community','Community',0,5,'Unavailable.') },
