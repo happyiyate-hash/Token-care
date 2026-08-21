@@ -1,15 +1,9 @@
 import { SubmittedToken, UserRewardWallet, RewardTransaction } from '../types';
 import { REWARD_RATE_USD, REWARD_PER_SUBMISSION, REWARD_SAFETY_BONUS } from '../constants/chains';
 
-const STORAGE_KEYS = {
-  SUBMITTED_TOKENS: 'token_hub_submitted_tokens_v1',
-  REWARD_WALLET: 'token_hub_reward_wallet_v1',
-};
-
 export const INITIAL_WALLET: UserRewardWallet = {
-  totalTokens: 0, totalUsd: 0, claimedTokens: 0, claimedUsd: 0,
-  unclaimedTokens: 0, unclaimedUsd: 0, totalSubmissions: 0,
-  walletAddress: '', isConnected: false, transactions: [],
+  totalTokens: 0, totalUsd: 0, claimedTokens: 0, claimedUsd: 0, unclaimedTokens: 0, unclaimedUsd: 0,
+  totalSubmissions: 0, walletAddress: '', isConnected: false, transactions: [],
 };
 
 export function sanitizeTokenForStorage(token: SubmittedToken): SubmittedToken {
@@ -21,11 +15,6 @@ export function sanitizeTokenForStorage(token: SubmittedToken): SubmittedToken {
     clone.metadata = meta;
   }
   if (clone.safety) clone.safety = { ...clone.safety, warnings: Array.isArray(clone.safety.warnings) ? clone.safety.warnings.slice(0, 5) : [], flags: Array.isArray(clone.safety.flags) ? clone.safety.flags.slice(0, 5) : [] };
-  if (clone.verificationReport) {
-    const vr = { ...clone.verificationReport } as any;
-    if (Array.isArray(vr.checks)) vr.checks = vr.checks.slice(0, 10);
-    clone.verificationReport = vr;
-  }
   return clone;
 }
 
@@ -41,10 +30,7 @@ export function safeSetItem(key: string, value: string): boolean {
       localStorage.setItem(key, value);
       return true;
     } catch {
-      try {
-        const parsed = JSON.parse(value);
-        if (Array.isArray(parsed) && parsed.length > 5) { localStorage.setItem(key, JSON.stringify(parsed.slice(0, 20))); return true; }
-      } catch {}
+      try { const parsed = JSON.parse(value); if (Array.isArray(parsed) && parsed.length > 5) { localStorage.setItem(key, JSON.stringify(parsed.slice(0, 20))); return true; } } catch {}
       return false;
     }
   }
@@ -60,22 +46,18 @@ export function getSubmittedTokens(userId?: string): SubmittedToken[] {
   } catch { return []; }
 }
 
-/**
- * Saves the complete token identity. A discovered blockchain is never replaced
- * with Polygon or another default merely because it is absent from the selector.
- */
+/** Saves complete token identity without substituting an unknown chain with a default. */
 export function saveSubmittedTokens(tokens: SubmittedToken[], userId?: string): void {
   if (!userId) return;
   try {
     const key = `tokencare_user_tokens_${userId}`;
-    const sanitized = (tokens || []).slice(0, 80).map(sanitizeTokenForStorage);
-    safeSetItem(key, JSON.stringify(sanitized));
+    safeSetItem(key, JSON.stringify((tokens || []).slice(0, 80).map(sanitizeTokenForStorage)));
 
-    if (tokens && tokens.length > 0) {
+    if (tokens?.length) {
       import('./userTokenCacheWorker').then(({ saveUserTokensToWorker }) => {
         const workerItems = tokens.map((t) => {
           const metadata = t.metadata || ({} as any);
-          const blockchainName = String(metadata.blockchainName || metadata.blockchain_name || metadata.chainName || t.chainId || '').trim();
+          const blockchainName = String(metadata.blockchainName || metadata.blockchain_name || metadata.chainName || '').trim();
           const blockchainSymbol = String(metadata.chainSymbol || '').trim();
           const chainId = String(t.chainId || metadata.chainId || '').trim();
           return {
@@ -109,7 +91,13 @@ export function saveRewardWallet(wallet: UserRewardWallet, userId?: string): voi
 export function clearAllAppStorage(userId?: string): void {
   try {
     if (userId) {
-      ['tokens','rewards','profile','notifications','withdrawals','saved_address','cache'].forEach(suffix => localStorage.removeItem(`tokencare_${suffix}_${userId}`));
+      localStorage.removeItem(`tokencare_user_tokens_${userId}`);
+      localStorage.removeItem(`tokencare_rewards_${userId}`);
+      localStorage.removeItem(`tokencare_profile_${userId}`);
+      localStorage.removeItem(`tokencare_notifications_${userId}`);
+      localStorage.removeItem(`tokencare_withdrawals_${userId}`);
+      localStorage.removeItem(`tokencare_saved_address_${userId}`);
+      localStorage.removeItem(`tokencare_cache_${userId}`);
     } else {
       Object.keys(localStorage).forEach((key) => {
         if (key.startsWith('tokencare_user_tokens_') || key.startsWith('tokencare_rewards_') || key.startsWith('tokencare_profile_') || key.startsWith('tokencare_notifications_') || key.startsWith('tokencare_withdrawals_') || key.startsWith('tokencare_cache_') || key.startsWith('token_hub_') || key.startsWith('sb-')) localStorage.removeItem(key);
@@ -122,21 +110,8 @@ export function recordTokenSubmissionReward(token: SubmittedToken, wallet: UserR
   let rewardTokens = REWARD_PER_SUBMISSION;
   if (token.safety.score >= 80) rewardTokens += REWARD_SAFETY_BONUS;
   const rewardUsd = rewardTokens * REWARD_RATE_USD;
-  const newTx: RewardTransaction = {
-    id: `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-    type: token.safety.score >= 80 ? 'SAFETY_BONUS' : 'SUBMISSION_BONUS',
-    amountTokens: rewardTokens, amountUsd: rewardUsd, tokenAddress: token.address, tokenSymbol: token.metadata.symbol,
-    timestamp: new Date().toISOString(), status: 'COMPLETED',
-  };
-  const updatedWallet: UserRewardWallet = {
-    ...wallet,
-    totalTokens: wallet.totalTokens + rewardTokens,
-    totalUsd: (wallet.totalTokens + rewardTokens) * REWARD_RATE_USD,
-    unclaimedTokens: wallet.unclaimedTokens + rewardTokens,
-    unclaimedUsd: (wallet.unclaimedTokens + rewardTokens) * REWARD_RATE_USD,
-    totalSubmissions: wallet.totalSubmissions + 1,
-    transactions: [newTx, ...wallet.transactions],
-  };
+  const newTx: RewardTransaction = { id: `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`, type: token.safety.score >= 80 ? 'SAFETY_BONUS' : 'SUBMISSION_BONUS', amountTokens: rewardTokens, amountUsd: rewardUsd, tokenAddress: token.address, tokenSymbol: token.metadata.symbol, timestamp: new Date().toISOString(), status: 'COMPLETED' };
+  const updatedWallet: UserRewardWallet = { ...wallet, totalTokens: wallet.totalTokens + rewardTokens, totalUsd: (wallet.totalTokens + rewardTokens) * REWARD_RATE_USD, unclaimedTokens: wallet.unclaimedTokens + rewardTokens, unclaimedUsd: (wallet.unclaimedTokens + rewardTokens) * REWARD_RATE_USD, totalSubmissions: wallet.totalSubmissions + 1, transactions: [newTx, ...wallet.transactions] };
   saveRewardWallet(updatedWallet, userId);
   return { updatedWallet, rewardEarnedTokens: rewardTokens, rewardEarnedUsd: rewardUsd };
 }
