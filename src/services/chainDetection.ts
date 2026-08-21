@@ -45,13 +45,13 @@ const STATIC_ALIASES: Record<string, DetectedChain> = {
   metadata: { blockchain: 'solana', chainId: 'solana', name: 'Solana', tokenStandard: 'SPL', source: 'address-format', confidence: 'high', supportedByTokenCare: true },
   'solana-mainnet': { blockchain: 'solana', chainId: 'solana', name: 'Solana', tokenStandard: 'SPL', source: 'address-format', confidence: 'high', supportedByTokenCare: true },
   'mainnet-beta': { blockchain: 'solana', chainId: 'solana', name: 'Solana', tokenStandard: 'SPL', source: 'address-format', confidence: 'high', supportedByTokenCare: true },
-  tron: { blockchain: 'tron', chainId: 'tron', name: 'TRON', tokenStandard: 'TRC-20', source: 'address-format', confidence: 'high' },
-  trx: { blockchain: 'tron', chainId: 'tron', name: 'TRON', tokenStandard: 'TRC-20', source: 'address-format', confidence: 'high' },
-  ton: { blockchain: 'ton', chainId: 'ton', name: 'TON', tokenStandard: 'Jetton', source: 'address-format', confidence: 'high' },
-  'ton-network': { blockchain: 'ton', chainId: 'ton', name: 'TON', tokenStandard: 'Jetton', source: 'address-format', confidence: 'high' },
-  xrpl: { blockchain: 'xrpl', chainId: 'xrpl', name: 'XRP Ledger', tokenStandard: 'Issued Asset', source: 'address-format', confidence: 'high' },
-  xrp: { blockchain: 'xrpl', chainId: 'xrpl', name: 'XRP Ledger', tokenStandard: 'Issued Asset', source: 'address-format', confidence: 'high' },
-  ripple: { blockchain: 'xrpl', chainId: 'xrpl', name: 'XRP Ledger', tokenStandard: 'Issued Asset', source: 'address-format', confidence: 'high' },
+  tron: { blockchain: 'tron', chainId: 'tron', name: 'TRON', tokenStandard: 'TRC-20', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
+  trx: { blockchain: 'tron', chainId: 'tron', name: 'TRON', tokenStandard: 'TRC-20', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
+  ton: { blockchain: 'ton', chainId: 'ton', name: 'TON', tokenStandard: 'Jetton', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
+  'ton-network': { blockchain: 'ton', chainId: 'ton', name: 'TON', tokenStandard: 'Jetton', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
+  xrpl: { blockchain: 'xrpl', chainId: 'xrpl', name: 'XRP Ledger', tokenStandard: 'Issued Asset', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
+  xrp: { blockchain: 'xrpl', chainId: 'xrpl', name: 'XRP Ledger', tokenStandard: 'Issued Asset', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
+  ripple: { blockchain: 'xrpl', chainId: 'xrpl', name: 'XRP Ledger', tokenStandard: 'Issued Asset', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
   ...EVM_CHAIN_MAP,
 };
 
@@ -64,11 +64,12 @@ function humanizeChainId(chainId: string): string {
 }
 
 function dynamicChain(chainId: string, source: ChainDetectionSource): DetectedChain {
+  const isLikelyEvm = /^0x|^(ethereum|polygon|base|arbitrum|optimism|bsc|avalanche|fantom|celo|linea|scroll|zksync|mantle|blast|zora|sonic|monad|plasma)/i.test(chainId);
   return {
     blockchain: chainId,
     chainId,
     name: humanizeChainId(chainId),
-    tokenStandard: /^0x/i.test('0x') ? 'Unknown' : 'Unknown',
+    tokenStandard: isLikelyEvm ? 'ERC-20 compatible' : 'Unknown',
     source,
     confidence: 'high',
     supportedByTokenCare: false,
@@ -119,9 +120,7 @@ async function detectWithDexScreener(address: string): Promise<DetectedChain | n
   return null;
 }
 
-/** GeckoTerminal global pool search is used as an independent fallback.
- * It searches across the networks indexed by GeckoTerminal instead of requiring
- * TokenCare to know the network in advance. */
+/** Independent global discovery fallback. GeckoTerminal indexes 200+ networks. */
 async function detectWithGeckoTerminal(address: string): Promise<DetectedChain | null> {
   try {
     const response = await fetch(`https://api.geckoterminal.com/api/v2/search/pools?query=${encodeURIComponent(address)}`, {
@@ -130,11 +129,7 @@ async function detectWithGeckoTerminal(address: string): Promise<DetectedChain |
     if (!response.ok) return null;
     const data = await response.json();
     const rows = Array.isArray(data?.data) ? data.data : [];
-    const exact = rows.filter((row: any) => {
-      const attrs = row?.attributes || {};
-      const text = JSON.stringify(attrs).toLowerCase();
-      return text.includes(address.toLowerCase());
-    });
+    const exact = rows.filter((row: any) => JSON.stringify(row).toLowerCase().includes(address.toLowerCase()));
     const row = (exact.length ? exact : rows)[0];
     const networkId = String(row?.relationships?.network?.data?.id || '').trim();
     if (!networkId) return null;
@@ -145,10 +140,9 @@ async function detectWithGeckoTerminal(address: string): Promise<DetectedChain |
 }
 
 /**
- * ONLY identifies the blockchain. It does not verify token safety or market data.
- * Detection is deliberately independent from the hardcoded selector registry.
- * Unknown networks are returned as detected-but-unsupported instead of being
- * discarded merely because TokenCare has not added them to its selector yet.
+ * ONLY identifies the blockchain. Verification is deliberately a separate function.
+ * The hardcoded selector is not the detection source of truth. Unknown networks are
+ * returned as detected-but-unsupported so they can still be saved accurately later.
  */
 export async function detectTokenBlockchain(address: string): Promise<DetectedChain | null> {
   const clean = address.trim();
@@ -157,7 +151,7 @@ export async function detectTokenBlockchain(address: string): Promise<DetectedCh
   const byFormat = detectChainFromAddressFormat(clean);
   if (byFormat) return byFormat;
 
-  // Providers can discover EVM networks that cannot be inferred from 0x alone.
+  // EVM network cannot be inferred from 0x alone, so query external indexes.
   if (/^0x[a-fA-F0-9]{40}$/.test(clean)) {
     const dex = await detectWithDexScreener(clean);
     if (dex) return dex;
@@ -165,7 +159,7 @@ export async function detectTokenBlockchain(address: string): Promise<DetectedCh
     if (gecko) return gecko;
   }
 
-  // GeckoTerminal can also identify non-EVM addresses when they are indexed.
+  // Also allow GeckoTerminal to discover indexed non-EVM addresses.
   const gecko = await detectWithGeckoTerminal(clean);
   if (gecko) return gecko;
 
