@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { Search, X, Check, Lock } from 'lucide-react';
 import { ChainId } from '../types';
 import { getTokenChainsForSelector } from '../constants/tokenChains';
-import { normalizeChainKey } from '../constants/chains';
+import { RAW_EVM_CHAINS, normalizeChainKey } from '../constants/chains';
+import { getTrustWalletChainLogoUrl } from '../constants/trustWalletChainLogos';
 
 interface ChainSelectorModalProps {
   isOpen: boolean;
@@ -12,29 +13,26 @@ interface ChainSelectorModalProps {
   onSelectChain: (chainId: ChainId) => void;
 }
 
-const FALLBACK_LOGO = 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png';
+/**
+ * Backwards-compatible export used by Sidebar and other existing consumers.
+ * Every EVM entry resolves to its own Trust Wallet blockchain logo; there is
+ * deliberately no Ethereum fallback for unknown chains.
+ */
+export const EVM_CHAIN_LOGOS: Record<string, string> = Object.fromEntries(
+  Object.entries(RAW_EVM_CHAINS)
+    .map(([id, chain]) => [id, getTrustWalletChainLogoUrl({ id, ...chain })])
+    .filter((entry): entry is [string, string] => Boolean(entry[1]))
+);
 
-export const EVM_CHAIN_LOGOS: Record<string, string> = {
-  '1': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png',
-  '137': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/polygon/info/logo.png',
-  '8453': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/base/info/logo.png',
-  '42161': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/info/logo.png',
-  '10': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/optimism/info/logo.png',
-  '56': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/smartchain/info/logo.png',
-  '43114': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/avalanchec/info/logo.png',
-  '42220': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/celo/info/logo.png',
-  '250': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/fantom/info/logo.png',
-  '100': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/gnosis/info/logo.png',
-  '25': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/cronos/info/logo.png',
-};
-
-export function getChainLogoUrl(chainIdKey: string, explicitLogoUrl?: string): string {
-  if (explicitLogoUrl) return explicitLogoUrl;
-
-  const cleanKey = String(chainIdKey).toLowerCase().trim();
-  const normalizedKey = normalizeChainKey(cleanKey);
-
-  return EVM_CHAIN_LOGOS[normalizedKey] || EVM_CHAIN_LOGOS[cleanKey] || FALLBACK_LOGO;
+export function getChainLogoUrl(chain: {
+  id?: string | number;
+  chainId?: number;
+  name?: string;
+  trustWalletKey?: string;
+  logoUrl?: string;
+  dexScreenerChain?: string;
+}): string | undefined {
+  return getTrustWalletChainLogoUrl(chain);
 }
 
 export const ChainSelectorModal: React.FC<ChainSelectorModalProps> = ({
@@ -83,11 +81,21 @@ export const ChainSelectorModal: React.FC<ChainSelectorModalProps> = ({
         </div>
         <div className="p-3 overflow-y-auto space-y-1.5 flex-1 no-scrollbar bg-[#06080E]">
           {filteredChains.length === 0 ? <div className="p-6 text-center text-zinc-500 text-xs font-mono">No blockchain found matching "{searchTerm}"</div> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {filteredChains.map((chain) => {
-              const idKey = String(chain.id); const normalizedId = idKey.toLowerCase(); const isSelected = normalizedSelected === normalizedId;
-              const logoUrl = getChainLogoUrl(idKey, chain.logoUrl); const hasError = imgErrors[idKey];
-              return <button key={idKey} type="button" disabled={!chain.supported} onClick={() => { if (!chain.supported) return; onSelectChain(chain.id); onClose(); }} className={`text-left px-3 py-2 rounded-xl border transition-all flex items-center justify-between group ${!chain.supported ? 'bg-[#090B11] border-zinc-900/80 opacity-55 cursor-not-allowed' : isSelected ? 'bg-emerald-500/15 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30 cursor-pointer' : 'bg-[#0B0E17] border-zinc-800/80 hover:bg-zinc-900 hover:border-zinc-700 cursor-pointer'}`}>
-                <div className="flex items-center space-x-2.5 min-w-0"><div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 p-0.5 flex items-center justify-center shrink-0 overflow-hidden">{logoUrl && !hasError ? <img src={logoUrl} alt={chain.name} className="w-full h-full object-contain rounded-md" onError={() => handleImageError(idKey)} /> : <div className="w-full h-full rounded-md flex items-center justify-center font-mono text-[9px] font-bold text-white bg-zinc-700">{chain.symbol.slice(0, 3)}</div>}</div><div className="min-w-0"><div className="flex items-center space-x-1"><span className="text-xs font-bold text-white truncate group-hover:text-emerald-400 transition-colors">{chain.name}</span><span className="text-[10px] text-zinc-400 font-mono">({chain.symbol})</span></div><div className="text-[10px] text-zinc-500 font-mono truncate">{chain.chainId ? `Chain ID: ${chain.chainId}` : chain.tokenStandard}</div></div></div>
+            {filteredChains.map((chain, index) => {
+              const idKey = String(chain.id);
+              const uniqueKey = `${chain.type}-${idKey}-${index}`;
+              const normalizedId = idKey.toLowerCase();
+              const isSelected = normalizedSelected === normalizedId;
+              const logoUrl = getChainLogoUrl(chain);
+              const hasError = imgErrors[uniqueKey];
+
+              return <button key={uniqueKey} type="button" disabled={!chain.supported} onClick={() => { if (!chain.supported) return; onSelectChain(chain.id); onClose(); }} className={`text-left px-3 py-2 rounded-xl border transition-all flex items-center justify-between group ${!chain.supported ? 'bg-[#090B11] border-zinc-900/80 opacity-55 cursor-not-allowed' : isSelected ? 'bg-emerald-500/15 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30 cursor-pointer' : 'bg-[#0B0E17] border-zinc-800/80 hover:bg-zinc-900 hover:border-zinc-700 cursor-pointer'}`}>
+                <div className="flex items-center space-x-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 p-0.5 flex items-center justify-center shrink-0 overflow-hidden">
+                    {logoUrl && !hasError ? <img src={logoUrl} alt={chain.name} className="w-full h-full object-cover rounded-full" onError={() => handleImageError(uniqueKey)} /> : <div className="w-full h-full rounded-full flex items-center justify-center font-mono text-[9px] font-bold text-white bg-zinc-700">{chain.symbol.slice(0, 3)}</div>}
+                  </div>
+                  <div className="min-w-0"><div className="flex items-center space-x-1"><span className="text-xs font-bold text-white truncate group-hover:text-emerald-400 transition-colors">{chain.name}</span><span className="text-[10px] text-zinc-400 font-mono">({chain.symbol})</span></div><div className="text-[10px] text-zinc-500 font-mono truncate">{chain.chainId ? `Chain ID: ${chain.chainId}` : chain.tokenStandard}</div></div>
+                </div>
                 <div className="shrink-0 ml-2">{!chain.supported ? <div className="flex items-center gap-1 text-[9px] text-zinc-600 font-mono"><Lock className="w-3 h-3" />Soon</div> : isSelected ? <div className="w-5 h-5 rounded-full bg-emerald-500 text-black flex items-center justify-center shadow-sm"><Check className="w-3 h-3 stroke-[3]" /></div> : <div className="w-5 h-5 rounded-full border border-zinc-800 group-hover:border-zinc-700" />}</div>
               </button>;
             })}
