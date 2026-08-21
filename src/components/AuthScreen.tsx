@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { getSupabase, createNotificationInSupabase } from '../lib/supabase';
 import { sendRegistrationVerificationEmail, verifyOtpCodeLocally } from '../services/emailService';
+import { saveActiveSessionUser } from '../services/appCache';
 import {
   getMFAAssuranceLevel,
   createMFAChallenge,
@@ -26,7 +27,7 @@ import {
 } from '../lib/mfa';
 
 interface AuthScreenProps {
-  onAuthenticated: () => void;
+  onAuthenticated: (user?: any) => void;
 }
 
 type AuthPage = 'WELCOME' | 'LOGIN' | 'SIGNUP' | 'EMAIL_VERIFY' | 'MFA_LOGIN';
@@ -157,27 +158,43 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
 
       const supabase = getSupabase();
       let verifiedSuccess = false;
+      let authedUser: any = null;
 
       // Try Supabase verifyOtp first
-      const { error } = await supabase.auth.verifyOtp({
+      const { data: otpData, error } = await supabase.auth.verifyOtp({
         email: cleanEmail,
         token,
         type: 'signup',
       });
 
-      if (!error) {
+      if (!error && otpData?.user) {
         verifiedSuccess = true;
+        authedUser = otpData.user;
+      } else if (!error) {
+        verifiedSuccess = true;
+        const { data: sessData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+        authedUser = sessData?.session?.user;
       } else {
         // Fallback check against local OTP store
         const localCheck = verifyOtpCodeLocally(cleanEmail, token);
         if (localCheck.valid) {
           verifiedSuccess = true;
+          authedUser = {
+            id: cleanEmail,
+            email: cleanEmail,
+            aud: 'authenticated',
+            role: 'authenticated',
+            user_metadata: { email: cleanEmail },
+          };
         } else {
           throw new Error(error.message || localCheck.reason || 'Invalid verification code.');
         }
       }
 
       if (verifiedSuccess) {
+        if (authedUser) {
+          saveActiveSessionUser(authedUser);
+        }
         await createNotificationInSupabase({
           userId: cleanEmail,
           type: 'security',
@@ -188,7 +205,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
           actionUrl: '/dashboard',
         }).catch(() => {});
 
-        onAuthenticated();
+        onAuthenticated(authedUser);
       }
     } catch (err: any) {
       setStatusMessage({
@@ -277,12 +294,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
 
     try {
       const supabase = getSupabase();
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
 
       if (error) throw error;
+
+      if (signInData?.user) {
+        saveActiveSessionUser(signInData.user);
+      }
 
       // Check if MFA/TOTP is enabled on account
       try {
@@ -306,7 +327,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
         console.warn('[AuthScreen] MFA assurance check note:', mfaErr);
       }
 
-      onAuthenticated();
+      onAuthenticated(signInData?.user);
     } catch (err: any) {
       setStatusMessage({
         type: 'error',

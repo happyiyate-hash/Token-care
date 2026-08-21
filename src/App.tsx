@@ -93,8 +93,12 @@ import { ConnectionStatusToast } from './components/ConnectionStatusToast';
 import {
   getCachedAppData,
   getLatestCachedAppData,
+  getSyncCachedAppData,
   setCachedAppData,
   clearCachedAppData,
+  saveActiveSessionUser,
+  getActiveSessionUser,
+  clearActiveSessionUser,
   SessionStatus,
   CachedAppData,
 } from './services/appCache';
@@ -106,8 +110,36 @@ let isGenuinelyOffline = typeof navigator !== 'undefined' ? !navigator.onLine : 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedChain, setSelectedChain] = useState<ChainId>('137'); // Polygon PoS default
-  const [tokens, setTokens] = useState<SubmittedToken[]>([]);
-  const [wallet, setWallet] = useState<UserRewardWallet>(getRewardWallet());
+
+  // Synchronously hydrate initial user session and data from storage for instant offline render & zero-flicker
+  const [currentUser, setCurrentUser] = useState<any>(() => getActiveSessionUser());
+  const [userProfile, setUserProfile] = useState<SupabaseUserProfile | null>(() => {
+    const active = getActiveSessionUser();
+    if (active?.id) {
+      const cached = getSyncCachedAppData(active.id) || getLatestCachedAppData();
+      return cached?.userProfile || null;
+    }
+    return null;
+  });
+  const [tokens, setTokens] = useState<SubmittedToken[]>(() => {
+    const active = getActiveSessionUser();
+    if (active?.id) {
+      const cached = getSyncCachedAppData(active.id) || getLatestCachedAppData();
+      if (cached?.tokens && cached.tokens.length > 0) return cached.tokens;
+      const t = getSubmittedTokens(active.id);
+      if (t && t.length > 0) return t;
+    }
+    return [];
+  });
+  const [wallet, setWallet] = useState<UserRewardWallet>(() => {
+    const active = getActiveSessionUser();
+    const activeId = active?.id;
+    if (activeId) {
+      const cached = getSyncCachedAppData(activeId) || getLatestCachedAppData();
+      if (cached?.wallet) return cached.wallet;
+    }
+    return getRewardWallet(activeId);
+  });
   const [apiKeys, setApiKeys] = useState<ApiKeyConfig>(getStoredApiKeys());
 
   // View Mode: 'desktop' vs 'mobile' (auto-detects mobile screens)
@@ -117,11 +149,11 @@ export default function App() {
 
   // Supabase Auth & Profile state
   const [authChecking, setAuthChecking] = useState(true);
-  const [currentUser, setCurrentUser] = useState<any>(null);
-  const [userProfile, setUserProfile] = useState<SupabaseUserProfile | null>(null);
 
   // Offline-first & Cache-first state architecture
-  const [sessionStatus, setSessionStatus] = useState<SessionStatus>('authenticated_local');
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>(() =>
+    typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'authenticated_local'
+  );
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
@@ -270,13 +302,26 @@ export default function App() {
       const {
         data: { session },
         error: sessionError,
-      } = await supabase.auth.getSession();
+      } = await supabase.auth.getSession().catch((err) => ({
+        data: { session: null },
+        error: err,
+      }));
 
       if (sessionError || !session?.user) {
+        // If there's an active local user in storage, NEVER log them out due to intermittent network or session glitch
+        const activeLocalUser = getActiveSessionUser();
+        if (activeLocalUser?.id) {
+          console.warn('[BackgroundSync] Server session check note - maintaining local offline state:', sessionError?.message);
+          setSessionStatus('offline');
+          setIsSyncing(false);
+          return;
+        }
+
         if (!hasCache || sessionError?.message?.includes('invalid') || sessionError?.message?.includes('expired')) {
           console.warn('[BackgroundSync] Session expired or revoked on server.');
           const oldUserId = currentUserRef.current?.id;
           setSessionStatus('expired_revoked');
+          clearActiveSessionUser(oldUserId);
           setCurrentUser(null);
           setUserProfile(null);
           setTokens([]);
@@ -295,13 +340,14 @@ export default function App() {
         }
       }
 
-      // Check MFA AAL2 requirement on server
+      // Check MFA AAL2 requirement on server (only when online)
       try {
         const assurance = await getMFAAssuranceLevel();
         if (assurance.requiresMFA) {
           console.log('[BackgroundSync] Session requires AAL2 MFA on server.');
           const oldUserId = currentUserRef.current?.id;
           setSessionStatus('expired_revoked');
+          clearActiveSessionUser(oldUserId);
           setCurrentUser(null);
           setUserProfile(null);
           setTokens([]);
@@ -318,6 +364,7 @@ export default function App() {
       }
 
       const serverUser = session.user;
+      saveActiveSessionUser(serverUser);
       setCurrentUser(serverUser);
       const userId = serverUser.id;
 
@@ -360,7 +407,7 @@ export default function App() {
       setLastSyncTimestamp(syncTime);
       setSessionStatus('online_validated');
 
-      // Update local IndexedDB cache with fresh payload
+      // Update local IndexedDB and localStorage cache with fresh payload
       await setCachedAppData({
         userId: serverUser.id,
         userEmail: serverUser.email || '',
@@ -386,45 +433,83 @@ export default function App() {
 
     const initializeCacheAndSession = async () => {
       try {
+        // Step 1: Immediately restore from synchronous / IndexedDB local cache
+        const localActiveUser = getActiveSessionUser();
+        if (localActiveUser?.id) {
+          const cachedData = await getCachedAppData(localActiveUser.id);
+          if (cachedData) {
+            if (cachedData.userProfile) setUserProfile(cachedData.userProfile);
+            if (cachedData.tokens && cachedData.tokens.length > 0) setTokens(cachedData.tokens);
+            if (cachedData.wallet) setWallet(cachedData.wallet);
+            if (cachedData.unreadCount !== undefined) setUnreadNotificationCount(cachedData.unreadCount);
+            if (cachedData.lastSyncTimestamp) setLastSyncTimestamp(cachedData.lastSyncTimestamp);
+          } else {
+            const userTokens = getSubmittedTokens(localActiveUser.id);
+            if (userTokens && userTokens.length > 0) {
+              setTokens(userTokens);
+            }
+          }
+          setCurrentUser(localActiveUser);
+          setSessionStatus(
+            typeof navigator !== 'undefined' && navigator.onLine ? 'authenticated_local' : 'offline'
+          );
+        }
+
+        // Step 2: Check Supabase session
         const supabase = getSupabase();
         const {
           data: { session },
-        } = await supabase.auth.getSession();
+        } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
 
         if (session?.user) {
           const activeUserId = session.user.id;
+          saveActiveSessionUser(session.user);
           setCurrentUser(session.user);
 
-          // Step 1: Read user-scoped cached session & dashboard state FIRST
           const cachedData = await getCachedAppData(activeUserId);
-
           if (cachedData && cachedData.userId === activeUserId) {
             if (cachedData.userProfile) setUserProfile(cachedData.userProfile);
             if (cachedData.tokens) setTokens(cachedData.tokens);
             if (cachedData.wallet) setWallet(cachedData.wallet);
             if (cachedData.unreadCount !== undefined) setUnreadNotificationCount(cachedData.unreadCount);
             if (cachedData.lastSyncTimestamp) setLastSyncTimestamp(cachedData.lastSyncTimestamp);
-          } else {
-            const userTokens = getSubmittedTokens(activeUserId);
-            if (userTokens && userTokens.length > 0) {
-              setTokens(userTokens);
-            }
           }
 
           const initialStatus: SessionStatus =
             typeof navigator !== 'undefined' && navigator.onLine ? 'authenticated_local' : 'offline';
           setSessionStatus(initialStatus);
 
-          await performBackgroundSync(session.user, true);
+          if (typeof navigator !== 'undefined' && navigator.onLine) {
+            await performBackgroundSync(session.user, true);
+          }
         } else {
-          const cachedIdentity = getLatestCachedAppData();
-          if (cachedIdentity?.userId) {
-            setCurrentUser({ id: cachedIdentity.userId, email: cachedIdentity.userEmail || '', user_metadata: cachedIdentity.userProfile ? { full_name: cachedIdentity.userProfile.display_name, username: cachedIdentity.userProfile.username, avatar_url: cachedIdentity.userProfile.avatar_url } : {} });
-            if (cachedIdentity.userProfile) setUserProfile(cachedIdentity.userProfile);
-            if (cachedIdentity.tokens) setTokens(cachedIdentity.tokens);
-            if (cachedIdentity.wallet) setWallet(cachedIdentity.wallet);
-            setUnreadNotificationCount(cachedIdentity.unreadCount || 0);
-            setLastSyncTimestamp(cachedIdentity.lastSyncTimestamp || null);
+          // If Supabase getSession returned null (e.g. offline or slow network)
+          const fallbackUser = getActiveSessionUser() || getLatestCachedAppData();
+          if (fallbackUser?.id || (fallbackUser as any)?.userId) {
+            const resolvedUser = fallbackUser.id
+              ? fallbackUser
+              : {
+                  id: (fallbackUser as any).userId,
+                  email: (fallbackUser as any).userEmail || '',
+                  user_metadata: (fallbackUser as any).userProfile
+                    ? {
+                        full_name: (fallbackUser as any).userProfile.display_name,
+                        username: (fallbackUser as any).userProfile.username,
+                        avatar_url: (fallbackUser as any).userProfile.avatar_url,
+                      }
+                    : {},
+                };
+            saveActiveSessionUser(resolvedUser);
+            setCurrentUser(resolvedUser);
+
+            const userCache = await getCachedAppData(resolvedUser.id);
+            if (userCache) {
+              if (userCache.userProfile) setUserProfile(userCache.userProfile);
+              if (userCache.tokens) setTokens(userCache.tokens);
+              if (userCache.wallet) setWallet(userCache.wallet);
+              setUnreadNotificationCount(userCache.unreadCount || 0);
+              setLastSyncTimestamp(userCache.lastSyncTimestamp || null);
+            }
             setSessionStatus('offline');
           } else {
             setCurrentUser(null);
@@ -433,17 +518,11 @@ export default function App() {
           }
         }
       } catch (err) {
-        const cachedIdentity = getLatestCachedAppData();
-        if (cachedIdentity?.userId) {
-          setCurrentUser({ id: cachedIdentity.userId, email: cachedIdentity.userEmail || '', user_metadata: {} });
-          if (cachedIdentity.userProfile) setUserProfile(cachedIdentity.userProfile);
-          if (cachedIdentity.tokens) setTokens(cachedIdentity.tokens);
-          if (cachedIdentity.wallet) setWallet(cachedIdentity.wallet);
-          setUnreadNotificationCount(cachedIdentity.unreadCount || 0);
-          setLastSyncTimestamp(cachedIdentity.lastSyncTimestamp || null);
+        console.warn('[App] Offline cache bootstrap exception, checking local storage:', err);
+        const fallbackUser = getActiveSessionUser();
+        if (fallbackUser?.id) {
+          setCurrentUser(fallbackUser);
           setSessionStatus('offline');
-        } else {
-          console.warn('[App] Offline cache bootstrap note:', err);
         }
       }
     };
@@ -461,7 +540,9 @@ export default function App() {
         setConnectionToast('online');
       }
 
-      performBackgroundSync(currentUserRef.current, true);
+      if (currentUserRef.current) {
+        performBackgroundSync(currentUserRef.current, true);
+      }
     };
 
     const handleOffline = () => {
@@ -479,20 +560,31 @@ export default function App() {
     const supabase = getSupabase();
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
-        const oldUserId = currentUserRef.current?.id;
-        setCurrentUser(null);
-        setUserProfile(null);
-        setTokens([]);
-        setWallet(INITIAL_WALLET);
-        setUnreadNotificationCount(0);
-        if (oldUserId) {
-          await clearCachedAppData(oldUserId);
+        // If device is offline, ignore SIGNED_OUT event so token refresh failure offline doesn't log user out
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          console.warn('[App] Offline SIGNED_OUT event ignored - preserving offline session.');
+          setSessionStatus('offline');
+          return;
+        }
+
+        const activeLocalUser = getActiveSessionUser();
+        if (!activeLocalUser) {
+          const oldUserId = currentUserRef.current?.id;
+          setCurrentUser(null);
+          setUserProfile(null);
+          setTokens([]);
+          setWallet(INITIAL_WALLET);
+          setUnreadNotificationCount(0);
+          if (oldUserId) {
+            await clearCachedAppData(oldUserId);
+          }
         }
       } else if (session?.user) {
         if (currentUserRef.current?.id && currentUserRef.current.id !== session.user.id) {
           setTokens([]);
           setUserProfile(null);
         }
+        saveActiveSessionUser(session.user);
         setCurrentUser(session.user);
         performBackgroundSync(session.user, true);
       }
@@ -506,14 +598,15 @@ export default function App() {
     };
   }, []);
 
-  // Check MFA level when app regains focus or is reopened
+  // Check MFA level when app regains focus or is reopened (only when online)
   useEffect(() => {
     const handleFocus = async () => {
-      if (currentUser) {
+      if (currentUser && typeof navigator !== 'undefined' && navigator.onLine) {
         try {
           const assurance = await getMFAAssuranceLevel();
           if (assurance.requiresMFA) {
             console.log('[App] Session requires AAL2 MFA on app focus.');
+            clearActiveSessionUser(currentUser.id);
             setCurrentUser(null);
           }
         } catch (e) {
@@ -651,15 +744,21 @@ export default function App() {
   }, [currentUser, userProfile, tokens, wallet, unreadNotificationCount, lastSyncTimestamp, sessionStatus]);
 
   const handleSignOut = async () => {
+    const activeUserId = currentUser?.id;
     try {
+      clearActiveSessionUser(activeUserId);
       const supabase = getSupabase();
       await supabase.auth.signOut().catch(() => {});
     } catch (e) {
       console.error('Sign out error:', e);
     } finally {
-      await clearCachedAppData().catch(() => {});
+      if (activeUserId) {
+        await clearCachedAppData(activeUserId).catch(() => {});
+      }
       setCurrentUser(null);
       setUserProfile(null);
+      setTokens([]);
+      setWallet(INITIAL_WALLET);
       setSessionStatus('authenticated_local');
     }
   };
@@ -1186,6 +1285,32 @@ export default function App() {
 
   const currentChainInfo = getChainInfo(selectedChain);
 
+  const handleAuthenticated = async (authedUser?: any) => {
+    let user = authedUser;
+    if (!user) {
+      try {
+        const supabase = getSupabase();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        user = session?.user;
+      } catch (e) {
+        console.warn('AuthScreen authenticated getSession note:', e);
+      }
+    }
+    if (!user) {
+      user = getActiveSessionUser();
+    }
+    if (user?.id) {
+      saveActiveSessionUser(user);
+      setCurrentUser(user);
+      await loadUserAndTokens(user.id, user);
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        await performBackgroundSync(user, true);
+      }
+    }
+  };
+
   // Render Landing Splash Screen while checking auth session
   if (authChecking) {
     return (
@@ -1202,7 +1327,7 @@ export default function App() {
 
   // Render AuthScreen if unauthenticated
   if (!currentUser) {
-    return <AuthScreen onAuthenticated={() => loadUserAndTokens()} />;
+    return <AuthScreen onAuthenticated={handleAuthenticated} />;
   }
 
   // Dedicated Mobile View (Separate UI with Bottom Navigation & Real-Time Sync)

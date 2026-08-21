@@ -1136,7 +1136,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     project?.daily_limit ??
     100;
 
-  const remainingCalls = quota?.usage?.remaining ?? Math.max(0, dailyLimit - callsToday);
+  const remainingCalls = Math.max(dailyLimit - callsToday, 0);
   const usagePercentage = Math.min(100, Math.round((callsToday / Math.max(1, dailyLimit)) * 100));
 
   // Action title formatter: converts "getAllTokens" -> "GET ALL TOKENS"
@@ -1672,6 +1672,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   const currentActionPayload = useMemo(() => {
     if (selectedEndpointId === 'get-all-tokens') {
       return {
+        key: 'getAllTokens',
         action: 'getAllTokens',
         page: Number(testPage) || 1,
         limit: Number(testLimit) || 100,
@@ -1679,6 +1680,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     }
     if (selectedEndpointId === 'get-blockchain-tokens') {
       return {
+        key: 'getBlockchainTokens',
         action: 'getBlockchainTokens',
         blockchain: (testChain || 'polygon').toLowerCase(),
         page: Number(testPage) || 1,
@@ -1687,11 +1689,13 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     }
     if (selectedEndpointId === 'get-token-by-address') {
       return {
+        key: 'getTokenByAddress',
         action: 'getTokenByAddress',
         address: testContractAddress?.trim() || '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270',
       };
     }
     return {
+      key: 'getAllTokens',
       action: 'getAllTokens',
       page: 1,
       limit: 100,

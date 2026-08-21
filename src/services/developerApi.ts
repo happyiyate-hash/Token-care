@@ -86,7 +86,7 @@ export type DeveloperApiLog = DeveloperRequestLog;
 
 export function normalizeDeveloperLog(row: any): DeveloperRequestLog {
   const reqId = String(row.request_id || row.id || `req_${Date.now()}`);
-  const actionKey = row.action_key || row.action || (row.endpoint ? row.endpoint.replace(/^\/api\/?/, '') : 'api_call');
+  const actionKey = row.request_key || row.action_key || row.action || (row.endpoint ? row.endpoint.replace(/^\/api\/?/, '') : 'api_call');
   
   // Determine normalized outcome: 'succeeded' | 'failed' | 'blocked' | 'processing'
   let outcome = 'succeeded';
@@ -94,7 +94,7 @@ export function normalizeDeveloperLog(row: any): DeveloperRequestLog {
     outcome = String(row.outcome).toLowerCase();
   } else if (!row.completed_at && row.status_code === undefined && !row.error_code) {
     outcome = 'processing';
-  } else if (Number(row.status_code) === 429 || row.error_code === 'QUOTA_EXHAUSTED' || row.error_code === 'RATE_LIMIT_EXCEEDED') {
+  } else if (Number(row.status_code) === 429 || row.error_code === 'QUOTA_EXHAUSTED' || row.error_code === 'RATE_LIMIT_EXCEEDED' || row.error_code === 'QUOTA_EXCEEDED') {
     outcome = 'blocked';
   } else if (row.error_code || (row.status_code !== undefined && Number(row.status_code) >= 400)) {
     outcome = 'failed';
@@ -733,6 +733,7 @@ export const RPC_PRESET_ACTIONS: RpcPresetAction[] = [
     method: 'POST',
     description: 'Fetch the full multi-chain directory of verified tokens from the indexer.',
     defaultPayload: {
+      key: 'getAllTokens',
       action: 'getAllTokens',
       page: 1,
       limit: 100,
@@ -742,6 +743,7 @@ export const RPC_PRESET_ACTIONS: RpcPresetAction[] = [
   -H "X-API-Key: ${apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
+  "key": "getAllTokens",
   "action": "getAllTokens",
   "page": 1,
   "limit": 100
@@ -754,6 +756,7 @@ export const RPC_PRESET_ACTIONS: RpcPresetAction[] = [
     method: 'POST',
     description: 'Retrieve verified tokens filtered specifically for a chosen blockchain network.',
     defaultPayload: {
+      key: 'getBlockchainTokens',
       action: 'getBlockchainTokens',
       blockchain: 'polygon',
       page: 1,
@@ -764,6 +767,7 @@ export const RPC_PRESET_ACTIONS: RpcPresetAction[] = [
   -H "X-API-Key: ${apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
+  "key": "getBlockchainTokens",
   "action": "getBlockchainTokens",
   "blockchain": "polygon",
   "page": 1,
@@ -777,6 +781,7 @@ export const RPC_PRESET_ACTIONS: RpcPresetAction[] = [
     method: 'POST',
     description: 'Lookup detailed token metadata, verification state, and parameters by contract address.',
     defaultPayload: {
+      key: 'getTokenByAddress',
       action: 'getTokenByAddress',
       address: '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270',
     },
@@ -785,6 +790,7 @@ export const RPC_PRESET_ACTIONS: RpcPresetAction[] = [
   -H "X-API-Key: ${apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
+  "key": "getTokenByAddress",
   "action": "getTokenByAddress",
   "address": "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270"
 }'`,
@@ -804,11 +810,17 @@ export async function executeDeveloperRpcCall(
     headers['X-API-Key'] = apiKey.trim();
   }
 
+  // Ensure key property is present in the request body
+  const bodyPayload = {
+    key: payload.key || payload.action || 'getAllTokens',
+    ...payload,
+  };
+
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify(bodyPayload),
     });
     const latencyMs = Math.max(1, Math.round(performance.now() - start));
     let data: any;
