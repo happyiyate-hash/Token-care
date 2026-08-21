@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, Clipboard, Zap, ChevronDown, Sparkles } from 'lucide-react';
+import { Clipboard, X, Zap, ChevronDown, Sparkles } from 'lucide-react';
 import { ChainId } from '../types';
 import { RAW_EVM_CHAINS, getChainInfo, normalizeChainKey } from '../constants/chains';
 import { ApiKeyConfig } from '../services/apiKeys';
 import { processClipboardAutoPaste, extractContractAddress } from '../services/smartAutoPaste';
-import { detectTokenBlockchain, chainIdToSelectorId } from '../services/chainDetection';
+import { detectTokenBlockchain, chainIdToSelectorId, DetectedChain } from '../services/chainDetection';
 import { ChainSelectorModal, getChainLogoUrl } from './ChainSelectorModal';
 import { useTranslation } from '../context/I18nContext';
 
@@ -29,6 +29,7 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
   const [imgError, setImgError] = useState(false);
   const [pasteNotice, setPasteNotice] = useState<string | null>(null);
   const [detectionToast, setDetectionToast] = useState<string | null>(null);
+  const [detectedChain, setDetectedChain] = useState<DetectedChain | null>(null);
   const lastProcessedRef = useRef<string | null>(extractContractAddress(addressInput) ? addressInput.toLowerCase() : null);
 
   useEffect(() => setImgError(false), [selectedChain]);
@@ -38,10 +39,14 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
     return () => window.clearTimeout(timer);
   }, [detectionToast]);
 
-  const currentChainInfo = getChainInfo(selectedChain);
+  const currentChainInfo = detectedChain && String(detectedChain.chainId) === String(selectedChain)
+    ? { name: detectedChain.name }
+    : getChainInfo(selectedChain);
   const normalizedKey = normalizeChainKey(selectedChain);
   const currentRawDef = RAW_EVM_CHAINS[normalizedKey];
-  const currentLogoUrl = getChainLogoUrl(selectedChain);
+  const currentLogoUrl = detectedChain && String(detectedChain.chainId) === String(selectedChain)
+    ? getChainLogoUrl({ id: detectedChain.chainId, name: detectedChain.name, dexScreenerChain: detectedChain.blockchain })
+    : getChainLogoUrl(selectedChain);
 
   const prepareFetch = async (addr: string, forceDetection = false) => {
     const clean = addr.trim();
@@ -51,21 +56,15 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
       const detected = await detectTokenBlockchain(clean);
 
       if (!detected) {
+        setDetectedChain(null);
         setDetectionToast('Could not detect the exact blockchain. Please select the blockchain for this token.');
         setIsChainModalOpen(true);
         return;
       }
 
-      // Detection is independent of the selector. If an external provider found
-      // a chain that TokenCare has not added to its selector yet, never cast it to
-      // ChainId and never silently substitute Polygon/Ethereum. Ask the user to
-      // choose the exact supported chain instead.
-      if (detected.supportedByTokenCare === false) {
-        setDetectionToast(`Detected ${detected.name}, but TokenCare does not support this blockchain yet. Please select the exact supported blockchain.`);
-        setIsChainModalOpen(true);
-        return;
-      }
-
+      // Detection is independent of the hardcoded selector. A newly discovered
+      // network is still a valid blockchain identity and must remain selectable.
+      setDetectedChain(detected);
       const selectorId = chainIdToSelectorId(detected.chainId) as ChainId;
       if (String(selectorId) !== String(selectedChain)) onSelectChain(selectorId);
       setDetectionToast(`Detected ${detected.name} via ${detected.source === 'dexscreener' ? 'DEX Screener' : detected.source === 'geckoterminal' ? 'GeckoTerminal' : 'address format'}.`);
@@ -111,7 +110,10 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
     }
   };
 
-  const handleClear = () => setAddressInput('');
+  const handleClear = () => {
+    setAddressInput('');
+    setDetectedChain(null);
+  };
 
   return (
     <div className="relative bg-[#0B0E17]/90 border border-zinc-800/90 rounded-lg p-2 shadow-md backdrop-blur-sm space-y-1.5">
@@ -135,11 +137,11 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
         </div>
       </div>
 
-      {pasteNotice && <div className="bg-[#00E575]/10 border border-[#00E575]/30 rounded-md p-1.5 text-[9.5px] text-[#00E575] font-semibold flex items-center space-x-2 animate-in fade-in transition-all"><Sparkles className="w-3 h-3 text-[#00E575] shrink-0" /><span>{pasteNotice}</span></div>}
+      {pasteNotice && <div className="bg-[#00E575]/10 border border-[#00E575]/30 rounded-md p-1.5 text-[9.5px] text-[#00E575] font-semibold flex items-center space-x-2 animate-in fade-in"><Sparkles className="w-3 h-3 text-[#00E575] shrink-0" /><span>{pasteNotice}</span></div>}
       {statusMessage && (isLoading || isVerifying) && <div className="bg-[#00E575]/10 border border-[#00E575]/30 rounded-md p-1.5 text-[9.5px] text-[#00E575] font-semibold flex items-center space-x-2 animate-in fade-in transition-all"><div className="w-2 h-2 rounded-full bg-[#00E575] animate-ping shrink-0" /><span>{statusMessage}</span></div>}
       {errorMessage && <div className="bg-red-500/10 border border-red-500/30 rounded-md p-1.5 text-[9px] text-red-300 flex items-center space-x-1.5 animate-in fade-in"><X className="w-3 h-3 text-red-400 shrink-0" /><span>{errorMessage}</span></div>}
 
-      {onSelectChain && <ChainSelectorModal isOpen={isChainModalOpen} onClose={() => setIsChainModalOpen(false)} selectedChain={selectedChain} onSelectChain={onSelectChain} apiKeys={apiKeys || { infuraKey: '', alchemyKey: '' }} />}
+      {onSelectChain && <ChainSelectorModal isOpen={isChainModalOpen} onClose={() => setIsChainModalOpen(false)} selectedChain={selectedChain} onSelectChain={onSelectChain} detectedChain={detectedChain} />}
     </div>
   );
 };
