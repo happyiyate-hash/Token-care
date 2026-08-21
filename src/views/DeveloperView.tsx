@@ -717,6 +717,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   const [showKey, setShowKey] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedAuthHeader, setCopiedAuthHeader] = useState(false);
   const [regeneratingKey, setRegeneratingKey] = useState(false);
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [showCooldownModal, setShowCooldownModal] = useState(false);
@@ -1364,6 +1365,21 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       setTimeout(() => setCopiedUrl(false), 2000);
     } catch {
       const msg = 'Unable to copy URL.';
+      setError(msg);
+      showToast(msg, 'error');
+    }
+  };
+
+  // Handle Authentication Header / Key Copy
+  const handleCopyAuthHeader = async () => {
+    if (!project?.api_key) return;
+    try {
+      await navigator.clipboard.writeText(project.api_key);
+      setCopiedAuthHeader(true);
+      showToast('API Key copied to clipboard!', 'success');
+      setTimeout(() => setCopiedAuthHeader(false), 2000);
+    } catch {
+      const msg = 'Unable to copy API Key.';
       setError(msg);
       showToast(msg, 'error');
     }
@@ -2519,30 +2535,59 @@ print("TokenCare RPC Response:", data)`;
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                    <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800 space-y-1.5">
-                      <div className="flex items-center justify-between">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs w-full">
+                    {/* API Endpoint Card */}
+                    <div className="p-2.5 sm:p-3 rounded-xl bg-zinc-900/60 border border-zinc-800 space-y-1.5 min-w-0 overflow-hidden">
+                      <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] uppercase font-bold text-zinc-400">API Endpoint</span>
                         <button
                           onClick={() => handleCopyUrl(DEVELOPER_API_URL)}
-                          className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer"
+                          className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer shrink-0 transition-colors"
                         >
                           {copiedUrl ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
                           {copiedUrl ? 'Copied' : 'Copy'}
                         </button>
                       </div>
-                      <div className="font-mono text-[11px] text-emerald-300 select-all break-all">
+                      <div className="p-2 rounded-lg bg-zinc-950/80 border border-zinc-800/80 font-mono text-[11px] text-emerald-300 select-all break-all leading-relaxed">
                         {DEVELOPER_API_URL}
                       </div>
                     </div>
 
-                    <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800 space-y-1.5">
-                      <div className="flex items-center justify-between">
+                    {/* Authentication Header Card */}
+                    <div className="p-2.5 sm:p-3 rounded-xl bg-zinc-900/60 border border-zinc-800 space-y-1.5 min-w-0 overflow-hidden">
+                      <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] uppercase font-bold text-zinc-400">Authentication</span>
-                        <span className="text-[10px] font-mono text-emerald-400 font-semibold">Header Only</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[9px] sm:text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                            Header Only
+                          </span>
+                          <button
+                            onClick={handleCopyAuthHeader}
+                            className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer transition-colors"
+                          >
+                            {copiedAuthHeader ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
+                            {copiedAuthHeader ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
                       </div>
-                      <div className="font-mono text-[11px] text-zinc-200">
-                        <span className="text-emerald-400 font-bold">X-API-Key:</span> {showKey && project?.api_key ? project.api_key : `${String(project?.api_key || '').slice(0, 10)}••••••••`}
+                      <div className="p-2 rounded-lg bg-zinc-950/80 border border-zinc-800/80 font-mono text-[11px] text-zinc-200 select-all break-all leading-relaxed flex items-start justify-between gap-2">
+                        <div className="break-all whitespace-normal overflow-hidden flex-1">
+                          <span className="text-emerald-400 font-bold select-none mr-1.5">X-API-Key:</span>
+                          <span className="text-zinc-300 break-all font-mono">
+                            {showKey && project?.api_key
+                              ? project.api_key
+                              : project?.api_key
+                              ? `${String(project.api_key).slice(0, 10)}••••••••••••${String(project.api_key).slice(-4)}`
+                              : 'tc_live_••••••••••••••••'}
+                          </span>
+                        </div>
+                        <button
+                          onClick={handleToggleRevealKey}
+                          className="p-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0 cursor-pointer"
+                          title={showKey ? 'Hide key' : 'Reveal key'}
+                        >
+                          {showKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        </button>
                       </div>
                     </div>
                   </div>

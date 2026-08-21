@@ -1,19 +1,68 @@
-# Token Details Backend
+# Token Details Backend API
 
-This folder contains the backend-only implementation of the token discovery, provider aggregation, safety analysis, and verification pipeline currently used by the application.
+This directory contains the server-side token discovery, market data aggregation, logo resolution, and verification engine extracted from the frontend donation/inspection pipeline.
 
-## Purpose
+## Architecture
 
-The backend is intentionally separate from `src/` and is not wired into the frontend yet.
+```
+/backend
+  ├── types/
+  │   └── tokenDetails.ts       # Standardized response models
+  ├── providers/
+  │   ├── dexscreener.ts        # DexScreener multi-pair resolver & logo extractor
+  │   ├── geckoterminal.ts      # GeckoTerminal fallback resolver
+  │   └── coingecko.ts          # CoinGecko token & supply metrics
+  ├── verification/
+  │   └── verificationReport.ts # Security scoring, risk assessment, and honeypot/liquidity audits
+  └── tokenDetails.ts           # Master entry point orchestrating all providers
+```
 
-The implementation will be migrated function-by-function from the existing application behavior so the eventual API can return the same data contract expected by the donation UI.
+## Vercel Serverless Function
 
-## Planned modules
+The backend logic is exposed for Vercel deployment under:
+- `/api/token-details.ts` (`GET /api/token-details?chain=137&address=0x...` or `POST /api/token-details`)
 
-- `tokenDetails.ts` — orchestration entry point
-- `providers/` — provider-specific API clients
-- `verification/` — safety and verification aggregation
-- `normalizers/` — normalize provider responses into the existing frontend shape
-- `types/` — backend representations of token, market, safety, and verification data
+## Response Payload Contract
 
-Do not connect this folder to the frontend until the complete existing token-detail pipeline has been reproduced and tested.
+```json
+{
+  "success": true,
+  "data": {
+    "token": {
+      "name": "Tether USD",
+      "symbol": "USDT",
+      "decimals": 6,
+      "contractAddress": "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
+      "chain": "polygon",
+      "chainId": "137",
+      "blockchain": "EVM",
+      "assetStandard": "ERC20",
+      "logoUrl": "https://dd.dexscreener.com/ds-data/tokens/polygon/0xc2132d05d31c914a87c6611c10748aeb04b58e8f.png",
+      "priceUsd": 1.0,
+      "liquidityUsd": 8452190.5,
+      "marketCapUsd": 1200000000.0,
+      "volume24hUsd": 432100.0,
+      "priceChange24h": 0.02,
+      "resolvedVia": "dexscreener"
+    },
+    "verification": {
+      "isVerified": true,
+      "trustScore": 95,
+      "riskLevel": "LOW",
+      "honeypot": {
+        "isHoneypot": false,
+        "buyTax": 0,
+        "sellTax": 0,
+        "canModifyTax": false
+      },
+      "securityIssues": [],
+      "liquidity": {
+        "isLocked": true,
+        "lockedPercentage": 95,
+        "totalLiquidityUsd": 8452190.5
+      },
+      "auditBadge": "VERIFIED_COMMUNITY_ASSET"
+    }
+  }
+}
+```
