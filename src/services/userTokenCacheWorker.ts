@@ -3,10 +3,9 @@
  *
  * Dedicated Worker: https://small-pine-71f9.happyiyate.workers.dev/
  *
- * Protocol:
- * - Save batch (merge): POST /tokens?merge=true { user_id, tokens: [{ blockchain, id }] }
- * - Save batch (replace): POST /tokens { user_id, tokens: [{ blockchain, id }] }
- * - Retrieve user tokens: GET /tokens?user_id=USER_ID
+ * A token's blockchain identity is data, not a whitelist. The worker therefore
+ * accepts and preserves dynamically discovered chains even when TokenCare has
+ * no local selector entry for them yet.
  */
 
 export const USER_TOKEN_CACHE_WORKER_URL =
@@ -14,7 +13,14 @@ export const USER_TOKEN_CACHE_WORKER_URL =
 
 export interface WorkerUserTokenItem {
   blockchain: string;
+  chainId?: string | number;
+  blockchainName?: string;
+  blockchainSymbol?: string;
+  tokenStandard?: string;
   id: string;
+  name?: string;
+  symbol?: string;
+  logoUrl?: string;
   [key: string]: unknown;
 }
 
@@ -36,39 +42,33 @@ export interface GetUserTokensWorkerResponse {
   tokens: WorkerUserTokenItem[];
 }
 
-/**
- * Saves or merges a user's tokens to the Cloudflare Worker KV cache.
- *
- * @param userId The unique user ID
- * @param tokens Array of tokens with { blockchain, id }
- * @param merge If true, adds to existing tokens (?merge=true). If false, replaces.
- */
 export async function saveUserTokensToWorker(
   userId: string,
   tokens: WorkerUserTokenItem[],
   merge: boolean = true
 ): Promise<SaveUserTokensWorkerResponse> {
-  if (!userId || !userId.trim()) {
-    return { success: false, error: 'User ID is required.' };
-  }
+  if (!userId || !userId.trim()) return { success: false, error: 'User ID is required.' };
+  if (!Array.isArray(tokens) || tokens.length === 0) return { success: false, error: 'No tokens provided.' };
 
-  if (!Array.isArray(tokens) || tokens.length === 0) {
-    return { success: false, error: 'No tokens provided.' };
-  }
-
-  const endpoint = merge
-    ? `${USER_TOKEN_CACHE_WORKER_URL}?merge=true`
-    : USER_TOKEN_CACHE_WORKER_URL;
+  const endpoint = merge ? `${USER_TOKEN_CACHE_WORKER_URL}?merge=true` : USER_TOKEN_CACHE_WORKER_URL;
 
   const payload: SaveUserTokensWorkerRequest = {
     user_id: userId.trim(),
-    tokens: tokens.map((t) => ({
-      blockchain: String(t.blockchain || 'polygon').trim().toLowerCase(),
-      id: String(t.id || (t as any).address || (t as any).contractAddress || '').trim(),
-      ...(t.name ? { name: t.name } : {}),
-      ...(t.symbol ? { symbol: t.symbol } : {}),
-      ...(t.logoUrl ? { logoUrl: t.logoUrl } : {}),
-    })),
+    tokens: tokens.map((t) => {
+      const blockchain = String(t.blockchain || t.blockchainName || '').trim().toLowerCase();
+      const id = String(t.id || (t as any).address || (t as any).contractAddress || '').trim();
+      return {
+        blockchain,
+        ...(t.chainId !== undefined && t.chainId !== null ? { chainId: t.chainId } : {}),
+        ...(t.blockchainName ? { blockchainName: String(t.blockchainName).trim() } : {}),
+        ...(t.blockchainSymbol ? { blockchainSymbol: String(t.blockchainSymbol).trim() } : {}),
+        ...(t.tokenStandard ? { tokenStandard: String(t.tokenStandard).trim() } : {}),
+        id,
+        ...(t.name ? { name: t.name } : {}),
+        ...(t.symbol ? { symbol: t.symbol } : {}),
+        ...(t.logoUrl ? { logoUrl: t.logoUrl } : {}),
+      };
+    }),
   };
 
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -77,21 +77,13 @@ export async function saveUserTokensToWorker(
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: controller?.signal,
     });
-
     if (timeoutId) clearTimeout(timeoutId);
-
     const json = await response.json();
-
-    if (!response.ok || json.success === false) {
-      throw new Error(json.error || `HTTP ${response.status}`);
-    }
-
+    if (!response.ok || json.success === false) throw new Error(json.error || `HTTP ${response.status}`);
     return {
       success: true,
       user_id: json.user_id || userId,
@@ -101,56 +93,29 @@ export async function saveUserTokensToWorker(
   } catch (err: any) {
     if (timeoutId) clearTimeout(timeoutId);
     console.warn('[UserTokenCacheWorker] Failed to save tokens to worker:', err?.message || err);
-    return {
-      success: false,
-      error: err?.message || 'Failed to save tokens to worker.',
-    };
+    return { success: false, error: err?.message || 'Failed to save tokens to worker.' };
   }
 }
 
-/**
- * Retrieves all saved tokens for a specific user from the Cloudflare Worker KV cache.
- *
- * @param userId The unique user ID
- */
-export async function getUserTokensFromWorker(
-  userId: string
-): Promise<GetUserTokensWorkerResponse> {
-  if (!userId || !userId.trim()) {
-    return { user_id: '', tokens: [] };
-  }
-
+export async function getUserTokensFromWorker(userId: string): Promise<GetUserTokensWorkerResponse> {
+  if (!userId || !userId.trim()) return { user_id: '', tokens: [] };
   const endpoint = `${USER_TOKEN_CACHE_WORKER_URL}?user_id=${encodeURIComponent(userId.trim())}`;
-
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeoutId = controller ? setTimeout(() => controller.abort(), 5000) : null;
 
   try {
     const response = await fetch(endpoint, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       signal: controller?.signal,
     });
-
     if (timeoutId) clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`Worker HTTP ${response.status}`);
-    }
-
+    if (!response.ok) throw new Error(`Worker HTTP ${response.status}`);
     const json = await response.json();
-    return {
-      user_id: json.user_id || userId,
-      tokens: Array.isArray(json.tokens) ? json.tokens : [],
-    };
+    return { user_id: json.user_id || userId, tokens: Array.isArray(json.tokens) ? json.tokens : [] };
   } catch (err: any) {
     if (timeoutId) clearTimeout(timeoutId);
     console.warn('[UserTokenCacheWorker] Failed to retrieve tokens for user:', userId, err?.message || err);
-    return {
-      user_id: userId,
-      tokens: [],
-    };
+    return { user_id: userId, tokens: [] };
   }
 }
