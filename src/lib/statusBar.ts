@@ -4,6 +4,8 @@ import { StatusBar, Style } from '@capacitor/status-bar';
 
 const DEFAULT_APP_BACKGROUND = '#06080E';
 const DEFAULT_HEADER_BACKGROUND = '#090C12';
+const VIEW_MODE_KEY = 'tokencare_view_mode';
+const VIEW_MODE_CONTROL_ID = 'tokencare-view-mode-control';
 
 function isTransparent(color: string): boolean {
   return !color || color === 'transparent' || color === 'rgba(0, 0, 0, 0)';
@@ -152,8 +154,141 @@ async function applyStatusBar(color: string) {
   }
 }
 
+/**
+ * TokenCare's desktop/mobile layouts are separate React trees. The existing
+ * App.tsx chooses between them from window.innerWidth. This controller gives
+ * Settings a real preview switch without changing the browser's physical
+ * viewport: it persists the choice, nudges App's existing resize listener,
+ * and updates the control whenever navigation rerenders the settings view.
+ */
+function installViewModeController() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if ((window as any).__tokencareViewModeControllerInstalled) return;
+  (window as any).__tokencareViewModeControllerInstalled = true;
+
+  const originalInnerWidth = window.innerWidth;
+  let forcedWidth: number | null = null;
+  let observer: MutationObserver | null = null;
+
+  const getMode = (): 'desktop' | 'mobile' => {
+    const saved = localStorage.getItem(VIEW_MODE_KEY);
+    if (saved === 'desktop' || saved === 'mobile') return saved;
+    return forcedWidth !== null ? (forcedWidth < 768 ? 'mobile' : 'desktop') : (window.innerWidth < 768 ? 'mobile' : 'desktop');
+  };
+
+  const setForcedViewport = (mode: 'desktop' | 'mobile') => {
+    forcedWidth = mode === 'mobile' ? 390 : Math.max(1024, originalInnerWidth);
+
+    try {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        get: () => forcedWidth ?? originalInnerWidth,
+      });
+    } catch {
+      // If the browser refuses to redefine innerWidth, the control still
+      // persists the preference and the normal responsive behavior remains.
+    }
+
+    window.dispatchEvent(new Event('resize'));
+  };
+
+  const restoreNaturalViewport = () => {
+    forcedWidth = null;
+    try {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        get: () => originalInnerWidth,
+      });
+    } catch {}
+    window.dispatchEvent(new Event('resize'));
+  };
+
+  const isSettingsVisible = () => {
+    const desktopTitle = Array.from(document.querySelectorAll<HTMLElement>('h1')).some((el) =>
+      el.textContent?.toLowerCase().includes('blockchain & api settings')
+    );
+    if (desktopTitle) return true;
+
+    const selectedSettingsButton = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).some((button) => {
+      const text = button.textContent?.trim().toLowerCase();
+      return text === 'settings' && /emerald|green/.test(button.className);
+    });
+    return selectedSettingsButton;
+  };
+
+  const removeControl = () => {
+    document.getElementById(VIEW_MODE_CONTROL_ID)?.remove();
+  };
+
+  const renderControl = () => {
+    if (!isSettingsVisible()) {
+      removeControl();
+      return;
+    }
+
+    let button = document.getElementById(VIEW_MODE_CONTROL_ID) as HTMLButtonElement | null;
+    if (!button) {
+      button = document.createElement('button');
+      button.id = VIEW_MODE_CONTROL_ID;
+      button.type = 'button';
+      button.setAttribute('aria-label', 'Switch app preview layout');
+      button.style.cssText = [
+        'position:fixed',
+        'right:16px',
+        'bottom:18px',
+        'z-index:2147483646',
+        'display:flex',
+        'align-items:center',
+        'gap:8px',
+        'padding:10px 14px',
+        'border-radius:14px',
+        'border:1px solid rgba(52,211,153,.28)',
+        'background:rgba(9,12,18,.94)',
+        'backdrop-filter:blur(16px)',
+        'box-shadow:0 10px 35px rgba(0,0,0,.45)',
+        'color:#e5e7eb',
+        'font:600 12px/1 system-ui,sans-serif',
+        'cursor:pointer',
+      ].join(';');
+      document.body.appendChild(button);
+
+      button.addEventListener('click', () => {
+        const next = getMode() === 'mobile' ? 'desktop' : 'mobile';
+        localStorage.setItem(VIEW_MODE_KEY, next);
+        setForcedViewport(next);
+        renderControl();
+      });
+    }
+
+    const mode = getMode();
+    button.innerHTML = mode === 'mobile'
+      ? '<span style="font-size:16px">▣</span><span>Switch to Desktop</span>'
+      : '<span style="font-size:16px">▯</span><span>Switch to Mobile</span>';
+    button.title = mode === 'mobile' ? 'Preview the desktop layout' : 'Preview the mobile layout';
+  };
+
+  // Restore the user's saved preview mode on app startup. If no preference
+  // exists, leave the original responsive auto-detection untouched.
+  const saved = localStorage.getItem(VIEW_MODE_KEY);
+  if (saved === 'mobile' || saved === 'desktop') {
+    setForcedViewport(saved);
+  }
+
+  observer = new MutationObserver(() => {
+    window.requestAnimationFrame(renderControl);
+  });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  renderControl();
+
+  window.addEventListener('beforeunload', () => {
+    observer?.disconnect();
+    restoreNaturalViewport();
+  }, { once: true });
+}
+
 export async function setStatusBarColor(color: string) {
   if (!color) return;
+  installViewModeController();
   await applyStatusBar(color);
 }
 
@@ -166,6 +301,7 @@ export function useStatusBarColor(color: string) {
       if (disposed) return;
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
+        installViewModeController();
         applyStatusBar(color).catch(() => {});
       }, 0);
     };
