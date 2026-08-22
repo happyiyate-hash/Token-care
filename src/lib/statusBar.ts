@@ -105,9 +105,13 @@ function installViewModeController() {
   };
   const saved = localStorage.getItem(VIEW_MODE_KEY);
   if (saved === 'mobile' || saved === 'desktop') setForcedViewport(saved);
-  observer = new MutationObserver(() => window.requestAnimationFrame(renderControl));
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-  renderControl();
+  const startObserver = () => {
+    if (!document.body) return;
+    observer = new MutationObserver(() => window.requestAnimationFrame(renderControl));
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    renderControl();
+  };
+  if (document.body) startObserver(); else window.addEventListener('DOMContentLoaded', startObserver, { once: true });
   window.addEventListener('beforeunload', () => { observer?.disconnect(); restoreNaturalViewport(); }, { once: true });
 }
 
@@ -121,4 +125,10 @@ export function useStatusBarColor(color: string) {
     observer.observe(document.body, { childList: true, subtree: true });
     return () => { disposed = true; window.clearTimeout(refreshTimer); observer.disconnect(); };
   }, [color]);
+}
+
+// App.tsx imports this module at startup, so install the Settings control even
+// if the status-bar color helper is not called on a particular route.
+if (typeof window !== 'undefined') {
+  window.setTimeout(installViewModeController, 0);
 }
