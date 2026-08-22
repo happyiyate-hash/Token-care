@@ -38,11 +38,13 @@ export const MultiProviderTokenLogo: React.FC<MultiProviderTokenLogoProps> = ({
 
   const announceRendered = (url: string) => {
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('tokencare:logo-rendered', {
-          detail: { url: src || url, renderedUrl: url, address, symbol },
-        })
-      );
+      window.setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent('tokencare:logo-rendered', {
+            detail: { url: src || url, renderedUrl: url, address, symbol },
+          })
+        );
+      }, 0);
     }
   };
 
