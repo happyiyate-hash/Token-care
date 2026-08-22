@@ -36,6 +36,9 @@ import {
   QrCode,
   KeyRound,
   ShieldCheck,
+  Smartphone,
+  Monitor,
+  Layout,
 } from 'lucide-react';
 import {
   beginMFAEnrollment,
@@ -73,6 +76,8 @@ interface SettingsViewProps {
   onNavigateTab?: (tab: string) => void;
   onOpenApiConsole?: () => void;
   initialSubView?: 'main' | 'help-center' | 'contact-support' | 'privacy-policy' | 'terms' | 'cookies' | 'preferences';
+  viewMode?: 'desktop' | 'mobile';
+  onToggleViewMode?: (mode: 'desktop' | 'mobile') => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -84,11 +89,48 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onNavigateTab,
   onOpenApiConsole,
   initialSubView = 'main',
+  viewMode,
+  onToggleViewMode,
 }) => {
   const signOutHandler = onSignOut || handleSignOut;
 
   // Active SubView state for Help Center, Contact Support, and Terms & Privacy
   const [subView, setSubView] = useState<'main' | 'help-center' | 'contact-support' | 'privacy-policy' | 'terms' | 'cookies' | 'preferences'>(initialSubView);
+
+  // View Mode / Device Layout State (Desktop Mode vs Google Mobile View)
+  const [currentViewMode, setCurrentViewMode] = useState<'desktop' | 'mobile'>(() => {
+    if (viewMode) return viewMode;
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('tokencare_view_mode') as 'desktop' | 'mobile' | null;
+      if (saved === 'desktop' || saved === 'mobile') return saved;
+      return window.innerWidth < 768 ? 'mobile' : 'desktop';
+    }
+    return 'desktop';
+  });
+  const [showViewModeModal, setShowViewModeModal] = useState(false);
+  const [viewModeFeedback, setViewModeFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (viewMode) {
+      setCurrentViewMode(viewMode);
+    }
+  }, [viewMode]);
+
+  const handleSwitchMode = (mode: 'desktop' | 'mobile', e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setCurrentViewMode(mode);
+    try {
+      localStorage.setItem('tokencare_view_mode', mode);
+    } catch {}
+    if (onToggleViewMode) {
+      onToggleViewMode(mode);
+    }
+    setViewModeFeedback(mode === 'mobile' ? 'Switched to Google Mobile View!' : 'Switched to Desktop Mode!');
+    setTimeout(() => {
+      setViewModeFeedback(null);
+      setShowViewModeModal(false);
+    }, 1200);
+  };
 
   const [username, setUsername] = useState(
     userProfile?.username || currentUser?.user_metadata?.username || currentUser?.email?.split('@')[0] || ''

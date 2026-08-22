@@ -431,7 +431,7 @@ function CallVolumeChartCard({
   const hoveredPoint = hoveredIndex !== null ? points[hoveredIndex] : null;
 
   return (
-    <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/80 bg-[#0c1017]/95 shadow-lg backdrop-blur-md space-y-2.5">
+    <div className="p-4 sm:p-6 rounded-[20px] border border-zinc-800/60 bg-gradient-to-b from-zinc-900/40 via-zinc-950/60 to-zinc-950/80 shadow-xl backdrop-blur-md space-y-3">
       {/* Top Header Row: Small, Refined & Compact */}
       <div className="flex items-center justify-between">
         {/* Left: Compact Icon & Title */}
@@ -2195,116 +2195,167 @@ print("TokenCare RPC Response:", data)`;
             {/* TAB 1: OVERVIEW & ANALYTICS */}
             {activeTab === 'overview' && (
               <div className="space-y-3 sm:space-y-5 animate-in fade-in duration-200">
-                {/* 1. Project Credits & Daily Calls Analytics Counter */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 sm:gap-3">
-                  {/* Credit Balance Card - Slim, Blended */}
-                  <div className="md:col-span-2 p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-2.5 sm:space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-400">
-                          PROJECT CREDITS
-                        </span>
-                        <h3 className="text-sm sm:text-base font-bold text-white mt-0.5">Available Balance</h3>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${
+                {/* 1. Project Credits & Edge Infrastructure Status Surfaces */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
+                  {/* Main Command Surface: Project Credits Balance & Inline Activity Telemetry */}
+                  <div className="lg:col-span-2 p-5 sm:p-7 rounded-[22px] border border-zinc-800/60 bg-gradient-to-b from-zinc-900/50 via-zinc-950/75 to-zinc-950/90 backdrop-blur-md flex flex-col justify-between shadow-2xl relative overflow-hidden">
+                    {/* Top Row: Eyebrow + Status Pill */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-widest text-zinc-400">
+                        PROJECT CREDITS
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
                             project.is_active !== false
-                              ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
-                              : 'text-zinc-400 bg-zinc-800/80 border-zinc-700'
+                              ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+                              : 'bg-zinc-800/60 border-zinc-700/60 text-zinc-400'
                           }`}
                         >
-                          {project.is_active !== false ? 'ACTIVE' : 'PAUSED'}
-                        </span>
-                        <span className="text-[10px] font-mono font-bold text-zinc-400 bg-zinc-900/80 px-2 py-0.5 rounded-full border border-zinc-800 hidden xs:inline">
-                          Auto-deducted per API request
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Numbers & Breakdown */}
-                    <div className="space-y-2">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-2xl sm:text-3xl font-extrabold text-white font-mono">{credits.toLocaleString()}</span>
-                        <span className="text-[11px] text-zinc-400 font-medium">credits</span>
-                      </div>
-
-                      {/* Realtime Breakdown Counters: Daily Calls (24h), Successful, Failed, Blocked */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-zinc-800/40 text-center">
-                        <div className="p-1.5 rounded-lg bg-zinc-900/40 border border-zinc-800/40">
-                          <span className="block text-[9px] uppercase font-bold text-zinc-400">Daily Calls (24h)</span>
-                          <span className="text-xs sm:text-sm font-mono font-bold text-white">
-                            {dailyCallsDisplay.total24h.toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="p-1.5 rounded-lg bg-zinc-900/40 border border-zinc-800/40">
-                          <span className="block text-[9px] uppercase font-bold text-emerald-400">Successful</span>
-                          <span className="text-xs sm:text-sm font-mono font-bold text-white">
-                            {dailyCallsDisplay.successful.toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="p-1.5 rounded-lg bg-zinc-900/40 border border-zinc-800/40">
-                          <span className="block text-[9px] uppercase font-bold text-rose-400">Failed</span>
-                          <span className="text-xs sm:text-sm font-mono font-bold text-white">
-                            {dailyCallsDisplay.failed.toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="p-1.5 rounded-lg bg-zinc-900/40 border border-zinc-800/40">
-                          <span className="block text-[9px] uppercase font-bold text-amber-400">Blocked</span>
-                          <span className="text-xs sm:text-sm font-mono font-bold text-white">
-                            {dailyCallsDisplay.blocked.toLocaleString()}
-                          </span>
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              project.is_active !== false ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'
+                            }`}
+                          />
+                          <span>{project.is_active !== false ? 'ACTIVE' : 'PAUSED'}</span>
+                          {project.project_name && (
+                            <>
+                              <span className="text-zinc-600 font-normal">·</span>
+                              <span className="text-zinc-300 truncate max-w-[130px] sm:max-w-[220px]">
+                                {project.project_name}
+                              </span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
 
-                    {/* API Key Protected Notice */}
-                    <div className="pt-2 border-t border-zinc-800/40 flex flex-col xs:flex-row items-start xs:items-center justify-between gap-1 text-[11px] text-zinc-400">
-                      <div className="flex items-center gap-1 truncate">
-                        <Lock className="w-3 h-3 text-emerald-400 shrink-0" />
+                    {/* Prominent Centerpiece: Big 56-64px Balance */}
+                    <div className="my-5 sm:my-6">
+                      <div className="text-5xl sm:text-6xl md:text-7xl font-black font-mono tracking-tight text-white leading-none">
+                        {credits.toLocaleString()}
+                      </div>
+                      <div className="text-xs sm:text-sm text-zinc-400 font-medium mt-2">
+                        credits remaining
+                      </div>
+                    </div>
+
+                    {/* Subtle Horizontal Divider */}
+                    <div className="h-px w-full bg-zinc-800/60 my-2" />
+
+                    {/* Single Horizontal Activity Strip (No rectangular boxes) */}
+                    <div className="flex flex-wrap items-center justify-between gap-y-3 sm:gap-y-0 text-xs sm:text-sm py-2">
+                      {/* 1. Daily Calls */}
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-white font-mono font-bold text-sm sm:text-base">
+                          {dailyCallsDisplay.total24h.toLocaleString()}
+                        </span>
+                        <span className="text-zinc-400 text-xs sm:text-[13px]">calls today</span>
+                      </div>
+
+                      <div className="hidden sm:block h-3.5 w-px bg-zinc-800/80" />
+
+                      {/* 2. Successful */}
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-emerald-400 font-mono font-bold text-sm sm:text-base">
+                          {dailyCallsDisplay.successful.toLocaleString()}
+                        </span>
+                        <span className="text-zinc-400 text-xs sm:text-[13px]">successful</span>
+                      </div>
+
+                      <div className="hidden sm:block h-3.5 w-px bg-zinc-800/80" />
+
+                      {/* 3. Failed */}
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-rose-400 font-mono font-bold text-sm sm:text-base">
+                          {dailyCallsDisplay.failed.toLocaleString()}
+                        </span>
+                        <span className="text-zinc-400 text-xs sm:text-[13px]">failed</span>
+                      </div>
+
+                      <div className="hidden sm:block h-3.5 w-px bg-zinc-800/80" />
+
+                      {/* 4. Blocked */}
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-amber-400 font-mono font-bold text-sm sm:text-base">
+                          {dailyCallsDisplay.blocked.toLocaleString()}
+                        </span>
+                        <span className="text-zinc-400 text-xs sm:text-[13px]">blocked</span>
+                      </div>
+                    </div>
+
+                    {/* Subtle Horizontal Divider */}
+                    <div className="h-px w-full bg-zinc-800/60 my-2" />
+
+                    {/* Bottom Row: Quiet API Key & Manage Action */}
+                    <div className="flex items-center justify-between text-xs text-zinc-400 pt-1">
+                      <div className="flex items-center gap-2">
+                        <Lock className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                         <span className="truncate">
-                          Live key: <code className="text-zinc-300 font-mono">tc_live_••••••••</code>
+                          Live key: <code className="text-zinc-300 font-mono text-[11px] sm:text-xs">tc_live_••••••••</code>
                         </span>
                       </div>
                       <button
                         onClick={() => setActiveTab('keys')}
-                        className="text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-0.5 shrink-0"
+                        className="text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1 transition-colors group"
                       >
-                        Manage Keys <ChevronRight className="w-3 h-3" />
+                        Manage Keys <ChevronRight className="w-3.5 h-3.5 text-zinc-500 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
                       </button>
                     </div>
                   </div>
 
-                  {/* Performance Metrics Card - Slim */}
-                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm flex flex-col justify-between space-y-2 sm:space-y-3">
-                    <div>
-                      <span className="text-[9px] font-extrabold uppercase tracking-wider text-zinc-500">
-                        SERVICE HEALTH
+                  {/* Unified SaaS Service Health / Edge Infrastructure Surface */}
+                  <div className="p-5 sm:p-7 rounded-[22px] border border-zinc-800/60 bg-gradient-to-b from-zinc-900/50 via-zinc-950/75 to-zinc-950/90 backdrop-blur-md flex flex-col justify-between shadow-2xl relative overflow-hidden">
+                    {/* Top Row: Eyebrow + Operational Beacon */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-widest text-zinc-400">
+                        EDGE INFRASTRUCTURE
                       </span>
-                      <h4 className="text-xs sm:text-sm font-bold text-white mt-0.5">Edge Infrastructure</h4>
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 border border-emerald-500/25 text-emerald-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>OPERATIONAL</span>
+                      </div>
                     </div>
 
-                    <div className="space-y-2 text-[11px]">
-                      <div className="flex items-center justify-between">
-                        <span className="text-zinc-400">Gateway Latency</span>
+                    {/* Centerpiece: Big Availability Metric */}
+                    <div className="my-5 sm:my-6">
+                      <div className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white leading-none">
+                        99.98%
+                      </div>
+                      <div className="text-xs sm:text-sm text-zinc-400 font-medium mt-2">
+                        global edge availability
+                      </div>
+                    </div>
+
+                    {/* Subtle Horizontal Divider */}
+                    <div className="h-px w-full bg-zinc-800/60 my-2" />
+
+                    {/* Infrastructure Telemetry Stats */}
+                    <div className="space-y-2.5 text-xs sm:text-[13px] py-1">
+                      <div className="flex items-center justify-between text-zinc-400">
+                        <span>Gateway Latency</span>
                         <span className="text-emerald-400 font-mono font-bold">~42ms avg</span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-zinc-400">Availability</span>
-                        <span className="text-emerald-400 font-mono font-bold">99.98%</span>
+                      <div className="flex items-center justify-between text-zinc-400">
+                        <span>RPC Endpoints</span>
+                        <span className="text-white font-mono font-bold">5 Active Routes</span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-zinc-400">RPC Endpoints</span>
-                        <span className="text-white font-mono font-bold">5 Routes</span>
+                      <div className="flex items-center justify-between text-zinc-400">
+                        <span>Routing Protocol</span>
+                        <span className="text-zinc-300 font-mono font-medium">Anycast Mesh</span>
                       </div>
                     </div>
 
+                    {/* Subtle Horizontal Divider */}
+                    <div className="h-px w-full bg-zinc-800/60 my-2" />
+
+                    {/* Action Button */}
                     <button
                       onClick={() => setActiveTab('endpoints')}
-                      className="w-full py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] font-bold text-zinc-200 transition-colors flex items-center justify-center gap-1"
+                      className="w-full py-2 px-3 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition-all flex items-center justify-center gap-1.5 group mt-1"
                     >
-                      <Zap className="w-3 h-3 text-emerald-400" />
-                      Test Endpoints
+                      <Zap className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                      Test RPC Endpoints
                     </button>
                   </div>
                 </div>
@@ -2313,22 +2364,22 @@ print("TokenCare RPC Response:", data)`;
                 <CallVolumeChartCard usage={usage} logs={logs} callsToday={dailyCallsDisplay.total24h} />
 
                 {/* 3. Quick Start & Public API Gateway Endpoint Preview */}
-                <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-2">
+                <div className="p-4 sm:p-6 rounded-[20px] border border-zinc-800/60 bg-gradient-to-b from-zinc-900/40 via-zinc-950/60 to-zinc-950/80 backdrop-blur-md space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                    <div className="flex items-center gap-2">
+                      <Terminal className="w-4 h-4 text-emerald-400" />
                       <h4 className="text-xs sm:text-sm font-bold text-white">Public API Gateway Endpoint</h4>
                     </div>
                     <button
                       onClick={() => handleCopyUrl(DEVELOPER_API_URL)}
                       className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
                     >
-                      {copiedUrl ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                      {copiedUrl ? 'Copied' : 'Copy'}
+                      {copiedUrl ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedUrl ? 'Copied' : 'Copy URL'}
                     </button>
                   </div>
 
-                  <div className="p-2 sm:p-2.5 rounded-lg bg-zinc-950 font-mono text-[10px] sm:text-xs text-emerald-300 border border-zinc-800/60 break-all select-all">
+                  <div className="p-2.5 sm:p-3 rounded-xl bg-zinc-950 font-mono text-[10px] sm:text-xs text-emerald-300 border border-zinc-800/60 break-all select-all">
                     {DEVELOPER_API_URL}
                   </div>
                 </div>
