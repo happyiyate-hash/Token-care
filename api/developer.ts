@@ -33,16 +33,27 @@ function getBody(req: VercelRequest): Record<string, unknown> {
   return {};
 }
 
-// The backend never hardcodes Cloudflare operations. The JSON body is opaque
-// to the gateway. Only its top-level `key` is extracted for logging.
 function getRequestKey(body: Record<string, unknown>) {
   return typeof body.key === 'string' && body.key.trim() ? body.key.trim() : 'unknown';
+}
+
+function getCreditCost(response: Response, body: unknown): number | null {
+  const header = response.headers.get('x-tokencare-credit-cost') || response.headers.get('x-credit-cost');
+  if (header && /^\d+$/.test(header.trim())) {
+    const value = Number(header.trim());
+    if (Number.isSafeInteger(value) && value > 0) return value;
+  }
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const value = (body as Record<string, unknown>).credit_cost;
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return value;
+  }
+  return null;
 }
 
 async function writeLog(p: {
   projectId: string; requestId: string; requestKey: string; method: string;
   statusCode: number; startedAt: number; errorCode?: string | null;
-  message: string; quotaConsumed: boolean;
+  message: string; creditsCharged: number;
 }) {
   const { error } = await supabase.from('developer_request_logs').insert({
     project_id: p.projectId,
@@ -55,7 +66,7 @@ async function writeLog(p: {
     error_code: p.errorCode ?? null,
     request_id: p.requestId,
     completed_at: new Date().toISOString(),
-    quota_consumed: p.quotaConsumed,
+    quota_consumed: p.creditsCharged > 0,
     message: p.message,
   });
   if (error) console.error('Request log write failed:', error);
@@ -74,25 +85,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const requestKey = getRequestKey(body);
   const apiKey = getApiKey(req);
 
-  if (method !== 'POST') {
-    return send(res, 405, { success: false, code: 'METHOD_NOT_ALLOWED', message: 'Use POST.' });
-  }
-  if (!apiKey) {
-    return send(res, 401, { success: false, code: 'API_KEY_REQUIRED', message: 'API key required.', request_id: requestId });
-  }
-  if (!upstreamUrl) {
-    return send(res, 500, { success: false, code: 'UPSTREAM_NOT_CONFIGURED', message: 'Developer upstream is not configured.', request_id: requestId });
-  }
-  if (requestKey === 'unknown') {
-    return send(res, 400, { success: false, code: 'REQUEST_KEY_REQUIRED', message: 'The JSON body must contain a string `key`.', request_id: requestId });
-  }
+  if (method !== 'POST') return send(res, 405, { success: false, code: 'METHOD_NOT_ALLOWED', message: 'Use POST.' });
+  if (!apiKey) return send(res, 401, { success: false, code: 'API_KEY_REQUIRED', message: 'API key required.', request_id: requestId });
+  if (!upstreamUrl) return send(res, 500, { success: false, code: 'UPSTREAM_NOT_CONFIGURED', message: 'Developer upstream is not configured.', request_id: requestId });
+  if (requestKey === 'unknown') return send(res, 400, { success: false, code: 'REQUEST_KEY_REQUIRED', message: 'The JSON body must contain a string `key`.', request_id: requestId });
 
   let projectId: string | null = null;
 
   try {
     const { data: project, error: projectError } = await supabase
       .from('developer_projects')
-      .select('id, daily_limit, is_active, subscription_status')
+      .select('id, is_active')
       .eq('api_key', apiKey)
       .maybeSingle();
 
@@ -105,37 +108,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     projectId = project.id;
 
-    const { data: quotaData, error: quotaError } = await supabase.rpc('consume_developer_call', {
-      p_project_id: project.id,
-      p_success: true,
-      p_blocked: false,
-    });
-
-    if (quotaError) {
-      console.error('Quota RPC failed:', quotaError);
-      await writeLog({ projectId, requestId, requestKey, method, statusCode: 500, startedAt, errorCode: 'QUOTA_CHECK_FAILED', message: 'Unable to verify daily request quota.', quotaConsumed: false });
-      return send(res, 500, { success: false, code: 'QUOTA_CHECK_FAILED', message: 'Unable to verify daily request quota.', request_id: requestId });
-    }
-
-    const quota = Array.isArray(quotaData) ? quotaData[0] : quotaData;
-    if (!quota?.allowed) {
-      const message = 'You have reached your daily request limit. Please try again tomorrow or upgrade your plan.';
-      await writeLog({ projectId, requestId, requestKey, method, statusCode: 429, startedAt, errorCode: 'QUOTA_EXCEEDED', message, quotaConsumed: false });
-      return send(res, 429, {
-        success: false,
-        key: requestKey,
-        code: 'QUOTA_EXCEEDED',
-        message,
-        usage: { used: quota?.calls ?? 0, limit: quota?.daily_limit ?? project.daily_limit, remaining: 0 },
-        request_id: requestId,
-      });
-    }
-
-    // Pass the exact JSON body through unchanged. No operation names are
-    // hardcoded here, so Cloudflare can add new keys without a backend update.
+    // The TokenCare backend/engine decides the operation cost. This gateway
+    // deliberately does NOT contain a token/operation -> credit price table.
     const upstreamResponse = await fetch(upstreamUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+        'X-TokenCare-Project-Id': project.id,
+        'X-TokenCare-Request-Id': requestId,
+      },
       body: JSON.stringify(body),
     });
 
@@ -143,29 +125,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let upstreamBody: unknown;
     try { upstreamBody = JSON.parse(text); } catch { upstreamBody = text; }
 
-    const ok = upstreamResponse.ok;
-    await writeLog({
-      projectId,
-      requestId,
-      requestKey,
-      method,
-      statusCode: upstreamResponse.status,
-      startedAt,
-      errorCode: ok ? null : `UPSTREAM_${upstreamResponse.status}`,
-      message: ok ? 'Request succeeded.' : 'Upstream request failed.',
-      quotaConsumed: true,
+    if (!upstreamResponse.ok) {
+      await writeLog({ projectId, requestId, requestKey, method, statusCode: upstreamResponse.status, startedAt, errorCode: `UPSTREAM_${upstreamResponse.status}`, message: 'Upstream request failed.', creditsCharged: 0 });
+      res.status(upstreamResponse.status);
+      res.setHeader('Content-Type', upstreamResponse.headers.get('content-type') || 'application/json');
+      return res.send(typeof upstreamBody === 'string' ? upstreamBody : JSON.stringify(upstreamBody));
+    }
+
+    const creditCost = getCreditCost(upstreamResponse, upstreamBody);
+    if (creditCost === null) {
+      await writeLog({ projectId, requestId, requestKey, method, statusCode: 502, startedAt, errorCode: 'CREDIT_COST_MISSING', message: 'Upstream did not provide the credit cost for this operation.', creditsCharged: 0 });
+      return send(res, 502, { success: false, code: 'CREDIT_COST_MISSING', message: 'The TokenCare backend did not provide a valid credit cost for this operation.', request_id: requestId });
+    }
+
+    // Charge only the cost supplied by the backend. Supabase only stores the
+    // project wallet and transaction ledger; it does not know operation prices.
+    const { data: chargeData, error: chargeError } = await supabase.rpc('reserve_developer_credits', {
+      p_project_id: project.id,
+      p_credits: creditCost,
+      p_endpoint: requestKey,
+      p_action_key: requestKey,
+      p_request_id: requestId,
     });
 
-    // Return Cloudflare's response body directly. We do not wrap or rewrite
-    // the application's JSON response, so the engine receives the same JSON.
+    if (chargeError) {
+      console.error('Credit charge failed:', chargeError);
+      return send(res, 500, { success: false, code: 'CREDIT_CHARGE_FAILED', message: 'Unable to charge project credits.', request_id: requestId });
+    }
+
+    const charge = Array.isArray(chargeData) ? chargeData[0] : chargeData;
+    if (!charge?.allowed) {
+      // The upstream has already performed the operation. Refund is intentionally
+      // not attempted here because no credit was deducted. The caller must retry
+      // after purchasing credits. Backend implementations should use a preflight
+      // reservation if an operation is expensive or irreversible.
+      await writeLog({ projectId, requestId, requestKey, method, statusCode: 402, startedAt, errorCode: 'INSUFFICIENT_CREDITS', message: 'Insufficient project credits.', creditsCharged: 0 });
+      return send(res, 402, { success: false, code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for this operation.', required_credits: creditCost, balance: charge?.balance ?? 0, request_id: requestId });
+    }
+
+    await writeLog({ projectId, requestId, requestKey, method, statusCode: upstreamResponse.status, startedAt, errorCode: null, message: 'Request succeeded.', creditsCharged: creditCost });
+
     res.status(upstreamResponse.status);
     res.setHeader('Content-Type', upstreamResponse.headers.get('content-type') || 'application/json');
+    res.setHeader('X-TokenCare-Credits-Charged', String(creditCost));
+    res.setHeader('X-TokenCare-Credits-Remaining', String(charge.balance ?? 0));
     return res.send(typeof upstreamBody === 'string' ? upstreamBody : JSON.stringify(upstreamBody));
   } catch (error) {
     console.error('Developer API error:', error);
-    if (projectId) {
-      await writeLog({ projectId, requestId, requestKey, method, statusCode: 500, startedAt, errorCode: 'INTERNAL_ERROR', message: 'Internal server error.', quotaConsumed: true });
-    }
+    if (projectId) await writeLog({ projectId, requestId, requestKey, method, statusCode: 500, startedAt, errorCode: 'INTERNAL_ERROR', message: 'Internal server error.', creditsCharged: 0 });
     return send(res, 500, { success: false, key: requestKey, code: 'INTERNAL_ERROR', message: 'Internal server error.', request_id: requestId });
   }
 }
