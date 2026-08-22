@@ -19,8 +19,8 @@ function makeCategory(id: string, name: string, score: number, weightPct: number
 function normalizeChain(blockchainType?: string, chainId?: string | number) {
   const b = String(blockchainType || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
   const c = String(chainId ?? '').trim().toLowerCase();
-  if (['metadata', 'solana', 'sol', 'mainnetbeta', 'solanamainnet'].includes(b) || ['metadata', 'solana', 'sol', 'mainnet-beta'].includes(c)) {
-    return { blockchain: 'solana', chainId: 'mainnet-beta' as ChainId, name: 'Solana', standard: 'SPL' };
+  if (['metadata', 'solana', 'sol', 'mainnetbeta', 'solanamainnet'].includes(b) || ['metadata', 'solana', 'sol', 'mainnet-beta', 'solanamainnet'].includes(c)) {
+    return { blockchain: 'solana', chainId: 'solana' as ChainId, name: 'Solana', standard: 'SPL' };
   }
   if (['tron', 'trx'].includes(b) || ['tron', 'trx'].includes(c)) return { blockchain: 'tron', chainId: 'mainnet' as ChainId, name: 'TRON', standard: 'TRC-20' };
   if (['ton', 'tonnetwork'].includes(b) || ['ton', 'tonnetwork'].includes(c)) return { blockchain: 'ton', chainId: 'ton' as ChainId, name: 'TON Network', standard: 'Jetton' };

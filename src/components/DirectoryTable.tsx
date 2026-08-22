@@ -4,6 +4,7 @@ import { SubmittedToken } from '../types';
 import { SUPPORTED_CHAINS, REWARD_RATE_USD, getChainInfo } from '../constants/chains';
 import { formatSmartCurrency, formatSmartNumber } from '../utils/numberFormatting';
 import { useTranslation } from '../context/I18nContext';
+import { MultiProviderTokenLogo } from './MultiProviderTokenLogo';
 
 interface DirectoryTableProps {
   tokens: SubmittedToken[];
@@ -170,17 +171,14 @@ export const DirectoryTable: React.FC<DirectoryTableProps> = ({
                     {/* Symbol & Name */}
                     <td className="py-3.5 px-4">
                       <div className="flex items-center space-x-3">
-                        {t.metadata.logoUrl ? (
-                          <img
-                            src={t.metadata.logoUrl}
-                            alt={t.metadata.symbol}
-                            className="w-8 h-8 rounded-lg object-cover shrink-0 shadow-sm"
-                          />
-                        ) : (
-                          <div className="w-8 h-8 rounded-lg bg-zinc-950 flex items-center justify-center font-bold text-xs text-blue-400 shrink-0">
-                            {t.metadata.symbol ? t.metadata.symbol.substring(0, 3) : 'TOK'}
-                          </div>
-                        )}
+                        <MultiProviderTokenLogo
+                          src={t.metadata.logoUrl}
+                          chain={String(t.chainId)}
+                          address={t.address || t.metadata?.address}
+                          symbol={t.metadata.symbol}
+                          alt={t.metadata.name || t.metadata.symbol}
+                          className="w-8 h-8 rounded-lg object-cover shrink-0 shadow-sm"
+                        />
                         <div>
                           <div className="font-bold text-zinc-100 flex items-center gap-1.5">
                             <span>{t.metadata.name}</span>

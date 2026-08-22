@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getCachedLogoDataUrl, logoDownloadQueue } from '../services/logoCacheService';
 import { NEUTRAL_TOKEN_FALLBACK } from '../services/chainLogos';
+import { resolveTokenLogoWithFallback } from '../services/tokenLogoResolver';
 
 interface CachedTokenLogoProps {
   src?: string;
@@ -56,13 +57,31 @@ export const CachedTokenLogo: React.FC<CachedTokenLogoProps> = ({
           setCurrentSrc(downloadedDataUrl);
         }
       });
+    } else if (address) {
+      // If no src but address provided, attempt multi-provider resolution in background
+      resolveTokenLogoWithFallback(address, chain, undefined, undefined, symbol).then((res) => {
+        if (res.isValid && res.logoUrl) {
+          setCurrentSrc(res.logoUrl);
+        }
+      }).catch(() => {});
     }
   }, [src, chain, address, symbol, retryAttempt]);
 
-  const handleError = () => {
+  const handleError = async () => {
     if (retryAttempt === 0 && src && !src.startsWith('data:')) {
-      // Retry via high-availability image proxy before falling back
+      // Retry attempt 1: Multi-provider fallback resolution across DexScreener, CoinGecko, GeckoTerminal, etc.
       setRetryAttempt(1);
+      if (address) {
+        try {
+          const res = await resolveTokenLogoWithFallback(address, chain, undefined, undefined, symbol);
+          if (res.isValid && res.logoUrl && res.logoUrl !== currentSrc) {
+            setCurrentSrc(res.logoUrl);
+            return;
+          }
+        } catch {}
+      }
+
+      // Retry attempt 1b: Image proxy
       const proxiedUrl = `https://wsrv.nl/?url=${encodeURIComponent(src)}&w=96&h=96&fit=cover&output=png`;
       setCurrentSrc(proxiedUrl);
     } else if (!hasError) {
@@ -81,3 +100,4 @@ export const CachedTokenLogo: React.FC<CachedTokenLogoProps> = ({
     />
   );
 };
+

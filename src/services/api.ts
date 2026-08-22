@@ -1,4 +1,4 @@
-import { ChainId, MarketData, TokenDiscovery } from '../types';
+import { ChainId, MarketData, TokenDiscovery, ERC20Metadata } from '../types';
 import {
   SUPPORTED_CHAINS,
   getChainInfo,
@@ -43,11 +43,11 @@ export function resolveNetworkFromProviderChainId(
     };
   }
 
-  if (clean === 'solana' || clean === 'sol' || isSolanaAddress(address)) {
+  if (clean === 'solana' || clean === 'sol' || clean === 'mainnet-beta' || isSolanaAddress(address)) {
     return {
       blockchainType: 'solana',
       blockchainName: 'Solana',
-      chainId: 'mainnet-beta',
+      chainId: 'solana',
       tokenStandard: 'SPL',
     };
   }
@@ -259,6 +259,22 @@ export async function discoverToken(
 
   // 4. Solana fallback discovery
   if (isSolanaAddress(address)) {
+    const nonEvm = await fetchNonEvmTokenMetadata(address, 'solana', 'solana').catch(() => null);
+    if (nonEvm) {
+      return {
+        address,
+        name: nonEvm.name,
+        symbol: nonEvm.symbol,
+        decimals: nonEvm.decimals || 9,
+        blockchainType: 'solana',
+        blockchainName: 'Solana',
+        chainId: 'solana',
+        tokenStandard: 'SPL',
+        asset_identifier_type: 'mint',
+        logoUrl: nonEvm.logoUrl,
+        source: 'solana-provider',
+      };
+    }
     return {
       address,
       name: 'Solana Token',
@@ -266,7 +282,7 @@ export async function discoverToken(
       decimals: 9,
       blockchainType: 'solana',
       blockchainName: 'Solana',
-      chainId: 'mainnet-beta',
+      chainId: 'solana',
       tokenStandard: 'SPL',
       asset_identifier_type: 'mint',
       source: 'solana-provider',
@@ -275,6 +291,22 @@ export async function discoverToken(
 
   // 5. TRON fallback discovery
   if (isTronAddress(address)) {
+    const nonEvm = await fetchNonEvmTokenMetadata(address, 'mainnet', 'tron').catch(() => null);
+    if (nonEvm) {
+      return {
+        address,
+        name: nonEvm.name,
+        symbol: nonEvm.symbol,
+        decimals: nonEvm.decimals || 6,
+        blockchainType: 'tron',
+        blockchainName: 'TRON',
+        chainId: 'mainnet',
+        tokenStandard: 'TRC-20',
+        asset_identifier_type: 'contract_address',
+        logoUrl: nonEvm.logoUrl,
+        source: 'tron-provider',
+      };
+    }
     return {
       address,
       name: 'TRON Token',
@@ -324,7 +356,7 @@ interface DexScreenerPair {
 export async function fetchDexScreenerData(
   address: string,
   chainId: ChainId
-): Promise<Partial<MarketData> | null> {
+): Promise<(Partial<MarketData> & { name?: string; symbol?: string; logoUrl?: string }) | null> {
   try {
     const baseAddress = address.includes('__')
       ? address.split('__')[0]
@@ -342,10 +374,33 @@ export async function fetchDexScreenerData(
       }
     }
 
+    // Fallback to dex search if direct token lookup returned no pairs
+    if (!data || !data.pairs || data.pairs.length === 0) {
+      const searchRes = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${address}`).catch(() => null);
+      if (searchRes && searchRes.ok) {
+        data = await searchRes.json().catch(() => null);
+      }
+    }
+
     if (!data || !data.pairs || data.pairs.length === 0) return null;
 
     // Filter or sort pairs by highest liquidity
-    const targetChain = SUPPORTED_CHAINS[chainId]?.dexScreenerChain || chainId;
+    const cleanChain = String(chainId).toLowerCase().trim();
+    const chainMap: Record<string, string> = {
+      'mainnet-beta': 'solana',
+      'solana': 'solana',
+      'ton': 'ton',
+      'tron': 'tron',
+      'xrpl': 'xrpl',
+      '1': 'ethereum',
+      '137': 'polygon',
+      '8453': 'base',
+      '42161': 'arbitrum',
+      '56': 'bsc',
+      '10': 'optimism',
+      '43114': 'avalanche',
+    };
+    const targetChain = SUPPORTED_CHAINS[chainId]?.dexScreenerChain || chainMap[cleanChain] || chainId;
     const chainPairs = data.pairs.filter(
       (p: DexScreenerPair) => p.chainId.toLowerCase() === targetChain.toLowerCase()
     );
@@ -366,6 +421,8 @@ export async function fetchDexScreenerData(
     const marketCapUsd = bestPair.marketCap || fdvUsd;
 
     return {
+      name: bestPair.baseToken?.name,
+      symbol: bestPair.baseToken?.symbol ? bestPair.baseToken.symbol.toUpperCase() : undefined,
       priceUsd,
       priceNative,
       priceChange24h,
@@ -374,14 +431,252 @@ export async function fetchDexScreenerData(
       marketCapUsd,
       fdvUsd,
       pairAddress: bestPair.pairAddress,
-      dexName: bestPair.dexId.toUpperCase(),
+      dexName: (bestPair.dexId || 'DEX').toUpperCase(),
       pairUrl: bestPair.url,
       logoUrl: (bestPair as any).info?.imageUrl || (bestPair as any).info?.header || undefined,
-    } as any;
+    };
   } catch (err) {
     console.warn('[API] DexScreener fetch error:', err);
     return null;
   }
+}
+
+/**
+ * Universal Non-EVM Token Metadata Fetcher (Solana, TON, TRON, XRPL)
+ */
+export async function fetchNonEvmTokenMetadata(
+  address: string,
+  chainId: string,
+  blockchainType?: string
+): Promise<ERC20Metadata | null> {
+  const clean = address.trim();
+  const bType = (blockchainType || chainId || '').toLowerCase();
+  const isSolana = bType === 'solana' || bType === 'spl' || bType === 'mainnet-beta' || isSolanaAddress(clean);
+  const isTon = bType === 'ton' || bType === 'ton-network' || isTonAddress(clean);
+  const isTron = bType === 'tron' || bType === 'trc20' || isTronAddress(clean);
+  const isXrpl = bType === 'xrpl' || bType === 'xrp' || isXrplAddress(clean);
+
+  // 1. SOLANA
+  if (isSolana) {
+    let name: string | undefined;
+    let symbol: string | undefined;
+    let logoUrl: string | undefined;
+    let decimals = 9;
+    let totalSupply = '1000000000';
+    let isRenounced = true;
+    let ownerAddress: string | undefined;
+
+    // 1a. Pump.fun API (Fastest and most accurate for Pump & Raydium Solana tokens)
+    try {
+      const pumpRes = await fetch(`https://frontend-api.pump.fun/coins/${clean}`).catch(() => null);
+      if (pumpRes && pumpRes.ok) {
+        const pumpData = await pumpRes.json().catch(() => null);
+        if (pumpData && (pumpData.name || pumpData.symbol)) {
+          name = pumpData.name;
+          symbol = (pumpData.symbol || 'PUMP').toUpperCase();
+          logoUrl = pumpData.image_uri;
+          decimals = 6;
+          if (pumpData.total_supply) {
+            totalSupply = String(Math.round(pumpData.total_supply / 1e6));
+          }
+          if (pumpData.creator) {
+            ownerAddress = pumpData.creator;
+          }
+          isRenounced = !pumpData.creator || pumpData.complete;
+        }
+      }
+    } catch (e) {
+      console.warn('[Solana] Pump.fun fetch note:', e);
+    }
+
+    // 1b. RugCheck API
+    if (!name || !symbol) {
+      try {
+        const rcRes = await fetch(`https://api.rugcheck.xyz/v1/tokens/${clean}/report`).catch(() => null);
+        if (rcRes && rcRes.ok) {
+          const rcData = await rcRes.json().catch(() => null);
+          if (rcData?.tokenMeta?.name || rcData?.tokenMeta?.symbol) {
+            name = rcData.tokenMeta.name;
+            symbol = (rcData.tokenMeta.symbol || 'SPL').toUpperCase();
+            logoUrl = rcData.fileMeta?.image || logoUrl;
+            if (rcData.decimals !== undefined) decimals = rcData.decimals;
+            if (rcData.tokenMeta?.supply) totalSupply = String(rcData.tokenMeta.supply);
+            isRenounced = !rcData.mintAuthority && !rcData.freezeAuthority;
+          }
+        }
+      } catch (e) {
+        console.warn('[Solana] RugCheck fetch note:', e);
+      }
+    }
+
+    // 1c. Jupiter Token List API
+    if (!name || !symbol) {
+      try {
+        const jupRes = await fetch(`https://tokens.jup.ag/token/${clean}`).catch(() => null);
+        if (jupRes && jupRes.ok) {
+          const jupData = await jupRes.json().catch(() => null);
+          if (jupData?.name || jupData?.symbol) {
+            name = jupData.name;
+            symbol = (jupData.symbol || 'SOL').toUpperCase();
+            logoUrl = jupData.logoURI || logoUrl;
+            if (jupData.decimals !== undefined) decimals = jupData.decimals;
+          }
+        }
+      } catch (e) {
+        console.warn('[Solana] Jupiter fetch note:', e);
+      }
+    }
+
+    // 1d. DexScreener lookup
+    if (!name || !symbol) {
+      const dexRes = await fetchDexScreenerData(clean, 'mainnet-beta').catch(() => null);
+      if (dexRes) {
+        name = dexRes.name;
+        symbol = dexRes.symbol;
+        logoUrl = dexRes.logoUrl || logoUrl;
+      }
+    }
+
+    // 1e. Synthesize fallback if valid Solana address
+    if (!name && !symbol && isSolanaAddress(clean)) {
+      const short = clean.slice(0, 4).toUpperCase();
+      name = `Solana Token (${short})`;
+      symbol = short;
+    }
+
+    if (name || symbol) {
+      return {
+        address: clean,
+        chainId: 'solana',
+        blockchainType: 'solana',
+        blockchainName: 'Solana',
+        tokenStandard: 'SPL',
+        name: name || 'Solana Token',
+        symbol: symbol || 'SOL',
+        decimals,
+        totalSupply,
+        rawTotalSupply: totalSupply,
+        logoUrl,
+        ownerAddress,
+        isRenounced,
+      };
+    }
+  }
+
+  // 2. TON
+  if (isTon) {
+    let name: string | undefined;
+    let symbol: string | undefined;
+    let logoUrl: string | undefined;
+    let decimals = 9;
+    let totalSupply = '1000000000';
+
+    try {
+      const baseAddress = clean.includes('__') ? clean.split('__')[0] : clean;
+      const tonRes = await fetch(`https://tonapi.io/v2/jettons/${baseAddress}`).catch(() => null);
+      if (tonRes && tonRes.ok) {
+        const tonData = await tonRes.json().catch(() => null);
+        if (tonData?.metadata?.name || tonData?.metadata?.symbol) {
+          name = tonData.metadata.name;
+          symbol = (tonData.metadata.symbol || 'TON').toUpperCase();
+          logoUrl = tonData.metadata.image;
+          if (tonData.metadata.decimals) decimals = parseInt(tonData.metadata.decimals, 10);
+          if (tonData.total_supply) totalSupply = String(Math.round(parseFloat(tonData.total_supply) / Math.pow(10, decimals)));
+        }
+      }
+    } catch (e) {
+      console.warn('[TON] TonAPI fetch note:', e);
+    }
+
+    if (!name && !symbol) {
+      let suffix = '';
+      if (clean.includes('__')) suffix = clean.split('__')[1];
+      else if (clean.includes('_')) suffix = clean.split('_')[1];
+      if (suffix) {
+        symbol = suffix.toUpperCase();
+        name = `${symbol} (TON Jetton)`;
+      } else {
+        name = 'TON Jetton Token';
+        symbol = 'JETTON';
+      }
+    }
+
+    return {
+      address: clean,
+      chainId: 'ton',
+      blockchainType: 'ton',
+      blockchainName: 'TON Network',
+      tokenStandard: 'Jetton',
+      name: name || 'TON Token',
+      symbol: symbol || 'TON',
+      decimals,
+      totalSupply,
+      rawTotalSupply: totalSupply,
+      logoUrl,
+      isRenounced: true,
+    };
+  }
+
+  // 3. TRON
+  if (isTron) {
+    let name: string | undefined;
+    let symbol: string | undefined;
+    let logoUrl: string | undefined;
+    let decimals = 6;
+    let totalSupply = '1000000000';
+
+    try {
+      const tronRes = await fetch(`https://apilist.tronscanapi.com/api/token_trc20?contract=${clean}`).catch(() => null);
+      if (tronRes && tronRes.ok) {
+        const tronData = await tronRes.json().catch(() => null);
+        const trc = tronData?.trc20_tokens?.[0] || tronData?.data?.[0];
+        if (trc) {
+          name = trc.name;
+          symbol = (trc.symbol || 'TRX').toUpperCase();
+          logoUrl = trc.icon_url;
+          if (trc.decimals !== undefined) decimals = trc.decimals;
+          if (trc.total_supply_with_decimals) totalSupply = String(trc.total_supply_with_decimals);
+        }
+      }
+    } catch (e) {
+      console.warn('[TRON] Tronscan fetch note:', e);
+    }
+
+    return {
+      address: clean,
+      chainId: 'mainnet',
+      blockchainType: 'tron',
+      blockchainName: 'TRON',
+      tokenStandard: 'TRC-20',
+      name: name || 'TRON Token',
+      symbol: symbol || 'TRX',
+      decimals,
+      totalSupply,
+      rawTotalSupply: totalSupply,
+      logoUrl,
+      isRenounced: true,
+    };
+  }
+
+  // 4. XRPL
+  if (isXrpl) {
+    const xrpl = parseXrplAssetIdentifier(clean);
+    return {
+      address: clean,
+      chainId: 'mainnet',
+      blockchainType: 'xrpl',
+      blockchainName: 'XRP Ledger',
+      tokenStandard: 'issued_asset',
+      name: xrpl.name,
+      symbol: xrpl.symbol,
+      decimals: 15,
+      totalSupply: '1000000000',
+      rawTotalSupply: '1000000000',
+      isRenounced: true,
+    };
+  }
+
+  return null;
 }
 
 export interface CoinGeckoTokenData {
@@ -485,7 +780,7 @@ export async function lookupBlockchainForToken(
   if (isSolanaAddress(address)) {
     return {
       blockchain: 'Solana',
-      chainId: 'mainnet-beta',
+      chainId: 'solana',
       blockchainType: 'solana',
       tokenStandard: 'SPL',
       source: 'address_pattern',

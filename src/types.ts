@@ -36,6 +36,7 @@ export interface ERC20Metadata {
   ownerAddress?: string;
   isRenounced?: boolean;
   logoUrl?: string;
+  logoSource?: string;
 }
 
 export interface TokenDiscovery {
@@ -49,6 +50,7 @@ export interface TokenDiscovery {
   tokenStandard?: string;
   asset_identifier_type?: string;
   logoUrl?: string;
+  logoSource?: string;
   source: string;
   totalSupply?: string;
   marketData?: Partial<MarketData>;

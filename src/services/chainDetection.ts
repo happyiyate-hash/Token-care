@@ -167,5 +167,9 @@ export async function detectTokenBlockchain(address: string): Promise<DetectedCh
 }
 
 export function chainIdToSelectorId(chainId: string): string {
-  return chainId === 'solana-mainnet' ? 'solana' : chainId;
+  const clean = String(chainId || '').toLowerCase().trim();
+  if (['solana-mainnet', 'mainnet-beta', 'mainnet_beta', 'spl', 'sol', 'metadata'].includes(clean)) {
+    return 'solana';
+  }
+  return chainId;
 }

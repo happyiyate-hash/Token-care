@@ -20,10 +20,11 @@ import {
 import { ChainId, SubmittedToken, UserRewardWallet, LogoStatus } from './types';
 import { SUPPORTED_CHAINS, RAW_EVM_CHAINS, REWARD_RATE_USD, getChainInfo, normalizeChainKey, isEvmChain, validateTokenIdentifier } from './constants/chains';
 import { fetchERC20MetadataFromBlockchain, detectEVMChainForContractAddress } from './services/ethers';
-import { fetchDexScreenerData, fetchCoinGeckoSupplyData, discoverToken, lookupBlockchainForToken, uploadTokenToBackend } from './services/api';
+import { fetchDexScreenerData, fetchCoinGeckoSupplyData, discoverToken, lookupBlockchainForToken, uploadTokenToBackend, fetchNonEvmTokenMetadata } from './services/api';
 import { analyzeTokenSafety } from './services/security';
 import { verifyToken, VerificationReport } from './services/verificationEngine';
 import { verifyTokenLogo, LogoVerificationReport, downloadAndPrepareImageSource } from './services/logoVerificationEngine';
+import { resolveTokenLogoWithFallback } from './services/tokenLogoResolver';
 import { getChainLogoUrl } from './components/ChainSelectorModal';
 import {
   getSubmittedTokens,
@@ -821,33 +822,22 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [addressInput, selectedChain]);
 
-  // Handle Token Fetching with Network-Aware Discovery
+  // Handle Token Fetching with Network-Aware Discovery & Full Security Audit Pipeline
   const handleFetchToken = async (targetAddress?: string) => {
     const addr = (targetAddress || addressInput).trim();
     if (!addr) {
-      setErrorMessage('Please enter a valid token contract address or asset identifier');
-      return;
-    }
-
-    // Validate format before starting loading animation
-    const validation = validateTokenIdentifier(selectedChain, addr);
-    if (!validation.isValid) {
-      setErrorMessage('Unable to fetch details from this contract address. Please check the contract address and selected network, and try again.');
-      setIsLoading(false);
-      setIsVerifying(false);
-      setStatusMessage(null);
-      setFetchedToken(null);
+      setErrorMessage('Please enter a valid token contract address or asset identifier.');
       return;
     }
 
     setIsLoading(true);
     setIsVerifying(true);
     setVerificationStage(0);
-    setStatusMessage('✓ Network detected');
+    setStatusMessage('Detecting blockchain network...');
     setErrorMessage(null);
     setAutoSwitchNotice(null);
 
-    // Ensure all cards show skeleton state immediately
+    // Initial skeleton placeholder for smooth layout transition
     setFetchedToken({
       id: 'token-pending',
       address: addr,
@@ -896,30 +886,11 @@ export default function App() {
       verified: false,
     });
 
-    // Schedule progressive stage reveals
-    const timer1 = setTimeout(() => {
-      setVerificationStage(1);
-      setStatusMessage('✓ Token metadata loaded');
-    }, 600);
-
-    const timer2 = setTimeout(() => {
-      setVerificationStage(2);
-      setStatusMessage('✓ Contract & liquidity verified');
-    }, 1400);
-
-    const timer3 = setTimeout(() => {
-      setVerificationStage(3);
-      setStatusMessage('✓ Logo & branding optimized');
-    }, 2200);
-
-    const timer4 = setTimeout(() => {
-      setVerificationStage(4);
-      setStatusMessage('✓ Verification report complete');
-    }, 3000);
-
     try {
-      // 0. Perform frontend blockchain lookup to find exact network
-      const lookup = await lookupBlockchainForToken(addr, selectedChain);
+      // ----------------------------------------------------
+      // STAGE 0: Network Resolution & Format Validation
+      // ----------------------------------------------------
+      const lookup = await lookupBlockchainForToken(addr, selectedChain).catch(() => null);
       let activeChainKey = lookup?.chainId || normalizeChainKey(selectedChain);
       let blockchainType = lookup?.blockchainType || (isEvmChain(activeChainKey) ? 'evm' : 'unknown');
 
@@ -930,16 +901,35 @@ export default function App() {
         );
       }
 
+      const validation = validateTokenIdentifier(activeChainKey, addr, blockchainType);
+      if (!validation.isValid) {
+        throw new Error(validation.error || `Invalid contract address format for ${getChainInfo(activeChainKey).name}.`);
+      }
+
+      setVerificationStage(0);
+      setStatusMessage('✓ Network identified');
+
+      // ----------------------------------------------------
+      // STAGE 1: On-Chain Metadata & Indexer Resolution
+      // ----------------------------------------------------
+      setVerificationStage(1);
+      setStatusMessage('Reading on-chain smart contract...');
+
       // 1. Fetch smart contract metadata directly via Ethers.js for EVM chains
       let erc20Meta = isEvmChain(activeChainKey, blockchainType)
-        ? await fetchERC20MetadataFromBlockchain(addr, activeChainKey, apiKeys)
+        ? await fetchERC20MetadataFromBlockchain(addr, activeChainKey, apiKeys).catch(() => null)
         : null;
+
+      // 1b. If non-EVM chain (Solana, TON, TRON, XRPL), fetch token metadata via specialized providers
+      if (!erc20Meta && !isEvmChain(activeChainKey, blockchainType)) {
+        erc20Meta = await fetchNonEvmTokenMetadata(addr, activeChainKey, blockchainType).catch(() => null);
+      }
 
       // If erc20Meta wasn't found on selected EVM chain, check if contract exists on other major EVM chains
       if (!erc20Meta && isEvmChain(activeChainKey, blockchainType)) {
         const majorChainsToTest = ['1', '137', '8453', '42161', '56'].filter((c) => c !== activeChainKey);
         for (const testChain of majorChainsToTest) {
-          const testMeta = await fetchERC20MetadataFromBlockchain(addr, testChain, apiKeys);
+          const testMeta = await fetchERC20MetadataFromBlockchain(addr, testChain, apiKeys).catch(() => null);
           if (testMeta && (testMeta.name || testMeta.symbol)) {
             erc20Meta = testMeta;
             activeChainKey = testChain;
@@ -953,31 +943,30 @@ export default function App() {
       }
 
       // 2. Fetch DEX price, volume & liquidity via DexScreener API and CoinGecko API
-      const dexData = await fetchDexScreenerData(addr, activeChainKey);
-      const cgData = await fetchCoinGeckoSupplyData(addr, activeChainKey);
+      const [dexData, cgData] = await Promise.all([
+        fetchDexScreenerData(addr, activeChainKey).catch(() => null),
+        fetchCoinGeckoSupplyData(addr, activeChainKey).catch(() => null),
+      ]);
 
       // Verify whether ANY valid token metadata or smart contract was actually found
-      const hasValidName = backendData?.token?.name || cgData?.name || erc20Meta?.name;
-      const hasValidSymbol = backendData?.token?.symbol || cgData?.symbol || erc20Meta?.symbol;
+      const hasValidName = cgData?.name || erc20Meta?.name || dexData?.name;
+      const hasValidSymbol = cgData?.symbol || erc20Meta?.symbol || dexData?.symbol;
 
-      if (!hasValidName && !hasValidSymbol) {
-        clearTimeout(timer1);
-        clearTimeout(timer2);
-        clearTimeout(timer3);
-        clearTimeout(timer4);
-        setFetchedToken(null);
-        setErrorMessage('Unable to fetch details from this contract address. Please check the contract address and selected network, and try again.');
-        setIsVerifying(false);
-        setIsLoading(false);
-        setStatusMessage(null);
-        return;
+      if (!hasValidName && !hasValidSymbol && !erc20Meta) {
+        throw new Error(`No token contract or market pair found for "${addr}" on ${getChainInfo(activeChainKey).name}. Please verify the contract address and network.`);
       }
+
+      setStatusMessage('✓ Token metadata loaded');
+
+      // ----------------------------------------------------
+      // STAGE 2: Market & Liquidity Verification
+      // ----------------------------------------------------
+      setVerificationStage(2);
+      setStatusMessage('Analyzing liquidity & market pairs...');
 
       // Multi-Source Total Supply Resolution Algorithm
       let resolvedSupplyNum = 0;
-      if (backendData?.token?.totalSupply && parseFloat(backendData.token.totalSupply) > 0) {
-        resolvedSupplyNum = parseFloat(backendData.token.totalSupply);
-      } else if (cgData?.totalSupplyCG && cgData.totalSupplyCG > 0) {
+      if (cgData?.totalSupplyCG && cgData.totalSupplyCG > 0) {
         resolvedSupplyNum = cgData.totalSupplyCG;
       } else if (cgData?.maxSupplyCG && cgData.maxSupplyCG > 0) {
         resolvedSupplyNum = cgData.maxSupplyCG;
@@ -996,10 +985,25 @@ export default function App() {
       const chainMeta = getChainInfo(activeChainKey);
       const chainLogoUrl = getChainLogoUrl(activeChainKey);
 
-      const tokenName = backendData?.token?.name || cgData?.name || erc20Meta?.name || 'Unknown Token';
-      const tokenSymbol = backendData?.token?.symbol || cgData?.symbol || erc20Meta?.symbol || 'TOK';
-      const rawLogoUrl = backendData?.token?.logoUrl || erc20Meta?.logoUrl || cgData?.logoUrl || (dexData as any)?.logoUrl || '';
-      const preparedLogoUrl = rawLogoUrl ? await downloadAndPrepareImageSource(rawLogoUrl) : '';
+      const tokenName = erc20Meta?.name || cgData?.name || (dexData as any)?.name || 'Unknown Token';
+      const tokenSymbol = erc20Meta?.symbol || cgData?.symbol || (dexData as any)?.symbol || 'TOK';
+      const rawLogoUrl = erc20Meta?.logoUrl || cgData?.logoUrl || (dexData as any)?.logoUrl || '';
+      
+      // Multi-provider logo resolver with deterministic priority fallback
+      let resolvedLogo = { logoUrl: '', logoSource: 'fallback' };
+      try {
+        resolvedLogo = await resolveTokenLogoWithFallback(
+          addr,
+          activeChainKey,
+          rawLogoUrl,
+          blockchainType,
+          tokenSymbol
+        );
+      } catch {
+        resolvedLogo = { logoUrl: rawLogoUrl, logoSource: 'fallback' };
+      }
+
+      const preparedLogoUrl = resolvedLogo.logoUrl ? await downloadAndPrepareImageSource(resolvedLogo.logoUrl).catch(() => resolvedLogo.logoUrl) : '';
 
       erc20Meta = {
         address: addr,
@@ -1010,24 +1014,25 @@ export default function App() {
         chainLogoUrl: chainLogoUrl,
         name: tokenName,
         symbol: tokenSymbol,
-        decimals: backendData?.token?.decimals || erc20Meta?.decimals || 18,
+        decimals: erc20Meta?.decimals || 18,
         totalSupply: resolvedSupplyNum.toString(),
         rawTotalSupply: String(resolvedSupplyNum),
         logoUrl: preparedLogoUrl,
-        ownerAddress: backendData?.token?.ownerAddress || erc20Meta?.ownerAddress,
-        isRenounced: backendData?.token?.isRenounced ?? erc20Meta?.isRenounced ?? true,
+        logoSource: resolvedLogo.logoSource,
+        ownerAddress: erc20Meta?.ownerAddress,
+        isRenounced: erc20Meta?.isRenounced ?? true,
         blockchainType,
         tokenStandard: lookup?.tokenStandard || (blockchainType === 'xrpl' ? 'issued_asset' : blockchainType === 'ton' ? 'Jetton' : blockchainType === 'solana' ? 'SPL' : 'ERC-20'),
         asset_identifier_type: blockchainType === 'xrpl' ? 'issued_asset' : 'contract_address',
       } as any;
 
-      const priceUsd = backendData?.token?.priceUsd ?? dexData?.priceUsd ?? cgData?.priceUsd ?? 0;
-      const priceNative = backendData?.token?.priceNative ?? dexData?.priceNative ?? 0;
-      const priceChange24h = backendData?.token?.priceChange24h ?? dexData?.priceChange24h ?? cgData?.priceChange24h ?? 0;
-      const volume24h = backendData?.token?.volume24hUsd ?? dexData?.volume24h ?? 0;
-      const liquidityUsd = backendData?.token?.liquidityUsd ?? dexData?.liquidityUsd ?? 0;
-      const marketCapUsd = backendData?.token?.marketCapUsd ?? dexData?.marketCapUsd ?? cgData?.marketCapUsd ?? (priceUsd > 0 ? Math.round(priceUsd * resolvedSupplyNum) : 0);
-      const fdvUsd = backendData?.token?.fdvUsd ?? dexData?.fdvUsd ?? (priceUsd > 0 ? Math.round(priceUsd * resolvedSupplyNum) : 0);
+      const priceUsd = dexData?.priceUsd ?? cgData?.priceUsd ?? 0;
+      const priceNative = dexData?.priceNative ?? 0;
+      const priceChange24h = dexData?.priceChange24h ?? cgData?.priceChange24h ?? 0;
+      const volume24h = dexData?.volume24h ?? 0;
+      const liquidityUsd = dexData?.liquidityUsd ?? 0;
+      const marketCapUsd = dexData?.marketCapUsd ?? cgData?.marketCapUsd ?? (priceUsd > 0 ? Math.round(priceUsd * resolvedSupplyNum) : 0);
+      const fdvUsd = dexData?.fdvUsd ?? (priceUsd > 0 ? Math.round(priceUsd * resolvedSupplyNum) : 0);
 
       const marketData = {
         priceUsd,
@@ -1037,19 +1042,33 @@ export default function App() {
         liquidityUsd,
         marketCapUsd,
         fdvUsd,
-        pairAddress: backendData?.token?.pairAddress || dexData?.pairAddress,
-        dexName: backendData?.token?.dexName || dexData?.dexName || 'DEX',
+        pairAddress: dexData?.pairAddress,
+        dexName: dexData?.dexName || 'DEX',
         pairUrl: dexData?.pairUrl,
         circulatingSupply: cgData?.circulatingSupply || resolvedSupplyNum,
       };
 
-      // 3. Security & honeypot analysis
-      const safety = await analyzeTokenSafety(erc20Meta, marketData, activeChainKey);
+      setStatusMessage('✓ Contract & liquidity verified');
 
-      // 4. Run Multi-Provider Aggregation Engine
-      const verificationReport = await verifyToken(erc20Meta.address, activeChainKey, erc20Meta.logoUrl, blockchainType);
+      // ----------------------------------------------------
+      // STAGE 3: Multi-Provider Security & Honeypot Scan
+      // ----------------------------------------------------
+      setVerificationStage(3);
+      setStatusMessage('Running security & honeypot scan...');
 
-      // 5. Construct token object
+      const [safety, verificationReport] = await Promise.all([
+        analyzeTokenSafety(erc20Meta, marketData, activeChainKey),
+        verifyToken(erc20Meta.address, activeChainKey, erc20Meta.logoUrl, blockchainType),
+      ]);
+
+      setStatusMessage('✓ Security scan complete');
+
+      // ----------------------------------------------------
+      // STAGE 4: Finalize Verification & Assemble Result
+      // ----------------------------------------------------
+      setVerificationStage(4);
+      setStatusMessage('✓ Verification report complete');
+
       const tokenObj: SubmittedToken = {
         id: `token-${Date.now()}`,
         address: erc20Meta.address,
@@ -1066,76 +1085,57 @@ export default function App() {
         verified: verificationReport.status === 'APPROVED',
       };
 
-      // Wait for stage 4 completion before finalizing
-      setTimeout(async () => {
-        let isSavedInCloudflare = false;
-        let isSavedInSupabase = false;
+      // Check duplicate status without blocking
+      let isSavedInCloudflare = false;
+      let isSavedInSupabase = false;
 
-        // 1. Primary Global Registry Lookup: Query Cloudflare Worker Token API
+      try {
+        const cfCheck = await getTokenByAddressFromWorker(activeChainKey, erc20Meta.address).catch(() => ({ exists: false }));
+        if (cfCheck.exists) {
+          isSavedInCloudflare = true;
+        }
+      } catch (cfErr) {
+        console.warn('[Verification] Cloudflare Worker duplicate check note:', cfErr);
+      }
+
+      if (currentUser?.id) {
         try {
-          const cfCheck = await getTokenByAddressFromWorker(activeChainKey, erc20Meta.address);
-          if (cfCheck.exists) {
-            isSavedInCloudflare = true;
-            console.log('[Verification] Token already exists in Cloudflare Worker global registry:', cfCheck.token);
-          }
-        } catch (cfErr) {
-          console.warn('[Verification] Cloudflare Worker token check warning:', cfErr);
-        }
-
-        // 2. Query Supabase Database (User portfolio / database check)
-        if (currentUser?.id) {
-          try {
-            isSavedInSupabase = await checkTokenAlreadySaved(
-              currentUser.id,
-              activeChainKey,
-              erc20Meta.address
-            );
-          } catch (err) {
-            console.warn('[Verification] Supabase check error:', err);
-          }
-        } else {
-          const dupCheck = await verifyTokenContractUnique(
-            erc20Meta.address,
+          isSavedInSupabase = await checkTokenAlreadySaved(
+            currentUser.id,
             activeChainKey,
-            undefined,
-            (erc20Meta as any).blockchainType
-          );
-          isSavedInSupabase = !dupCheck.isUnique;
+            erc20Meta.address
+          ).catch(() => false);
+        } catch (err) {
+          console.warn('[Verification] Supabase check note:', err);
         }
+      }
 
-        const isEvmToken = isEvmChain(activeChainKey, (erc20Meta as any).blockchainType);
-        const cleanAddr = isEvmToken ? erc20Meta.address.toLowerCase().trim() : erc20Meta.address.trim();
-        const activeChainClean = activeChainKey.toLowerCase().trim();
-        const existsLocally = tokens.some((t) => {
-          const tIsEvm = isEvmChain(t.chainId, (t.metadata as any)?.blockchainType);
-          const tAddr = tIsEvm ? t.address.toLowerCase().trim() : t.address.trim();
-          const tChain = (t.chainId || '').toLowerCase().trim();
-          return tAddr === cleanAddr && tChain === activeChainClean;
-        });
-        const alreadySaved = isSavedInCloudflare || existsLocally || isSavedInSupabase;
+      const isEvmToken = isEvmChain(activeChainKey, (erc20Meta as any).blockchainType);
+      const cleanAddr = isEvmToken ? erc20Meta.address.toLowerCase().trim() : erc20Meta.address.trim();
+      const activeChainClean = activeChainKey.toLowerCase().trim();
+      const existsLocally = tokens.some((t) => {
+        const tIsEvm = isEvmChain(t.chainId, (t.metadata as any)?.blockchainType);
+        const tAddr = tIsEvm ? t.address.toLowerCase().trim() : t.address.trim();
+        const tChain = (t.chainId || '').toLowerCase().trim();
+        return tAddr === cleanAddr && tChain === activeChainClean;
+      });
+      const alreadySaved = isSavedInCloudflare || existsLocally || isSavedInSupabase;
 
-        setIsTokenSavedInAccount(alreadySaved);
+      setIsTokenSavedInAccount(alreadySaved);
+      if (alreadySaved) {
+        setErrorMessage('This token already exists in TokenCare.');
+      } else {
+        setErrorMessage(null);
+      }
 
-        if (alreadySaved) {
-          setErrorMessage('This token already exists in TokenCare.');
-        } else {
-          setErrorMessage(null);
-        }
-
-        setFetchedToken(tokenObj);
-        setCurrentStep(3); // Advance to Review Details
-        setIsVerifying(false);
-        setIsLoading(false);
-        setStatusMessage(null);
-      }, 3100);
+      // Display the fully fetched token details immediately
+      setFetchedToken(tokenObj);
+      setCurrentStep(3); // Advance to Review Details
     } catch (err: any) {
       console.error('[App] Error fetching token:', err);
       setFetchedToken(null);
-      setErrorMessage('Could not complete verification. Check your contract address.');
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
-      clearTimeout(timer4);
+      setErrorMessage(err?.message || 'Could not complete token verification. Please check your contract address and selected network.');
+    } finally {
       setIsVerifying(false);
       setIsLoading(false);
       setStatusMessage(null);

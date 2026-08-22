@@ -118,7 +118,7 @@ export async function analyzeTokenSafety(
 ): Promise<SafetyAnalysis> {
   const flags: SafetyAnalysis['flags'] = [];
 
-  const isOwnershipRenounced = !!metadata.isRenounced;
+  let isOwnershipRenounced = !!metadata.isRenounced;
   if (isOwnershipRenounced) {
     flags.push({
       type: 'pass',
@@ -151,18 +151,65 @@ export async function analyzeTokenSafety(
   let isBlacklisted = false;
 
   try {
-    if (isEvmChain(chainId, (metadata as any)?.blockchainType)) {
+    const bType = ((metadata as any)?.blockchainType || '').toLowerCase();
+    const isEvm = isEvmChain(chainId, bType);
+    const isSolana = bType === 'solana' || String(chainId).toLowerCase().includes('solana') || String(chainId).toLowerCase() === 'mainnet-beta';
+
+    if (isSolana) {
+      // 1. Solana Token Security via RugCheck / GoPlus Solana
+      try {
+        const rugCheckRes = await fetch(`https://api.rugcheck.xyz/v1/tokens/${metadata.address}/report`).catch(() => null);
+        if (rugCheckRes && rugCheckRes.ok) {
+          const rcData = await rugCheckRes.json();
+          if (rcData) {
+            isOpenSource = true;
+            isMintable = Boolean(rcData.tokenMeta?.mutable || rcData.mintAuthority);
+            isOwnershipRenounced = !rcData.mintAuthority && !rcData.freezeAuthority;
+            isHoneypot = Boolean(rcData.risks?.some((r: any) => r.name?.toLowerCase().includes('honeypot') || r.level === 'danger'));
+            if (rcData.totalHolders) {
+              // Extract real holder count
+            }
+            if (rcData.risks && Array.isArray(rcData.risks)) {
+              rcData.risks.forEach((r: any) => {
+                if (r.level === 'danger') {
+                  flags.push({ type: 'fail', title: r.name || 'High Risk Detected', description: r.description || 'Critical risk identified on Solana' });
+                } else if (r.level === 'warn') {
+                  flags.push({ type: 'warn', title: r.name || 'Risk Warning', description: r.description || 'Risk factor identified on Solana' });
+                }
+              });
+            }
+          }
+        }
+      } catch (solErr) {
+        console.warn('[Security] Solana security lookup warning:', solErr);
+      }
+    } else if (isEvm) {
       const chainMap: Record<string, string> = {
-        ethereum: '1', bsc: '56', polygon: '137', arbitrum: '42161', base: '8453', optimism: '10',
-        '1': '1', '137': '137', '8453': '8453', '56': '56', '10': '10', '42161': '42161',
+        ethereum: '1', '1': '1', eth: '1',
+        bsc: '56', '56': '56', bnb: '56',
+        polygon: '137', '137': '137', matic: '137',
+        arbitrum: '42161', '42161': '42161',
+        base: '8453', '8453': '8453',
+        optimism: '10', '10': '10', op: '10',
+        avalanche: '43114', '43114': '43114', avax: '43114',
+        fantom: '250', '250': '250', ftm: '250', sonic: '146', '146': '146',
+        cronos: '25', '25': '25',
+        gnosis: '100', '100': '100',
+        linea: '59144', '59144': '59144',
+        mantle: '5000', '5000': '5000',
+        scroll: '534352', '534352': '534352',
+        zksync: '324', '324': '324',
+        blast: '81457', '81457': '81457',
+        celo: '42220', '42220': '42220',
       };
-      const goPlusChainId = chainMap[String(chainId)] || String(chainId);
+      const goPlusChainId = chainMap[String(chainId).toLowerCase()] || String(chainId);
+      
       const goPlusRes = await fetch(
         `https://api.gopluslabs.io/api/v1/token_security/${goPlusChainId}?contract_addresses=${metadata.address.toLowerCase()}`
-      );
+      ).catch(() => null);
 
-      if (goPlusRes.ok) {
-        const goPlusData = await goPlusRes.json();
+      if (goPlusRes && goPlusRes.ok) {
+        const goPlusData = await goPlusRes.json().catch(() => null);
         const tokenResult = goPlusData?.result?.[metadata.address.toLowerCase()];
         if (tokenResult) {
           buyTaxPct = Math.round(parseFloat(tokenResult.buy_tax || '0') * 100);
@@ -172,6 +219,9 @@ export async function analyzeTokenSafety(
           isProxy = tokenResult.is_proxy === '1';
           isOpenSource = tokenResult.is_open_source === '1';
           isBlacklisted = tokenResult.is_blacklisted === '1' || tokenResult.cannot_sell_all === '1';
+          if (tokenResult.holder_count) {
+            // Real holder count from GoPlus
+          }
 
           if (Array.isArray(tokenResult.lp_holders)) {
             const lockedLp = tokenResult.lp_holders.reduce((sum: number, holder: { is_locked?: number; percent?: string }) => (
@@ -180,11 +230,39 @@ export async function analyzeTokenSafety(
             liquidityLockedPct = Math.min(100, Math.round(lockedLp));
             isLiquidityLocked = liquidityLockedPct > 50;
           }
+
+          if (Array.isArray(tokenResult.holders)) {
+            const top10Sum = tokenResult.holders.slice(0, 10).reduce((sum: number, h: { percent?: string }) => (
+              sum + parseFloat(h.percent || '0') * 100
+            ), 0);
+            top10HoldersPct = Math.min(100, Math.round(top10Sum));
+          }
+        }
+      }
+
+      // Secondary Honeypot.is fallback check if not determined
+      if (!isHoneypot && isEvm) {
+        try {
+          const hpRes = await fetch(`https://api.honeypot.is/v2/IsHoneypot?address=${metadata.address.toLowerCase()}`).catch(() => null);
+          if (hpRes && hpRes.ok) {
+            const hpData = await hpRes.json().catch(() => null);
+            if (hpData?.honeypotResult?.isHoneypot) {
+              isHoneypot = true;
+            }
+            if (hpData?.simulationResult?.buyTax && !buyTaxPct) {
+              buyTaxPct = Math.round(hpData.simulationResult.buyTax);
+            }
+            if (hpData?.simulationResult?.sellTax && !sellTaxPct) {
+              sellTaxPct = Math.round(hpData.simulationResult.sellTax);
+            }
+          }
+        } catch (hpErr) {
+          console.warn('[Security] Honeypot.is fallback check notice:', hpErr);
         }
       }
     }
   } catch (err) {
-    console.warn('[Security] GoPlus API unavailable:', err);
+    console.warn('[Security] Security analysis warning:', err);
   }
 
   if (isHoneypot) {

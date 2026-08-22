@@ -29,6 +29,7 @@ import {
   useAnimatedNumber,
 } from '../utils/animationHelpers';
 import { safeLocaleString, safeFractionDigits, formatSmartCurrency, formatSmartNumber } from '../utils/numberFormatting';
+import { MultiProviderTokenLogo } from './MultiProviderTokenLogo';
 
 interface TokenInformationCardProps {
   metadata: ERC20Metadata;
@@ -225,25 +226,20 @@ export const TokenInformationCard: React.FC<TokenInformationCardProps> = ({
                     onClick={() => fileInputRef.current?.click()}
                     title="Click to upload custom token logo"
                   >
-                    {metadata.logoUrl ? (
-                      <div className="relative w-7 h-7 rounded-md overflow-hidden shadow-sm">
-                        <img
-                          src={metadata.logoUrl}
-                          alt={metadata.symbol}
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                          <Camera className="w-3 h-3 text-emerald-400" />
-                        </div>
+                    <div className="relative w-7 h-7 rounded-md overflow-hidden shadow-sm">
+                      <MultiProviderTokenLogo
+                        src={metadata.logoUrl}
+                        chain={String(selectedChain)}
+                        address={metadata.address}
+                        symbol={metadata.symbol}
+                        alt={metadata.name || metadata.symbol}
+                        className="w-full h-full object-cover rounded-md"
+                        onLogoResolved={(newUrl) => onUpdateLogo?.(newUrl)}
+                      />
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                        <Camera className="w-3 h-3 text-emerald-400" />
                       </div>
-                    ) : (
-                      <div className="w-7 h-7 rounded-md bg-gradient-to-tr from-purple-600/30 via-emerald-600/30 to-teal-500/20 border border-purple-500/40 flex flex-col items-center justify-center font-bold text-[9px] text-purple-300 shadow-sm hover:border-emerald-400/80 transition-colors group">
-                        <span>{metadata.symbol ? metadata.symbol.slice(0, 3) : 'TOK'}</span>
-                        <div className="absolute inset-0 bg-black/60 rounded-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <Upload className="w-3 h-3 text-emerald-400" />
-                        </div>
-                      </div>
-                    )}
+                    </div>
 
                     {/* Upload Badge overlay */}
                     <div className="absolute -bottom-1 -right-1 bg-emerald-500 text-black p-[1px] rounded-full border border-zinc-900 shadow">

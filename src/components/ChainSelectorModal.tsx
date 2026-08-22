@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, X, Check, Lock, Globe2 } from 'lucide-react';
 import { ChainId } from '../types';
-import { getTokenChainsForSelector } from '../constants/tokenChains';
-import { RAW_EVM_CHAINS, normalizeChainKey } from '../constants/chains';
+import { getTokenChainsForSelector, getTokenChain } from '../constants/tokenChains';
+import { RAW_EVM_CHAINS, normalizeChainKey, getChainInfo } from '../constants/chains';
 import { getTrustWalletChainLogoUrl } from '../constants/trustWalletChainLogos';
 import type { DetectedChain } from '../services/chainDetection';
 
@@ -21,7 +21,7 @@ export const EVM_CHAIN_LOGOS: Record<string, string> = Object.fromEntries(
     .filter((entry): entry is [string, string] => Boolean(entry[1]))
 );
 
-export function getChainLogoUrl(chain: {
+export function getChainLogoUrl(chain: string | {
   id?: string | number;
   chainId?: number;
   name?: string;
@@ -29,6 +29,18 @@ export function getChainLogoUrl(chain: {
   logoUrl?: string;
   dexScreenerChain?: string;
 }): string | undefined {
+  if (typeof chain === 'string') {
+    const tokenChain = getTokenChain(chain);
+    const chainInfo = getChainInfo(chain);
+    return getTrustWalletChainLogoUrl({
+      id: chain,
+      chainId: (chainInfo as any)?.chainId || tokenChain?.chainId,
+      name: chainInfo?.name || tokenChain?.name,
+      trustWalletKey: tokenChain?.trustWalletKey,
+      dexScreenerChain: (chainInfo as any)?.dexScreenerChain || tokenChain?.dexScreenerChain,
+      logoUrl: tokenChain?.logoUrl,
+    });
+  }
   return getTrustWalletChainLogoUrl(chain);
 }
 
