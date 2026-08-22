@@ -40,7 +40,7 @@ export const MultiProviderTokenLogo: React.FC<MultiProviderTokenLogoProps> = ({
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('tokencare:logo-rendered', {
-          detail: { url, address, symbol },
+          detail: { url: src || url, renderedUrl: url, address, symbol },
         })
       );
     }
