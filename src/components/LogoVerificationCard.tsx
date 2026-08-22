@@ -10,7 +10,6 @@ import {
   Layers,
   Loader2,
   Maximize2,
-  Scissors,
   ShieldCheck,
   Star,
   Target,
@@ -18,7 +17,6 @@ import {
   XCircle,
 } from 'lucide-react';
 import { LogoVerificationReport, LogoQualityCheck } from '../services/logoVerificationEngine';
-import { LogoCropModal } from './LogoCropModal';
 import { LogoStatus } from '../types';
 
 interface LogoVerificationCardProps {
@@ -33,6 +31,16 @@ interface LogoVerificationCardProps {
 
 const step = (ok: boolean, label: string, note?: string) => ({ ok, label, note });
 
+const Metric: React.FC<{ label: string; value: string; good: boolean }> = ({ label, value, good }) => (
+  <div className="bg-[#0B0E17] border border-zinc-800/70 rounded p-1.5 min-w-0">
+    <div className="text-zinc-500 text-[7px] uppercase tracking-wide">{label}</div>
+    <div className={`mt-0.5 text-[8.5px] font-semibold truncate flex items-center gap-1 ${good ? 'text-zinc-200' : 'text-amber-300'}`}>
+      {good ? <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-2.5 h-2.5 text-amber-400 shrink-0" />}
+      <span>{value}</span>
+    </div>
+  </div>
+);
+
 export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
   report,
   logoStatus = 'checking',
@@ -45,8 +53,6 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
   const [showDetails, setShowDetails] = useState(false);
   const [urlInput, setUrlInput] = useState('');
   const [showUrlForm, setShowUrlForm] = useState(false);
-  const [showCropModal, setShowCropModal] = useState(false);
-  const [fixSuccessMessage, setFixSuccessMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const logoUrl = report?.logoUrl || '';
@@ -56,15 +62,20 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
   const pipeline = report?.pipeline;
   const checksList: LogoQualityCheck[] = report ? Object.values(report.checks) : [];
 
+  // A successful browser render is enough to mark the logo usable. Pixel/CORS
+  // analysis is an additional quality signal and must never make a renderable
+  // remote logo unusable merely because the browser cannot read its pixels.
+  const handleLogoLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = event.currentTarget;
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) onLogoStatusChange?.('valid');
+  };
+
+  const handleLogoError = () => onLogoStatusChange?.('invalid');
+
   useEffect(() => {
-    if (!logoUrl) return;
-    if (logoStatus === 'checking') return;
-    // The verification engine is the source of truth. The browser event below is
-    // only used as a final renderability check and never upgrades a failed report.
-    if (report?.pipeline.renderingVerified && report.isValid && onLogoStatusChange) {
-      onLogoStatusChange('valid');
-    }
-  }, [logoUrl, logoStatus, report, onLogoStatusChange]);
+    if (!logoUrl || !onLogoStatusChange) return;
+    onLogoStatusChange('checking');
+  }, [logoUrl, onLogoStatusChange]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -75,7 +86,6 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
       if (result) {
         onUpdateLogo(result);
         onLogoStatusChange?.('checking');
-        setFixSuccessMessage(null);
       }
     };
     reader.readAsDataURL(file);
@@ -86,31 +96,26 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
     e.preventDefault();
     const url = urlInput.trim();
     if (!url) return;
+    // Keep the exact URL. Do not download, proxy, convert, or replace it with
+    // a data URL when the token is saved.
     onUpdateLogo(url);
     onLogoStatusChange?.('checking');
     setUrlInput('');
     setShowUrlForm(false);
-    setFixSuccessMessage(null);
   };
-
-  const handleLogoLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = event.currentTarget;
-    if (img.naturalWidth > 0 && img.naturalHeight > 0) onLogoStatusChange?.('valid');
-    else onLogoStatusChange?.('invalid');
-  };
-
-  const handleLogoError = () => onLogoStatusChange?.('invalid');
 
   const stars = Math.round(score / 20);
   const pipelineSteps = pipeline
     ? [
-        step(pipeline.boundariesDetected, 'Bounds', pipeline.boundariesDetected ? 'Measured from pixels' : 'Unavailable'),
-        step(pipeline.autoCentered, 'Centered', pipeline.autoCentered ? 'Measured' : 'Needs adjustment'),
+        step(pipeline.boundariesDetected, 'Bounds', pipeline.boundariesDetected ? 'Measured from pixels' : 'Pixel access unavailable'),
+        step(pipeline.autoCentered, 'Centered', pipeline.autoCentered ? 'Measured' : 'Not confirmed'),
         step(pipeline.resizedToStandard, '512×512', pipeline.resizedToStandard ? 'Exact source size' : 'Source differs'),
-        step(pipeline.compressedOptimized, 'Optimized', pipeline.compressedOptimized ? `Measured -${pipeline.compressionRatioPct}%` : 'No measured compression'),
+        step(pipeline.compressedOptimized, 'Optimized', pipeline.compressedOptimized ? `Measured -${pipeline.compressionRatioPct}%` : 'No measured optimization'),
         step(pipeline.renderingVerified, 'Rendered', pipeline.renderingVerified ? 'Browser decoded image' : 'Render failed'),
       ]
     : [];
+
+  const renderVerified = logoStatus === 'valid';
 
   return (
     <div className="bg-[#0B0E17]/90 border border-zinc-800/90 rounded-lg p-2 space-y-2 shadow-md backdrop-blur-sm text-white">
@@ -130,30 +135,29 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
               Logo Quality Engine
               {hasLogo && (
                 <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono font-bold border flex items-center gap-1 ${
-                  logoStatus === 'valid' && report?.isValid
+                  renderVerified
                     ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
                     : logoStatus === 'checking'
                     ? 'bg-amber-500/10 border-amber-500/40 text-amber-400'
                     : 'bg-rose-500/10 border-rose-500/40 text-rose-400'
                 }`}>
                   {logoStatus === 'checking' && <><Loader2 className="w-2.5 h-2.5 animate-spin" /><span>CHECKING</span></>}
-                  {logoStatus === 'valid' && report?.isValid && <><Check className="w-2.5 h-2.5" /><span>VERIFIED</span></>}
-                  {(logoStatus === 'invalid' || (logoStatus === 'valid' && !report?.isValid)) && <><XCircle className="w-2.5 h-2.5" /><span>QUALITY ISSUE</span></>}
+                  {renderVerified && <><Check className="w-2.5 h-2.5" /><span>RENDERED</span></>}
+                  {logoStatus === 'invalid' && <><XCircle className="w-2.5 h-2.5" /><span>NOT RENDERABLE</span></>}
                 </span>
               )}
             </h3>
             <span className="text-[9px] text-zinc-400 block truncate">
-              {hasLogo ? (report?.failureReason || 'Measured from the actual image pixels') : 'Upload token logo for automated analysis'}
+              {renderVerified
+                ? 'Logo rendered successfully. Remote pixel analysis is optional.'
+                : hasLogo
+                ? (report?.failureReason || 'Checking the exact logo URL…')
+                : 'No token logo URL was supplied'}
             </span>
           </div>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          {hasLogo && score < 90 && (
-            <button type="button" onClick={() => setShowCropModal(true)} className="px-2 py-0.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold rounded text-[9px] flex items-center gap-1">
-              <Scissors className="w-2.5 h-2.5" />Fix
-            </button>
-          )}
           <button type="button" onClick={() => fileInputRef.current?.click()} className="px-2 py-0.5 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-semibold rounded text-[9px] flex items-center gap-1">
             <Upload className="w-2.5 h-2.5" />{hasLogo ? 'Change' : 'Upload'}
           </button>
@@ -163,8 +167,9 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
         </div>
       </div>
 
+      {/* Browser render check only. The source URL is never replaced by the result. */}
       {hasLogo && (
-        <div className="hidden">
+        <div className="absolute w-px h-px overflow-hidden opacity-0 pointer-events-none" aria-hidden="true">
           <img src={logoUrl} alt="Token logo render validation" onLoad={handleLogoLoad} onError={handleLogoError} />
         </div>
       )}
@@ -176,32 +181,23 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
         </form>
       )}
 
-      {fixSuccessMessage && (
-        <div className="bg-teal-950/50 border border-teal-500/40 rounded p-1.5 text-[9px] text-teal-200">
-          <span className="font-bold">Optimization: </span>{fixSuccessMessage}
-        </div>
-      )}
-
       {stage < 3 || isSkeleton || isVerifying ? (
         <div className="bg-[#06080F] border border-zinc-800/80 p-3 rounded-md text-center text-[9px] text-zinc-400">
           <Loader2 className="w-4 h-4 mx-auto mb-1 animate-spin text-emerald-400" />
-          Measuring the actual logo image…
+          Checking the token logo…
         </div>
       ) : !hasLogo || !report ? (
         <div className="bg-[#06080F] border border-zinc-800/80 rounded-md p-3 text-center space-y-1.5">
           <ImageIcon className="w-5 h-5 mx-auto text-emerald-400" />
-          <div className="font-bold text-white text-[10px] uppercase">Upload Token Project Logo</div>
-          <p className="text-[9px] text-zinc-400">The engine will inspect the actual image rather than assuming quality.</p>
-          <button type="button" onClick={() => fileInputRef.current?.click()} className="px-2.5 py-1 bg-emerald-500 text-black font-bold rounded text-[9.5px] inline-flex items-center gap-1">
-            <Upload className="w-3 h-3" />Select Logo File
-          </button>
+          <div className="font-bold text-white text-[10px] uppercase">No Token Logo</div>
+          <p className="text-[9px] text-zinc-400">The token can still be saved without a logo.</p>
         </div>
       ) : (
         <div className="space-y-1.5">
           <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md space-y-1">
             <div className="flex items-center justify-between border-b border-zinc-800/60 pb-1">
               <span className="text-[9px] font-bold text-white flex items-center gap-1"><Layers className="w-3 h-3 text-emerald-400" />Measured Pipeline</span>
-              <span className="text-[8px] font-mono text-zinc-400">{pipeline?.outputDimensions || 'Unknown'}</span>
+              <span className="text-[8px] font-mono text-zinc-400">{pipeline?.outputDimensions || `${report.dimensions.width} × ${report.dimensions.height}`}</span>
             </div>
             <div className="grid grid-cols-3 sm:grid-cols-5 gap-1 text-[8px]">
               {pipelineSteps.map((item) => (
@@ -211,10 +207,14 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
                 </div>
               ))}
             </div>
-            <div className="bg-[#0B0E17] border border-zinc-800 p-1 rounded flex items-center justify-between text-[8.5px] gap-1">
-              <div className="flex items-center gap-1"><span className="text-zinc-400">{pipeline?.originalSizeFormatted || 'Unknown'}</span><span className="text-zinc-600">→</span><span className="font-mono font-bold text-emerald-400">{pipeline?.optimizedSizeBytes ? pipeline.optimizedSizeFormatted : 'Not optimized'}</span></div>
-              <span className="text-zinc-400 font-mono">{pipeline?.compressionRatioPct ? `${pipeline.compressionRatioPct > 0 ? '-' : '+'}${Math.abs(pipeline.compressionRatioPct)}%` : 'No measured reduction'}</span>
-            </div>
+            {pipeline && pipeline.originalSizeBytes > 0 && pipeline.optimizedSizeBytes > 0 ? (
+              <div className="bg-[#0B0E17] border border-zinc-800 p-1 rounded flex items-center justify-between text-[8.5px] gap-1">
+                <div className="flex items-center gap-1"><span className="text-zinc-400">{pipeline.originalSizeFormatted}</span><span className="text-zinc-600">→</span><span className="font-mono font-bold text-emerald-400">{pipeline.optimizedSizeFormatted}</span></div>
+                <span className="text-zinc-400 font-mono">{pipeline.compressionRatioPct}% measured</span>
+              </div>
+            ) : (
+              <div className="text-[8px] text-zinc-500 px-1">Remote source size was not downloaded or converted; original URL is preserved.</div>
+            )}
           </div>
 
           <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md space-y-1">
@@ -225,6 +225,7 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
             <div className="w-full bg-zinc-800/90 h-1.5 rounded-full overflow-hidden border border-zinc-700/50">
               <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500" style={{ width: `${Math.max(0, Math.min(100, score))}%` }} />
             </div>
+            {renderVerified && <div className="text-[8px] text-emerald-300">✓ Render check passed. No logo fix is required for this URL.</div>}
           </div>
 
           {geometry && (
@@ -246,33 +247,23 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
             {report.summaryBadges.map((badge) => <div key={badge} className="bg-[#06080F] border border-zinc-800/60 px-1.5 py-0.5 rounded flex items-center gap-1"><CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 shrink-0" /><span className="text-zinc-300 truncate">{badge}</span></div>)}
           </div>
 
-          {report.failureReason && (
-            <div className="bg-amber-950/40 border border-amber-500/40 rounded-md p-1.5 flex items-center gap-1 text-[9px]">
-              <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
-              <span className="text-amber-200">{report.failureReason}</span>
+          <button type="button" onClick={() => setShowDetails((v) => !v)} className="w-full bg-[#06080F] border border-zinc-800/70 rounded p-1.5 flex items-center justify-between text-[8.5px] text-zinc-300">
+            <span className="flex items-center gap-1"><ShieldCheck className="w-3 h-3 text-emerald-400" />View Full {checksList.length}-Point Audit</span>
+            {showDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+
+          {showDetails && (
+            <div className="space-y-1">
+              {checksList.map((check) => (
+                <div key={check.id} className="bg-[#06080F] border border-zinc-800/70 rounded p-1.5 flex items-start justify-between gap-2 text-[8px]">
+                  <div className="min-w-0"><div className="font-semibold text-zinc-200">{check.name}</div><div className="text-zinc-500 mt-0.5">{check.details}</div></div>
+                  <span className={`font-mono shrink-0 ${check.status === 'passed' ? 'text-emerald-400' : check.status === 'warning' ? 'text-amber-400' : 'text-rose-400'}`}>{check.score}/{check.maxScore}</span>
+                </div>
+              ))}
             </div>
           )}
-
-          <button type="button" onClick={() => setShowDetails((v) => !v)} className="text-[8.5px] text-zinc-400 hover:text-white flex items-center gap-1 pt-0.5">
-            <span>{showDetails ? 'Hide 11-Point Audit' : 'View Full 11-Point Audit'}</span>{showDetails ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
-          </button>
-          {showDetails && <div className="space-y-0.5 text-[8.5px] max-h-[160px] overflow-y-auto pr-0.5">
-            {checksList.map((check) => <div key={check.id} className="bg-[#06080F] border border-zinc-800/60 p-1 rounded flex items-center justify-between gap-1">
-              <div className="flex items-center gap-1 min-w-0">{check.status === 'passed' ? <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 shrink-0" /> : check.status === 'warning' ? <AlertTriangle className="w-2.5 h-2.5 text-amber-400 shrink-0" /> : <XCircle className="w-2.5 h-2.5 text-rose-400 shrink-0" />}<span className="text-zinc-300 truncate">{check.name}</span></div>
-              <span className="font-mono font-bold text-zinc-300 shrink-0">{check.score}/{check.maxScore}</span>
-            </div>)}
-          </div>}
         </div>
       )}
-
-      {report?.logoUrl && <LogoCropModal isOpen={showCropModal} onClose={() => setShowCropModal(false)} logoUrl={report.logoUrl} onApplyCrop={(croppedUrl, successMsg) => { onUpdateLogo(croppedUrl); setFixSuccessMessage(successMsg); }} />}
     </div>
   );
 };
-
-const Metric: React.FC<{ label: string; value: string; good: boolean }> = ({ label, value, good }) => (
-  <div className="bg-[#0B0E17] border border-zinc-800/80 p-1 rounded space-y-0.5">
-    <div className="text-zinc-400 flex items-center gap-0.5"><Target className="w-2.5 h-2.5" /><span>{label}</span></div>
-    <div className="font-bold text-zinc-200 flex items-center justify-between gap-1"><span className="truncate">{value}</span>{good ? <Check className="w-2.5 h-2.5 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-2.5 h-2.5 text-amber-400 shrink-0" />}</div>
-  </div>
-);
