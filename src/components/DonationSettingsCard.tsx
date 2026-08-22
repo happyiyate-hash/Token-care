@@ -44,19 +44,14 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
     `${metadata.name} (${metadata.symbol}) verified token contract for community donations.`
   );
 
-  // Evaluate Save Button Logic:
-  // 1. Contract already saved
-  // 2. Logo presence & browser rendering status (checking, valid, invalid)
-  // 3. Security trust score
+  // A remote logo is an asset URL, not a security gate. The visible token
+  // renderer handles fallback sources. Saving must not be blocked because a
+  // hidden/download-based logo analyzer could not inspect the URL.
   let saveDisabledReason: string | null = null;
   if (isAlreadySaved) {
     saveDisabledReason = 'Token contract address is already saved in the directory.';
   } else if (!metadata.logoUrl || !metadata.logoUrl.trim()) {
     saveDisabledReason = 'Logo is required. Please upload or provide a valid token logo.';
-  } else if (logoStatus === 'checking') {
-    saveDisabledReason = 'Checking token logo...';
-  } else if (logoStatus === 'invalid') {
-    saveDisabledReason = 'Unable to load token logo. Please upload another logo or provide a valid image URL.';
   } else if (trustScore !== undefined && trustScore < 45) {
     saveDisabledReason = `Token trust score is too low (${trustScore}/100) to pass security review.`;
   }
@@ -85,7 +80,6 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
         isDisabledCard ? 'opacity-50 pointer-events-none' : 'opacity-100 pointer-events-auto'
       }`}
     >
-      {/* Header */}
       <div className="flex items-center justify-between border-b border-zinc-800/80 pb-1.5">
         <h3 className="text-[10px] font-black text-white uppercase tracking-wider">
           Donation Campaign Settings
@@ -95,9 +89,7 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
         </span>
       </div>
 
-      {/* Form Controls Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 text-[9px]">
-        {/* Accept Donations Toggle */}
         <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md flex items-center justify-between">
           <div>
             <div className="font-bold text-white text-[9.5px]">Accept Donations</div>
@@ -114,7 +106,6 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
           </button>
         </div>
 
-        {/* Min Donation */}
         <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md space-y-0.5">
           <label className="text-[8px] font-semibold text-zinc-400 uppercase block">
             Min Donation ({metadata.symbol})
@@ -129,7 +120,6 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
           />
         </div>
 
-        {/* Category */}
         <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md space-y-0.5">
           <label className="text-[8px] font-semibold text-zinc-400 uppercase block">
             Token Category
@@ -148,7 +138,6 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
         </div>
       </div>
 
-      {/* Validation Warning Banner if Save is Disabled */}
       {isSaveDisabled && (
         <div className="bg-rose-950/40 border border-rose-500/30 rounded-md p-1.5 flex items-center space-x-1.5 text-[8.5px] text-rose-300">
           <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
@@ -156,11 +145,10 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
         </div>
       )}
 
-      {/* Action Bar */}
       <div className="pt-1.5 border-t border-zinc-800/80 flex items-center justify-between gap-1">
         <div className="flex items-center space-x-1 text-[8.5px] text-zinc-400 min-w-0">
           <Lock className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
-          <span className="truncate">Verification & logo check required.</span>
+          <span className="truncate">Verification & token logo URL required.</span>
         </div>
 
         <div className="flex items-center space-x-1 shrink-0">
