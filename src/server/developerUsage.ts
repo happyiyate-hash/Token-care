@@ -2,7 +2,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = 'https://pqqomaveycjeorgurpev.supabase.co';
 const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxcW9tYXZleWNqZW9yZ3VwZXZ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxcW9tYXZleWNqZW9yZ3VwZXZ9';
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxcW9tYXZleWNqZW9yZ3VycGV2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYwMzkwMTAsImV4cCI6MjEwMTYxNTAxMH0.iLP3IXux4cc-ACPLBtciuauo2JXD8plcB3CAIXtzwEs';
 
 let serverSupabaseClient: SupabaseClient | null = null;
 export function getServerSupabase(): SupabaseClient {
