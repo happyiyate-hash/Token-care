@@ -50,7 +50,6 @@ export const MultiProviderTokenLogo: React.FC<MultiProviderTokenLogoProps> = ({
     const img = event.currentTarget;
     if (img.naturalWidth > 0 && img.naturalHeight > 0 && activeUrl) {
       announceRendered(activeUrl);
-      onLogoResolved?.(activeUrl, 'rendered');
     }
   };
 
