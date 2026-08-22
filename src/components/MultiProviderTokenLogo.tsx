@@ -14,12 +14,9 @@ interface MultiProviderTokenLogoProps {
 /**
  * MultiProviderTokenLogo
  *
- * Implements resilient multi-provider token logo rendering:
- * 1. Tries primary src if provided.
- * 2. If primary src fails or is missing, triggers parallel background resolution across
- *    DexScreener, CoinGecko, GeckoTerminal, on-chain registries, and CDN.
- * 3. Deterministically renders the first working candidate.
- * 4. If all fail, renders a graceful, clean token badge fallback (never a broken icon).
+ * Resilient token-logo renderer. The actual <img> onLoad event is the source of
+ * truth for whether a logo rendered in the application UI. A remote image does
+ * not need to be downloaded into a data URL for it to be considered usable.
  */
 export const MultiProviderTokenLogo: React.FC<MultiProviderTokenLogoProps> = ({
   src,
@@ -39,8 +36,25 @@ export const MultiProviderTokenLogo: React.FC<MultiProviderTokenLogoProps> = ({
     setHasFailedAll(!src && !address);
   }, [src, address]);
 
+  const announceRendered = (url: string) => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('tokencare:logo-rendered', {
+          detail: { url, address, symbol },
+        })
+      );
+    }
+  };
+
+  const handleImageLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = event.currentTarget;
+    if (img.naturalWidth > 0 && img.naturalHeight > 0 && activeUrl) {
+      announceRendered(activeUrl);
+      onLogoResolved?.(activeUrl, 'rendered');
+    }
+  };
+
   const handleImageError = async () => {
-    // If we have an address and haven't run fallback resolver yet, trigger it now
     if (address && !isResolving) {
       setIsResolving(true);
       try {
@@ -76,6 +90,7 @@ export const MultiProviderTokenLogo: React.FC<MultiProviderTokenLogoProps> = ({
       src={activeUrl}
       alt={alt || symbol || 'Token Logo'}
       className={className}
+      onLoad={handleImageLoad}
       onError={handleImageError}
       loading="lazy"
     />
