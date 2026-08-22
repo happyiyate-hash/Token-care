@@ -50,6 +50,56 @@ function getCreditCost(response: Response, body: unknown): number | null {
   return null;
 }
 
+async function updateDailyUsage(p: {
+  projectId: string;
+  statusCode: number;
+  errorCode?: string | null;
+}) {
+  const usageDate = new Date().toISOString().slice(0, 10);
+  const isBlocked =
+    p.statusCode === 429 ||
+    p.errorCode === 'INSUFFICIENT_CREDITS' ||
+    p.errorCode === 'PROJECT_PAUSED' ||
+    p.errorCode === 'BLOCKED' ||
+    p.errorCode === 'QUOTA_EXHAUSTED';
+  const isSuccess = p.statusCode >= 200 && p.statusCode < 400 && !isBlocked;
+
+  try {
+    const { data: existing, error: selErr } = await supabase
+      .from('developer_daily_usage')
+      .select('id, calls, successful_calls, blocked_calls')
+      .eq('project_id', p.projectId)
+      .eq('usage_date', usageDate)
+      .maybeSingle();
+
+    if (!selErr && existing) {
+      await supabase
+        .from('developer_daily_usage')
+        .update({
+          calls: Number(existing.calls || 0) + 1,
+          successful_calls: Number(existing.successful_calls || 0) + (isSuccess ? 1 : 0),
+          blocked_calls: Number(existing.blocked_calls || 0) + (isBlocked ? 1 : 0),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+    } else {
+      await supabase
+        .from('developer_daily_usage')
+        .insert({
+          project_id: p.projectId,
+          usage_date: usageDate,
+          calls: 1,
+          successful_calls: isSuccess ? 1 : 0,
+          blocked_calls: isBlocked ? 1 : 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+    }
+  } catch (e) {
+    console.warn('Daily usage update failed:', e);
+  }
+}
+
 async function writeLog(p: {
   projectId: string; requestId: string; requestKey: string; method: string;
   statusCode: number; startedAt: number; errorCode?: string | null;
@@ -70,6 +120,8 @@ async function writeLog(p: {
     message: p.message,
   });
   if (error) console.error('Request log write failed:', error);
+
+  updateDailyUsage(p).catch(() => {});
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

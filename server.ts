@@ -154,28 +154,13 @@ async function startServer() {
       });
 
       if (!quotaCheck.allowed) {
-        return res.status(quotaCheck.statusCode || 429).json({
+        return res.status(quotaCheck.statusCode || 401).json({
           success: false,
           error: quotaCheck.error || {
-            code: 'QUOTA_EXHAUSTED',
-            message: 'Daily rate limit reached. Quota exhausted.',
-          },
-          quota: {
-            limit: quotaCheck.dailyLimit,
-            used: quotaCheck.usedToday,
-            remaining: quotaCheck.remainingToday || 0,
-            resetAt: quotaCheck.resetAt,
+            code: 'AUTHENTICATION_FAILED',
+            message: 'API key authentication failed.',
           },
         });
-      }
-
-      // Attach rate limit headers
-      if (quotaCheck.dailyLimit !== undefined) {
-        res.setHeader('X-RateLimit-Limit', quotaCheck.dailyLimit);
-        res.setHeader('X-RateLimit-Remaining', quotaCheck.remainingToday ?? 0);
-      }
-      if (quotaCheck.resetAt) {
-        res.setHeader('X-RateLimit-Reset', quotaCheck.resetAt);
       }
 
       // Finalize log on response completion

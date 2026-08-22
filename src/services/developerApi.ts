@@ -226,7 +226,7 @@ export function subscribeToDeveloperDailyUsage(
         if (payload?.new) {
           const row: DeveloperDailyUsage = {
             project_id: payload.new.project_id,
-            usage_date: String(payload.new.usage_date),
+            usage_date: String(payload.new.usage_date).slice(0, 10),
             calls: Number(payload.new.calls ?? payload.new.used ?? 0),
             successful_calls: Number(payload.new.successful_calls ?? payload.new.successful ?? 0),
             blocked_calls: Number(payload.new.blocked_calls ?? payload.new.blocked ?? 0),
@@ -247,7 +247,7 @@ export function subscribeToDeveloperDailyUsage(
         if (payload?.new) {
           const row: DeveloperDailyUsage = {
             project_id: payload.new.project_id,
-            usage_date: String(payload.new.usage_date),
+            usage_date: String(payload.new.usage_date).slice(0, 10),
             calls: Number(payload.new.calls ?? payload.new.used ?? 0),
             successful_calls: Number(payload.new.successful_calls ?? payload.new.successful ?? 0),
             blocked_calls: Number(payload.new.blocked_calls ?? payload.new.blocked ?? 0),
@@ -261,6 +261,31 @@ export function subscribeToDeveloperDailyUsage(
     });
 
   return channel;
+}
+
+export interface DeveloperCreditBalance {
+  project_id: string;
+  balance: number;
+  updated_at?: string;
+  created_at?: string;
+}
+
+export interface DeveloperCreditTransaction {
+  id: string;
+  project_id: string;
+  amount: number;
+  transaction_type?: string;
+  action_key?: string | null;
+  request_id?: string | null;
+  created_at: string;
+  description?: string;
+}
+
+export interface DeveloperDailyCallsStats {
+  total24h: number;
+  successful: number;
+  failed: number;
+  blocked: number;
 }
 
 export interface DeveloperQuota {
@@ -524,7 +549,7 @@ export async function getDeveloperUsage(days = 30): Promise<DeveloperDailyUsage[
     if (!error && Array.isArray(data)) {
       const rows = data.map((row: any) => ({
         project_id: row.project_id,
-        usage_date: String(row.usage_date),
+        usage_date: String(row.usage_date).slice(0, 10),
         calls: Number(row.calls ?? row.used ?? 0),
         successful_calls: Number(row.successful_calls ?? row.successful ?? 0),
         blocked_calls: Number(row.blocked_calls ?? row.blocked ?? 0),
@@ -569,13 +594,16 @@ export async function getDeveloperUsage(days = 30): Promise<DeveloperDailyUsage[
         .order('usage_date', { ascending: true });
 
       if (!tblError) {
-        const byDate = new Map((rows || []).map((row: any) => [row.usage_date, {
-          project_id: row.project_id,
-          usage_date: String(row.usage_date),
-          calls: Number(row.calls ?? 0),
-          successful_calls: Number(row.successful_calls ?? 0),
-          blocked_calls: Number(row.blocked_calls ?? 0),
-        }]));
+        const byDate = new Map((rows || []).map((row: any) => {
+          const dStr = String(row.usage_date).slice(0, 10);
+          return [dStr, {
+            project_id: row.project_id,
+            usage_date: dStr,
+            calls: Number(row.calls ?? row.used ?? 0),
+            successful_calls: Number(row.successful_calls ?? row.successful ?? 0),
+            blocked_calls: Number(row.blocked_calls ?? row.blocked ?? 0),
+          }];
+        }));
 
         const complete: DeveloperDailyUsage[] = [];
         for (let offset = days - 1; offset >= 0; offset -= 1) {
@@ -600,6 +628,142 @@ export async function getDeveloperUsage(days = 30): Promise<DeveloperDailyUsage[
   }
 
   return [];
+}
+
+export async function getDeveloperCredits(projectId?: string): Promise<number> {
+  try {
+    const { data, error } = await supabase().rpc('get_my_developer_credit_balance');
+    if (!error && typeof data === 'number') return data;
+    if (!error && data && typeof (data as any).balance === 'number') return (data as any).balance;
+  } catch (e) {
+    // fallback to table
+  }
+
+  try {
+    let pId = projectId;
+    if (!pId) {
+      const proj = await getDeveloperProject();
+      pId = proj?.id;
+    }
+    if (pId) {
+      const { data, error } = await supabase()
+        .from('developer_credit_balances')
+        .select('balance')
+        .eq('project_id', pId)
+        .maybeSingle();
+
+      if (!error && data && typeof data.balance === 'number') {
+        return data.balance;
+      }
+    }
+  } catch (e2) {
+    console.warn('[DeveloperAPI] getDeveloperCredits error:', e2);
+  }
+  return 0;
+}
+
+export async function getDeveloperCreditTransactions(projectId?: string, limit = 50): Promise<DeveloperCreditTransaction[]> {
+  try {
+    let pId = projectId;
+    if (!pId) {
+      const proj = await getDeveloperProject();
+      pId = proj?.id;
+    }
+    if (pId) {
+      const { data, error } = await supabase()
+        .from('developer_credit_transactions')
+        .select('*')
+        .eq('project_id', pId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (!error && Array.isArray(data)) {
+        return data.map((t: any) => ({
+          id: t.id,
+          project_id: t.project_id,
+          amount: Number(t.amount || 0),
+          transaction_type: t.transaction_type || t.type,
+          action_key: t.action_key ?? null,
+          request_id: t.request_id ?? null,
+          created_at: t.created_at || new Date().toISOString(),
+          description: t.description || t.reason,
+        }));
+      }
+    }
+  } catch (e) {
+    console.warn('[DeveloperAPI] getDeveloperCreditTransactions error:', e);
+  }
+  return [];
+}
+
+export async function getDeveloperDailyCalls(projectId?: string): Promise<DeveloperDailyCallsStats> {
+  try {
+    let pId = projectId;
+    if (!pId) {
+      const proj = await getDeveloperProject();
+      pId = proj?.id;
+    }
+    if (pId) {
+      const todayUtc = new Date().toISOString().slice(0, 10);
+      const d = new Date();
+      const todayLocal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+      // Query public.developer_daily_usage directly for today's aggregate row
+      const { data: rows, error } = await supabase()
+        .from('developer_daily_usage')
+        .select('project_id, usage_date, calls, successful_calls, blocked_calls')
+        .eq('project_id', pId)
+        .or(`usage_date.eq.${todayUtc},usage_date.eq.${todayLocal}`)
+        .order('usage_date', { ascending: false })
+        .limit(1);
+
+      if (!error && Array.isArray(rows) && rows.length > 0) {
+        const row: any = rows[0];
+        const calls = Number(row?.calls ?? 0);
+        const successful = Number(row?.successful_calls ?? 0);
+        const blocked = Number(row?.blocked_calls ?? 0);
+        const failed = Math.max(0, calls - successful - blocked);
+
+        return {
+          total24h: calls,
+          successful,
+          failed,
+          blocked,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[DeveloperAPI] getDeveloperDailyCalls error:', e);
+  }
+  return { total24h: 0, successful: 0, failed: 0, blocked: 0 };
+}
+
+export function subscribeToDeveloperCredits(
+  supabaseClient: any,
+  projectId: string,
+  onBalanceChange: (balance: number) => void
+) {
+  const channel = supabaseClient
+    .channel(`developer-credits-${projectId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'developer_credit_balances',
+        filter: `project_id=eq.${projectId}`,
+      },
+      (payload: any) => {
+        if (payload?.new && typeof payload.new.balance === 'number') {
+          onBalanceChange(payload.new.balance);
+        }
+      }
+    )
+    .subscribe((status: string) => {
+      console.log(`[Supabase Realtime] developer_credit_balances (${projectId}):`, status);
+    });
+
+  return channel;
 }
 
 export async function getDeveloperApiLogs(limit = 100): Promise<DeveloperRequestLog[]> {

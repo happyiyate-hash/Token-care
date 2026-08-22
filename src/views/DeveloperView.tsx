@@ -56,6 +56,10 @@ import {
   RPC_PRESET_ACTIONS,
   RpcPresetAction,
   getDeveloperProject,
+  getDeveloperCredits,
+  getDeveloperCreditTransactions,
+  getDeveloperDailyCalls,
+  subscribeToDeveloperCredits,
   getDeveloperQuota,
   getDeveloperPlans,
   getDeveloperSubscriptions,
@@ -82,6 +86,7 @@ import {
   DeveloperDailyUsage,
   DeveloperApiLog,
   DeveloperRequestLog,
+  DeveloperDailyCallsStats,
   DEFAULT_DEVELOPER_PLANS,
 } from '../services/developerApi';
 
@@ -686,6 +691,8 @@ function CallVolumeChartCard({
 export default function DeveloperView({ onBack, currentUser }: DeveloperViewProps) {
   // State
   const [project, setProject] = useState<DeveloperProject | null>(null);
+  const [credits, setCredits] = useState<number>(0);
+  const [dailyCallsStats, setDailyCallsStats] = useState<DeveloperDailyCallsStats>({ total24h: 0, successful: 0, failed: 0, blocked: 0 });
   const [quota, setQuota] = useState<DeveloperQuota | null>(null);
   const [plans, setPlans] = useState<DeveloperPlan[]>(DEFAULT_DEVELOPER_PLANS);
   const [subscriptions, setSubscriptions] = useState<DeveloperSubscription[]>([]);
@@ -864,7 +871,9 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       setShowCreateModal(false);
       setEditProjectName(proj.project_name || '');
 
-      const [quotaData, plansData, usageData, logData, subsData] = await Promise.all([
+      const [creditsData, dailyCallsData, quotaData, plansData, usageData, logData, subsData] = await Promise.all([
+        getDeveloperCredits(proj.id).catch(() => 0),
+        getDeveloperDailyCalls(proj.id).catch(() => ({ total24h: 0, successful: 0, failed: 0, blocked: 0 })),
         getDeveloperQuota().catch(() => null),
         getDeveloperPlans().catch(() => DEFAULT_DEVELOPER_PLANS),
         getDeveloperUsage(30).catch(() => []),
@@ -877,6 +886,8 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       const finalLogs = Array.isArray(logData) ? logData : [];
       const finalSubs = Array.isArray(subsData) ? subsData : [];
 
+      setCredits(typeof creditsData === 'number' ? creditsData : 0);
+      setDailyCallsStats(dailyCallsData || { total24h: 0, successful: 0, failed: 0, blocked: 0 });
       setQuota(quotaData);
       setPlans(finalPlans);
       setUsage(finalUsage);
@@ -932,7 +943,16 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     const currentUserId = project.user_id || currentUser?.id;
     const client = getSupabase();
 
-    // 1. Subscribe to public.developer_request_logs (INSERT + UPDATE)
+    // 1. Subscribe to developer_credit_balances
+    const creditsChannel = subscribeToDeveloperCredits(
+      client,
+      currentProjectId,
+      (newBalance) => {
+        setCredits(newBalance);
+      }
+    );
+
+    // 2. Subscribe to public.developer_request_logs (INSERT + UPDATE)
     const logsChannel = subscribeToDeveloperLogs(
       client,
       currentProjectId,
@@ -950,6 +970,8 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
           }
           return [newLog, ...prev].slice(0, 100);
         });
+        getDeveloperDailyCalls(currentProjectId).then(setDailyCallsStats).catch(() => {});
+        getDeveloperCredits(currentProjectId).then(setCredits).catch(() => {});
       },
       (updatedLog) => {
         setLogs((prev) => {
@@ -965,36 +987,62 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
           }
           return [updatedLog, ...prev].slice(0, 100);
         });
+        getDeveloperDailyCalls(currentProjectId).then(setDailyCallsStats).catch(() => {});
       }
     );
 
-    // 2. Subscribe to public.developer_daily_usage (INSERT + UPDATE)
+    // 3. Subscribe to public.developer_daily_usage (INSERT + UPDATE)
     const handleUsageChange = (updatedRow: DeveloperDailyUsage) => {
+      const normDate = String(updatedRow.usage_date).slice(0, 10);
+      const calls = Number(updatedRow.calls ?? 0);
+      const successful = Number(updatedRow.successful_calls ?? 0);
+      const blocked = Number(updatedRow.blocked_calls ?? 0);
+      const failed = Math.max(0, calls - successful - blocked);
+
+      const normalizedRow: DeveloperDailyUsage = {
+        project_id: updatedRow.project_id,
+        usage_date: normDate,
+        calls,
+        successful_calls: successful,
+        blocked_calls: blocked,
+      };
+
       setUsage((prev) => {
-        const idx = prev.findIndex((u) => u.usage_date === updatedRow.usage_date);
+        const idx = prev.findIndex((u) => String(u.usage_date).slice(0, 10) === normDate);
         let nextList: DeveloperDailyUsage[];
         if (idx >= 0) {
           nextList = [...prev];
-          nextList[idx] = updatedRow;
+          nextList[idx] = normalizedRow;
         } else {
-          nextList = [...prev, updatedRow];
+          nextList = [...prev, normalizedRow];
         }
         nextList.sort((a, b) => a.usage_date.localeCompare(b.usage_date));
         return nextList;
       });
 
-      // Synchronize in-memory quota immediately so Today's Consumption card reflects live changes
+      const todayUtc = new Date().toISOString().slice(0, 10);
+      const d = new Date();
+      const todayLocal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (normDate === todayUtc || normDate === todayLocal) {
+        setDailyCallsStats({
+          total24h: calls,
+          successful,
+          failed,
+          blocked,
+        });
+      }
+
+      // Synchronize in-memory quota immediately
       setQuota((prevQuota) => {
         if (!prevQuota) return prevQuota;
         const currentLimit = prevQuota.usage?.limit ?? prevQuota.project?.daily_limit ?? project.daily_limit ?? 100;
-        const calls = updatedRow.calls;
         return {
           ...prevQuota,
           usage: {
             usage_date: updatedRow.usage_date,
             used: calls,
-            successful: updatedRow.successful_calls,
-            blocked: updatedRow.blocked_calls,
+            successful,
+            blocked,
             limit: currentLimit,
             remaining: Math.max(0, currentLimit - calls),
           },
@@ -1074,6 +1122,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       .subscribe();
 
     return () => {
+      client.removeChannel(creditsChannel);
       client.removeChannel(logsChannel);
       client.removeChannel(usageChannel);
       client.removeChannel(projectChannel);
@@ -1092,8 +1141,9 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     }
   }, [selectedEndpointId]);
 
-  // Quota Computations based on Supabase database
-  const todayStr = useMemo(() => {
+  // Quota & Daily Usage Computations based on public.developer_daily_usage
+  const todayStrUtc = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayStrLocal = useMemo(() => {
     const d = new Date();
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -1102,28 +1152,33 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   }, []);
 
   const todayUsage = useMemo(() => {
-    return usage.find((u) => u.usage_date === todayStr);
-  }, [usage, todayStr]);
+    if (!usage || usage.length === 0) return null;
+    const match = usage.find((u) => {
+      const d = String(u.usage_date).slice(0, 10);
+      return d === todayStrUtc || d === todayStrLocal;
+    });
+    if (match) return match;
+    return usage[usage.length - 1] || null;
+  }, [usage, todayStrUtc, todayStrLocal]);
 
-  const callsToday = useMemo(() => {
-    const fromQuota = quota?.usage?.used;
-    const fromUsage = todayUsage?.calls;
-    const fromLogs = (Array.isArray(logs) ? logs : []).filter((l) => {
-      const logDate = l?.timestamp || l?.created_at;
-      if (!logDate) return false;
-      const d = new Date(logDate);
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}` === todayStr;
-    }).length;
+  // Direct mapping from developer_daily_usage table (calls, successful_calls, blocked_calls, failed_calls)
+  const dailyCallsDisplay = useMemo<DeveloperDailyCallsStats>(() => {
+    if (todayUsage) {
+      const calls = Number(todayUsage.calls ?? 0);
+      const successful = Number(todayUsage.successful_calls ?? 0);
+      const blocked = Number(todayUsage.blocked_calls ?? 0);
+      const failed = Math.max(0, calls - successful - blocked);
+      return {
+        total24h: calls,
+        successful,
+        failed,
+        blocked,
+      };
+    }
+    return dailyCallsStats;
+  }, [todayUsage, dailyCallsStats]);
 
-    return Math.max(
-      typeof fromQuota === 'number' ? fromQuota : 0,
-      typeof fromUsage === 'number' ? fromUsage : 0,
-      fromLogs
-    );
-  }, [quota, todayUsage, logs, todayStr]);
+  const callsToday = dailyCallsDisplay.total24h;
 
   const dailyLimit =
     quota?.usage?.limit ??
@@ -1984,8 +2039,8 @@ print("TokenCare RPC Response:", data)`;
                   <span className="text-emerald-400 font-mono font-bold">{(project.plan_code || 'FREE').toUpperCase()}</span>
                 </div>
                 <div className="text-xs font-bold text-white truncate">{project.project_name}</div>
-                <div className="text-[10px] text-zinc-400 font-mono">
-                  {callsToday} / {dailyLimit} calls today
+                <div className="text-[10px] text-emerald-400 font-mono font-bold">
+                  {credits.toLocaleString()} credits available
                 </div>
               </div>
 
@@ -2140,16 +2195,16 @@ print("TokenCare RPC Response:", data)`;
             {/* TAB 1: OVERVIEW & ANALYTICS */}
             {activeTab === 'overview' && (
               <div className="space-y-3 sm:space-y-5 animate-in fade-in duration-200">
-                {/* 1. Daily Limit & Usage Counter */}
+                {/* 1. Project Credits & Daily Calls Analytics Counter */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 sm:gap-3">
-                  {/* Quota Gauge Card - Slim, Blended */}
+                  {/* Credit Balance Card - Slim, Blended */}
                   <div className="md:col-span-2 p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-2.5 sm:space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-400">
-                          DAILY RATE LIMIT & QUOTA
+                          PROJECT CREDITS
                         </span>
-                        <h3 className="text-sm sm:text-base font-bold text-white mt-0.5">Today's Consumption</h3>
+                        <h3 className="text-sm sm:text-base font-bold text-white mt-0.5">Available Balance</h3>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <span
@@ -2162,51 +2217,42 @@ print("TokenCare RPC Response:", data)`;
                           {project.is_active !== false ? 'ACTIVE' : 'PAUSED'}
                         </span>
                         <span className="text-[10px] font-mono font-bold text-zinc-400 bg-zinc-900/80 px-2 py-0.5 rounded-full border border-zinc-800 hidden xs:inline">
-                          Resets 00:00 UTC
+                          Auto-deducted per API request
                         </span>
                       </div>
                     </div>
 
-                    {/* Numbers & Progress Bar */}
+                    {/* Numbers & Breakdown */}
                     <div className="space-y-2">
-                      <div className="flex items-end justify-between">
-                        <div className="flex items-baseline gap-1.5">
-                          <span className="text-2xl sm:text-3xl font-extrabold text-white font-mono">{callsToday}</span>
-                          <span className="text-[11px] text-zinc-400 font-medium">/ {dailyLimit} calls</span>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl sm:text-3xl font-extrabold text-white font-mono">{credits.toLocaleString()}</span>
+                        <span className="text-[11px] text-zinc-400 font-medium">credits</span>
+                      </div>
+
+                      {/* Realtime Breakdown Counters: Daily Calls (24h), Successful, Failed, Blocked */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-zinc-800/40 text-center">
+                        <div className="p-1.5 rounded-lg bg-zinc-900/40 border border-zinc-800/40">
+                          <span className="block text-[9px] uppercase font-bold text-zinc-400">Daily Calls (24h)</span>
+                          <span className="text-xs sm:text-sm font-mono font-bold text-white">
+                            {dailyCallsDisplay.total24h.toLocaleString()}
+                          </span>
                         </div>
-                        <span className="text-[11px] font-bold text-zinc-300">{remainingCalls} remaining</span>
-                      </div>
-
-                      {/* Visual Progress Bar */}
-                      <div className="w-full h-2 rounded-full bg-zinc-950 border border-zinc-800 overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            usagePercentage > 90
-                              ? 'bg-amber-500'
-                              : 'bg-gradient-to-r from-emerald-600 via-emerald-500 to-[#00E575]'
-                          }`}
-                          style={{ width: `${Math.max(4, usagePercentage)}%` }}
-                        />
-                      </div>
-
-                      {/* Realtime Breakdown Counters: Successful, Failed, Blocked */}
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800/40 text-center">
                         <div className="p-1.5 rounded-lg bg-zinc-900/40 border border-zinc-800/40">
                           <span className="block text-[9px] uppercase font-bold text-emerald-400">Successful</span>
                           <span className="text-xs sm:text-sm font-mono font-bold text-white">
-                            {todayUsage?.successful_calls ?? logCounts.succeeded}
+                            {dailyCallsDisplay.successful.toLocaleString()}
                           </span>
                         </div>
                         <div className="p-1.5 rounded-lg bg-zinc-900/40 border border-zinc-800/40">
                           <span className="block text-[9px] uppercase font-bold text-rose-400">Failed</span>
                           <span className="text-xs sm:text-sm font-mono font-bold text-white">
-                            {todayUsage ? Math.max(0, todayUsage.calls - (todayUsage.successful_calls || 0) - (todayUsage.blocked_calls || 0)) : logCounts.failed}
+                            {dailyCallsDisplay.failed.toLocaleString()}
                           </span>
                         </div>
                         <div className="p-1.5 rounded-lg bg-zinc-900/40 border border-zinc-800/40">
                           <span className="block text-[9px] uppercase font-bold text-amber-400">Blocked</span>
                           <span className="text-xs sm:text-sm font-mono font-bold text-white">
-                            {todayUsage?.blocked_calls ?? logCounts.blocked}
+                            {dailyCallsDisplay.blocked.toLocaleString()}
                           </span>
                         </div>
                       </div>
@@ -2264,7 +2310,7 @@ print("TokenCare RPC Response:", data)`;
                 </div>
 
                 {/* 2. Persistent 30-Day Call Volume Dashboard Card */}
-                <CallVolumeChartCard usage={usage} logs={logs} callsToday={callsToday} dailyLimit={dailyLimit} />
+                <CallVolumeChartCard usage={usage} logs={logs} callsToday={dailyCallsDisplay.total24h} />
 
                 {/* 3. Quick Start & Public API Gateway Endpoint Preview */}
                 <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-2">
