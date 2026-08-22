@@ -12,7 +12,6 @@ import {
   Maximize2,
   ShieldCheck,
   Star,
-  Target,
   Upload,
   XCircle,
 } from 'lucide-react';
@@ -62,20 +61,23 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
   const pipeline = report?.pipeline;
   const checksList: LogoQualityCheck[] = report ? Object.values(report.checks) : [];
 
-  // A successful browser render is enough to mark the logo usable. Pixel/CORS
-  // analysis is an additional quality signal and must never make a renderable
-  // remote logo unusable merely because the browser cannot read its pixels.
-  const handleLogoLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = event.currentTarget;
-    if (img.naturalWidth > 0 && img.naturalHeight > 0) onLogoStatusChange?.('valid');
-  };
-
-  const handleLogoError = () => onLogoStatusChange?.('invalid');
-
+  // The token overview card owns the real visible <img>. It announces a
+  // successful browser render through the tokencare:logo-rendered event.
+  // This card must never perform a second hidden render check because that can
+  // fail for a URL that the visible token renderer successfully displays.
   useEffect(() => {
-    if (!logoUrl || !onLogoStatusChange) return;
-    onLogoStatusChange('checking');
-  }, [logoUrl, onLogoStatusChange]);
+    if (!hasLogo || !onLogoStatusChange || typeof window === 'undefined') return;
+
+    const handleRendered = (event: Event) => {
+      const detail = (event as CustomEvent<{ url?: string }>).detail;
+      if (detail?.url && detail.url === logoUrl) {
+        onLogoStatusChange('valid');
+      }
+    };
+
+    window.addEventListener('tokencare:logo-rendered', handleRendered);
+    return () => window.removeEventListener('tokencare:logo-rendered', handleRendered);
+  }, [hasLogo, logoUrl, onLogoStatusChange]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -96,8 +98,6 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
     e.preventDefault();
     const url = urlInput.trim();
     if (!url) return;
-    // Keep the exact URL. Do not download, proxy, convert, or replace it with
-    // a data URL when the token is saved.
     onUpdateLogo(url);
     onLogoStatusChange?.('checking');
     setUrlInput('');
@@ -111,7 +111,7 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
         step(pipeline.autoCentered, 'Centered', pipeline.autoCentered ? 'Measured' : 'Not confirmed'),
         step(pipeline.resizedToStandard, '512×512', pipeline.resizedToStandard ? 'Exact source size' : 'Source differs'),
         step(pipeline.compressedOptimized, 'Optimized', pipeline.compressedOptimized ? `Measured -${pipeline.compressionRatioPct}%` : 'No measured optimization'),
-        step(pipeline.renderingVerified, 'Rendered', pipeline.renderingVerified ? 'Browser decoded image' : 'Render failed'),
+        step(pipeline.renderingVerified, 'Rendered', pipeline.renderingVerified ? 'Browser decoded image' : 'Render analysis unavailable'),
       ]
     : [];
 
@@ -137,21 +137,18 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
                 <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono font-bold border flex items-center gap-1 ${
                   renderVerified
                     ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
-                    : logoStatus === 'checking'
-                    ? 'bg-amber-500/10 border-amber-500/40 text-amber-400'
-                    : 'bg-rose-500/10 border-rose-500/40 text-rose-400'
+                    : 'bg-amber-500/10 border-amber-500/40 text-amber-400'
                 }`}>
                   {logoStatus === 'checking' && <><Loader2 className="w-2.5 h-2.5 animate-spin" /><span>CHECKING</span></>}
                   {renderVerified && <><Check className="w-2.5 h-2.5" /><span>RENDERED</span></>}
-                  {logoStatus === 'invalid' && <><XCircle className="w-2.5 h-2.5" /><span>NOT RENDERABLE</span></>}
                 </span>
               )}
             </h3>
             <span className="text-[9px] text-zinc-400 block truncate">
               {renderVerified
-                ? 'Logo rendered successfully. Remote pixel analysis is optional.'
+                ? 'Logo rendered in the token card. No download or conversion is required.'
                 : hasLogo
-                ? (report?.failureReason || 'Checking the exact logo URL…')
+                ? 'Waiting for the actual visible token logo to render…'
                 : 'No token logo URL was supplied'}
             </span>
           </div>
@@ -166,13 +163,6 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
           </button>
         </div>
       </div>
-
-      {/* Browser render check only. The source URL is never replaced by the result. */}
-      {hasLogo && (
-        <div className="absolute w-px h-px overflow-hidden opacity-0 pointer-events-none" aria-hidden="true">
-          <img src={logoUrl} alt="Token logo render validation" onLoad={handleLogoLoad} onError={handleLogoError} />
-        </div>
-      )}
 
       {showUrlForm && (
         <form onSubmit={handleUrlSubmit} className="flex items-center gap-1 bg-[#06080F] p-1 rounded border border-zinc-800">
@@ -225,7 +215,7 @@ export const LogoVerificationCard: React.FC<LogoVerificationCardProps> = ({
             <div className="w-full bg-zinc-800/90 h-1.5 rounded-full overflow-hidden border border-zinc-700/50">
               <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500" style={{ width: `${Math.max(0, Math.min(100, score))}%` }} />
             </div>
-            {renderVerified && <div className="text-[8px] text-emerald-300">✓ Render check passed. No logo fix is required for this URL.</div>}
+            {renderVerified && <div className="text-[8px] text-emerald-300">✓ Actual visible token logo rendered. No logo fix or download is required.</div>}
           </div>
 
           {geometry && (
