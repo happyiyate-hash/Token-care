@@ -102,7 +102,6 @@ async function applyStatusBar(color: string) {
   const { top, bottom } = resolveSystemBarColors(color);
   const isDark = isDarkColor(top);
   const isNative = Capacitor.isNativePlatform();
-
   if (typeof document !== 'undefined') {
     let metaThemeColor = document.querySelector('meta[name="theme-color"]');
     if (!metaThemeColor) {
@@ -116,7 +115,6 @@ async function applyStatusBar(color: string) {
     document.documentElement.style.setProperty('--status-bar-bg', top);
     document.documentElement.classList.toggle('native-status-bar', isNative);
   }
-
   if (isNative) {
     try {
       await StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light });
@@ -124,9 +122,7 @@ async function applyStatusBar(color: string) {
         await StatusBar.setBackgroundColor({ color: '#00000000' });
         await StatusBar.setOverlaysWebView({ overlay: true });
       }
-    } catch {
-      // Ignore unsupported browser/simulator/native versions.
-    }
+    } catch {}
   }
 }
 
@@ -148,9 +144,7 @@ function forceViewportWidth(mode: 'desktop' | 'mobile') {
       configurable: true,
       get: () => width,
     });
-  } catch {
-    // Some browsers expose innerWidth as non-configurable.
-  }
+  } catch {}
 }
 
 // App.tsx chooses its React tree from window.innerWidth during initial render.
@@ -161,16 +155,14 @@ if (typeof window !== 'undefined') {
 }
 
 function isSettingsPage(): boolean {
-  if (typeof document === 'undefined') return false;
+  if (typeof document === 'undefined' || !document.body) return false;
   const text = document.body.innerText.toLowerCase();
-  return (
-    text.includes('manage your account and preferences') ||
-    text.includes('wallet & security') && text.includes('appearance')
-  );
+  return text.includes('manage your account and preferences') ||
+    (text.includes('wallet & security') && text.includes('appearance'));
 }
 
 function installSettingsViewModeControl() {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if (typeof window === 'undefined' || typeof document === 'undefined' || !document.body) return;
   if ((window as any).__tokencareViewModeControlInstalled) return;
   (window as any).__tokencareViewModeControlInstalled = true;
 
@@ -181,7 +173,6 @@ function installSettingsViewModeControl() {
       remove();
       return;
     }
-
     const currentMode: 'desktop' | 'mobile' = getSavedMode() || (window.innerWidth < 768 ? 'mobile' : 'desktop');
     const nextMode = currentMode === 'mobile' ? 'desktop' : 'mobile';
     let button = document.getElementById(VIEW_MODE_BUTTON_ID) as HTMLButtonElement | null;
@@ -190,15 +181,11 @@ function installSettingsViewModeControl() {
       button = document.createElement('button');
       button.id = VIEW_MODE_BUTTON_ID;
       button.type = 'button';
-      button.setAttribute('aria-label', `Switch to ${nextMode} view`);
       button.addEventListener('click', () => {
-        const next: 'desktop' | 'mobile' = (getSavedMode() || (window.innerWidth < 768 ? 'mobile' : 'desktop')) === 'mobile' ? 'desktop' : 'mobile';
-        try {
-          localStorage.setItem(VIEW_MODE_KEY, next);
-        } catch {}
+        const current: 'desktop' | 'mobile' = getSavedMode() || (window.innerWidth < 768 ? 'mobile' : 'desktop');
+        const next: 'desktop' | 'mobile' = current === 'mobile' ? 'desktop' : 'mobile';
+        try { localStorage.setItem(VIEW_MODE_KEY, next); } catch {}
         forceViewportWidth(next);
-        // Reload is intentional: App.tsx selects the correct React layout during
-        // its initial render, so the switch is reliable on every route/device.
         window.location.reload();
       });
       document.body.appendChild(button);
@@ -208,6 +195,7 @@ function installSettingsViewModeControl() {
       ? '<span style="font-size:16px;line-height:1">▯</span><span>Switch to Mobile</span>'
       : '<span style="font-size:16px;line-height:1">▣</span><span>Switch to Desktop</span>';
     button.title = `Switch to ${nextMode} view`;
+    button.setAttribute('aria-label', `Switch to ${nextMode} view`);
     button.style.cssText = [
       'position:fixed',
       'right:16px',
@@ -233,6 +221,15 @@ function installSettingsViewModeControl() {
   render();
 }
 
+if (typeof window !== 'undefined') {
+  const startControl = () => installSettingsViewModeControl();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startControl, { once: true });
+  } else {
+    startControl();
+  }
+}
+
 export async function setStatusBarColor(color: string) {
   if (!color) return;
   installSettingsViewModeControl();
@@ -243,7 +240,6 @@ export function useStatusBarColor(color: string) {
   useEffect(() => {
     let disposed = false;
     let refreshTimer: number | undefined;
-
     const refresh = () => {
       if (disposed) return;
       window.clearTimeout(refreshTimer);
@@ -252,12 +248,9 @@ export function useStatusBarColor(color: string) {
         applyStatusBar(color).catch(() => {});
       }, 0);
     };
-
     refresh();
-
     const observer = new MutationObserver(refresh);
     observer.observe(document.body, { childList: true, subtree: true });
-
     return () => {
       disposed = true;
       window.clearTimeout(refreshTimer);
