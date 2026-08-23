@@ -974,8 +974,75 @@ export function validateTonAddress(address: string): { isValid: boolean; error?:
 }
 
 /**
+ * Checks if an address matches Polkadot / Substrate SS58 format or Asset Hub identifier
+ * Examples:
+ * - Polkadot Mainnet: 1FRMM8PEiWXYax7rpS6X4XZX1aAAxSWx1CrKTyrVYhV24fg
+ * - Substrate Generic: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
+ * - Kusama: D..., E..., F..., G..., H..., J...
+ * - Substrate Asset Hub ID: polkadot:1984, 1984 (numeric with chain context)
+ */
+export function isPolkadotAddress(address: string): boolean {
+  if (!address) return false;
+  const clean = address.trim();
+  if (clean.startsWith('0x')) return false;
+
+  // Substrate SS58 address: 47-48 characters Base58 starting with 1, 5, or Kusama prefixes
+  if (/^[1-9A-HJ-NP-Za-km-z]{47,49}$/.test(clean) && /^[15C-Zc-z]/.test(clean)) {
+    return true;
+  }
+
+  // Polkadot / Substrate Asset Hub prefix notation: e.g. "polkadot:1984", "statemint:1337", "dot:1984"
+  if (/^(polkadot|substrate|kusama|statemint|assethub|dot):[0-9a-zA-Z_-]+$/i.test(clean)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Validates Polkadot / Substrate address or asset identifier format
+ */
+export function validatePolkadotAddress(address: string): { isValid: boolean; error?: string } {
+  const clean = address.trim();
+  if (isPolkadotAddress(clean) || (clean.length >= 1 && !clean.startsWith('0x'))) {
+    return { isValid: true };
+  }
+  return {
+    isValid: false,
+    error: `Invalid Polkadot/Substrate asset identifier "${address}". Expected SS58 address (47-48 characters) or Asset Hub identifier.`,
+  };
+}
+
+/**
+ * Checks if an address matches Cosmos SDK / IBC bech32 format
+ */
+export function isCosmosAddress(address: string): boolean {
+  if (!address) return false;
+  const clean = address.trim().toLowerCase();
+  return /^(cosmos|osmo|inj|celestia|sei|kujira|secret|dydx|stars|juno|stride|atom|terra|axelar)1[0-9a-z]{38,58}$/.test(clean);
+}
+
+/**
+ * Checks if an address matches NEAR Protocol format (e.g. token.near or 64-hex account)
+ */
+export function isNearAddress(address: string): boolean {
+  if (!address) return false;
+  const clean = address.trim().toLowerCase();
+  return clean.endsWith('.near') || (/^[0-9a-f]{64}$/.test(clean) && !clean.startsWith('0x'));
+}
+
+/**
+ * Checks if an address matches Aptos or Sui Move package / struct identifier
+ */
+export function isAptosOrSuiAddress(address: string): boolean {
+  if (!address) return false;
+  const clean = address.trim();
+  return /^0x[0-9a-fA-F]{1,64}(::[a-zA-Z0-9_]+){1,3}$/.test(clean) || (/^0x[0-9a-fA-F]{64}$/.test(clean));
+}
+
+/**
  * Validates a token identifier according to its blockchain type.
- * EVM address format validation is ONLY applied when blockchainType/chainId is EVM.
+ * EVM address format validation is ONLY applied when blockchainType/chainId is EVM and not an explicit non-EVM identifier.
  */
 export function validateTokenIdentifier(
   blockchainTypeOrChainId: string,
@@ -985,7 +1052,7 @@ export function validateTokenIdentifier(
   const address = String(contractAddress || '').trim();
 
   if (!address) {
-    return { isValid: false, error: 'Token address is required.' };
+    return { isValid: false, error: 'Token address or asset identifier is required.' };
   }
 
   const bType = (blockchainType || blockchainTypeOrChainId || '').toLowerCase().trim();
@@ -1010,21 +1077,45 @@ export function validateTokenIdentifier(
     return validateTronAddress(address);
   }
 
-  // 5. EVM Validation
+  // 5. Polkadot / Substrate Validation
+  if (bType === 'polkadot' || bType === 'substrate' || bType === 'kusama' || isPolkadotAddress(address)) {
+    return validatePolkadotAddress(address);
+  }
+
+  // 6. Cosmos / IBC Validation
+  if (bType === 'cosmos' || bType === 'osmosis' || isCosmosAddress(address)) {
+    return { isValid: true };
+  }
+
+  // 7. Aptos / Sui / NEAR Validation
+  if (isAptosOrSuiAddress(address) || isNearAddress(address)) {
+    return { isValid: true };
+  }
+
+  // 8. EVM Validation (Only when strictly EVM and not a recognized non-EVM format or short identifier)
   const isEvm = isEvmChain(blockchainTypeOrChainId, bType);
-  if (isEvm && !isTonAddress(address) && !isSolanaAddress(address) && !isTronAddress(address) && !isXrplAddress(address)) {
+  const isKnownNonEvm = isTonAddress(address) || isSolanaAddress(address) || isTronAddress(address) || isXrplAddress(address) || isPolkadotAddress(address) || isCosmosAddress(address) || isNearAddress(address);
+
+  if (isEvm && !isKnownNonEvm) {
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+      // If the address is a single character, single number (e.g. '0', '1'), letter ('A'), asset ID, or short non-0x40 identifier, allow through to auto-detect pipeline
+      if (address.length >= 1 && !address.startsWith('0x')) {
+        return { isValid: true }; // Allow through to auto-detect pipeline
+      }
+      if (address.startsWith('0x') && address.length >= 1) {
+        return { isValid: true }; // Short hex/precompile identifier
+      }
       return {
         isValid: false,
-        error: `Invalid EVM contract address format "${address}". Must start with 0x followed by 40 hex characters.`,
+        error: `Invalid contract address format "${address}". Expected contract address or asset identifier.`,
       };
     }
     return { isValid: true };
   }
 
-  // Generic non-EVM fallback
-  if (address.length < 3) {
-    return { isValid: false, error: 'Token identifier is too short.' };
+  // Generic non-EVM fallback (Unknown blockchain != invalid asset)
+  if (address.length < 1) {
+    return { isValid: false, error: 'Token address or asset identifier is required.' };
   }
 
   return { isValid: true };

@@ -20,14 +20,14 @@
  */
 
 export interface LogoCandidate {
-  provider: 'dexscreener' | 'coingecko' | 'geckoterminal' | 'chain_registry' | 'github_cdn' | 'custom';
+  provider: 'dexscreener' | 'coingecko' | 'geckoterminal' | 'chain_registry' | 'github_cdn' | 'coincap' | 'cryptologos' | 'custom';
   url: string;
   priority: number; // Lower is higher priority
 }
 
 export interface ResolvedTokenLogo {
   logoUrl: string;
-  logoSource: 'dexscreener' | 'coingecko' | 'geckoterminal' | 'chain_registry' | 'github_cdn' | 'custom' | 'fallback';
+  logoSource: 'dexscreener' | 'coingecko' | 'geckoterminal' | 'chain_registry' | 'github_cdn' | 'coincap' | 'cryptologos' | 'custom' | 'fallback';
   isValid: boolean;
 }
 
@@ -132,25 +132,57 @@ function getPlatformSlug(chainId: string | number, blockchainType?: string): { c
   if (c === 'xrpl' || b === 'xrpl') {
     return { cg: 'xrp', gt: 'xrpl', tw: 'xrp' };
   }
+  if (c === 'polkadot' || b === 'polkadot') {
+    return { cg: 'polkadot', gt: 'polkadot', tw: 'polkadot' };
+  }
 
   return { cg: c, gt: c };
 }
 
 /**
- * Fetches candidates from DexScreener (Priority 1)
+ * Fetches candidates from DexScreener (Priority 1: Contract Address + Search by Name/Symbol)
  */
-async function fetchDexScreenerCandidate(address: string): Promise<LogoCandidate | null> {
+async function fetchDexScreenerCandidate(
+  address: string,
+  tokenName?: string,
+  tokenSymbol?: string
+): Promise<LogoCandidate | null> {
   try {
     const cleanAddr = address.includes('__') ? address.split('__')[0] : address;
-    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${cleanAddr}`).catch(() => null);
-    if (!res || !res.ok) return null;
-    const data = await res.json().catch(() => null);
-    if (!data?.pairs || data.pairs.length === 0) return null;
+    if (cleanAddr && cleanAddr.length >= 1) {
+      const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${cleanAddr}`).catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data?.pairs && data.pairs.length > 0) {
+          for (const pair of data.pairs) {
+            const url = pair.info?.imageUrl || pair.info?.header;
+            if (url && typeof url === 'string' && url.startsWith('http')) {
+              return { provider: 'dexscreener', url, priority: 1 };
+            }
+          }
+        }
+      }
+    }
 
-    for (const pair of data.pairs) {
-      const url = pair.info?.imageUrl || pair.info?.header;
-      if (url && typeof url === 'string' && url.startsWith('http')) {
-        return { provider: 'dexscreener', url, priority: 1 };
+    // If direct contract address lookup did not find a logo, search DexScreener by symbol or name
+    const searchQuery = (tokenSymbol || tokenName || '').trim();
+    if (searchQuery) {
+      const searchRes = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(searchQuery)}`).catch(() => null);
+      if (searchRes && searchRes.ok) {
+        const searchData = await searchRes.json().catch(() => null);
+        if (searchData?.pairs && searchData.pairs.length > 0) {
+          // Find matching pair by symbol or name
+          for (const pair of searchData.pairs) {
+            const pairSym = (pair.baseToken?.symbol || '').toUpperCase();
+            const targetSym = (tokenSymbol || '').toUpperCase();
+            if (!targetSym || pairSym === targetSym) {
+              const url = pair.info?.imageUrl || pair.info?.header;
+              if (url && typeof url === 'string' && url.startsWith('http')) {
+                return { provider: 'dexscreener', url, priority: 1.2 };
+              }
+            }
+          }
+        }
       }
     }
   } catch {}
@@ -158,27 +190,62 @@ async function fetchDexScreenerCandidate(address: string): Promise<LogoCandidate
 }
 
 /**
- * Fetches candidates from CoinGecko (Priority 2: by contract address + platform)
+ * Fetches candidates from CoinGecko (Priority 2: Platform Contract + CoinGecko Search by Name / Symbol)
  */
 async function fetchCoinGeckoCandidate(
   address: string,
   chainId: string | number,
-  blockchainType?: string
+  blockchainType?: string,
+  tokenName?: string,
+  tokenSymbol?: string
 ): Promise<LogoCandidate | null> {
   try {
     const cleanAddr = address.includes('__') ? address.split('__')[0] : address;
     const { cg } = getPlatformSlug(chainId, blockchainType);
-    if (!cg) return null;
 
-    const res = await fetch(
-      `https://api.coingecko.com/api/v3/coins/${cg}/contract/${cleanAddr.toLowerCase()}`
-    ).catch(() => null);
+    // 1. Direct platform contract endpoint
+    if (cg && cleanAddr && cleanAddr.length >= 2) {
+      const res = await fetch(
+        `https://api.coingecko.com/api/v3/coins/${cg}/contract/${cleanAddr.toLowerCase()}`
+      ).catch(() => null);
 
-    if (res && res.ok) {
-      const data = await res.json().catch(() => null);
-      const url = data?.image?.large || data?.image?.small || data?.image?.thumb;
-      if (url && typeof url === 'string' && url.startsWith('http')) {
-        return { provider: 'coingecko', url, priority: 2 };
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        const url = data?.image?.large || data?.image?.small || data?.image?.thumb;
+        if (url && typeof url === 'string' && url.startsWith('http')) {
+          return { provider: 'coingecko', url, priority: 2 };
+        }
+      }
+    }
+
+    // 2. CoinGecko Search API (by token name, symbol, or address)
+    const query = (tokenName || tokenSymbol || cleanAddr || '').trim();
+    if (query) {
+      const searchRes = await fetch(
+        `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(query)}`
+      ).catch(() => null);
+
+      if (searchRes && searchRes.ok) {
+        const searchData = await searchRes.json().catch(() => null);
+        const coins = searchData?.coins || [];
+        if (coins.length > 0) {
+          // Best match: exact symbol, or exact name, or first coin
+          const targetSym = (tokenSymbol || '').toUpperCase();
+          const targetName = (tokenName || '').toLowerCase();
+          
+          let matchedCoin = coins.find((c: any) => targetSym && c.symbol?.toUpperCase() === targetSym);
+          if (!matchedCoin && targetName) {
+            matchedCoin = coins.find((c: any) => c.name?.toLowerCase() === targetName);
+          }
+          if (!matchedCoin) {
+            matchedCoin = coins[0];
+          }
+
+          const url = matchedCoin?.large || matchedCoin?.thumb;
+          if (url && typeof url === 'string' && url.startsWith('http')) {
+            return { provider: 'coingecko', url, priority: 2.2 };
+          }
+        }
       }
     }
   } catch {}
@@ -186,27 +253,47 @@ async function fetchCoinGeckoCandidate(
 }
 
 /**
- * Fetches candidates from GeckoTerminal (Priority 3: by network + token contract address)
+ * Fetches candidates from GeckoTerminal (Priority 3: Network + Contract Address or Token Query)
  */
 async function fetchGeckoTerminalCandidate(
   address: string,
   chainId: string | number,
-  blockchainType?: string
+  blockchainType?: string,
+  tokenName?: string,
+  tokenSymbol?: string
 ): Promise<LogoCandidate | null> {
   try {
     const cleanAddr = address.includes('__') ? address.split('__')[0] : address;
     const { gt } = getPlatformSlug(chainId, blockchainType);
-    if (!gt) return null;
+    if (gt && cleanAddr) {
+      const res = await fetch(
+        `https://api.geckoterminal.com/api/v2/networks/${gt}/tokens/${cleanAddr}`
+      ).catch(() => null);
 
-    const res = await fetch(
-      `https://api.geckoterminal.com/api/v2/networks/${gt}/tokens/${cleanAddr}`
-    ).catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        const url = data?.data?.attributes?.image_url;
+        if (url && typeof url === 'string' && url.startsWith('http')) {
+          return { provider: 'geckoterminal', url, priority: 3 };
+        }
+      }
+    }
 
-    if (res && res.ok) {
-      const data = await res.json().catch(() => null);
-      const url = data?.data?.attributes?.image_url;
-      if (url && typeof url === 'string' && url.startsWith('http')) {
-        return { provider: 'geckoterminal', url, priority: 3 };
+    // GeckoTerminal Search by Query (name / symbol)
+    const q = (tokenSymbol || tokenName || '').trim();
+    if (q) {
+      const searchRes = await fetch(
+        `https://api.geckoterminal.com/api/v2/search/pools?query=${encodeURIComponent(q)}`
+      ).catch(() => null);
+      if (searchRes && searchRes.ok) {
+        const searchData = await searchRes.json().catch(() => null);
+        const pools = searchData?.data || [];
+        for (const pool of pools) {
+          const img = pool.attributes?.token_image_url || pool.attributes?.base_token_image_url;
+          if (img && typeof img === 'string' && img.startsWith('http')) {
+            return { provider: 'geckoterminal', url: img, priority: 3.2 };
+          }
+        }
       }
     }
   } catch {}
@@ -297,6 +384,32 @@ async function fetchChainRegistryCandidate(
 }
 
 /**
+ * Fetches candidates from CoinCap / SpotHQ cryptocurrency icons CDN by Symbol
+ */
+function getIconCdnCandidates(tokenSymbol?: string): LogoCandidate[] {
+  if (!tokenSymbol || !tokenSymbol.trim()) return [];
+  const sym = tokenSymbol.trim().toLowerCase();
+  
+  return [
+    {
+      provider: 'coincap',
+      url: `https://assets.coincap.io/assets/icons/${sym}@2x.png`,
+      priority: 4.8,
+    },
+    {
+      provider: 'github_cdn',
+      url: `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${sym}.png`,
+      priority: 4.9,
+    },
+    {
+      provider: 'github_cdn',
+      url: `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/svg/color/${sym}.svg`,
+      priority: 5.0,
+    },
+  ];
+}
+
+/**
  * Fetches candidates from TrustWallet / GitHub CDN (Priority 5)
  */
 function getGitHubCdnCandidate(
@@ -308,19 +421,25 @@ function getGitHubCdnCandidate(
   if (!tw) return null;
   const cleanAddr = address.includes('__') ? address.split('__')[0] : address;
   const cdnUrl = `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/${tw}/assets/${cleanAddr}/logo.png`;
-  return { provider: 'github_cdn', url: cdnUrl, priority: 5 };
+  return { provider: 'github_cdn', url: cdnUrl, priority: 5.1 };
 }
 
 /**
  * Multi-Provider Token Logo Resolver
  *
+ * Utilizes:
+ * 1. Contract Address
+ * 2. Token Symbol
+ * 3. Token Name
+ * 4. Blockchain Ecosystem
+ *
  * Queries all candidates in parallel, filters and sorts by deterministic priority:
- * 1. DexScreener (Priority 1)
- * 2. CoinGecko (Priority 2)
- * 3. GeckoTerminal (Priority 3)
- * 4. Chain Registries (Priority 4)
- * 5. GitHub / CDN (Priority 5)
- * 6. Provided Initial URL (Priority 6 if valid)
+ * 1. DexScreener (Direct contract & name/symbol pair search)
+ * 2. CoinGecko (Platform contract lookup & coin search by name/symbol)
+ * 3. GeckoTerminal (Network token lookup & liquidity pool search)
+ * 4. Chain Registries (Pump.fun, RugCheck, Jupiter, TonAPI, Tronscan)
+ * 5. Web3 Icon CDNs (CoinCap, SpotHQ, TrustWallet)
+ * 6. Provided Initial URL (if valid)
  *
  * Sequentially tests rendering of candidate URLs; uses the first one that successfully renders in the browser.
  * NEVER throws or fails token verification.
@@ -330,9 +449,10 @@ export async function resolveTokenLogoWithFallback(
   chainId: string | number,
   initialLogoUrl?: string,
   blockchainType?: string,
-  tokenSymbol?: string
+  tokenSymbol?: string,
+  tokenName?: string
 ): Promise<ResolvedTokenLogo> {
-  const cacheKey = `${chainId}_${address}`.toLowerCase();
+  const cacheKey = `${chainId}_${address}_${tokenSymbol || ''}_${tokenName || ''}`.toLowerCase();
 
   // 1. Check in-memory working cache
   if (workingLogoCache.has(cacheKey)) {
@@ -352,9 +472,9 @@ export async function resolveTokenLogoWithFallback(
   }
 
   const candidatePromises: Promise<LogoCandidate | null>[] = [
-    fetchDexScreenerCandidate(address),
-    fetchCoinGeckoCandidate(address, chainId, blockchainType),
-    fetchGeckoTerminalCandidate(address, chainId, blockchainType),
+    fetchDexScreenerCandidate(address, tokenName, tokenSymbol),
+    fetchCoinGeckoCandidate(address, chainId, blockchainType, tokenName, tokenSymbol),
+    fetchGeckoTerminalCandidate(address, chainId, blockchainType, tokenName, tokenSymbol),
     fetchChainRegistryCandidate(address, chainId, blockchainType),
   ];
 
@@ -365,9 +485,14 @@ export async function resolveTokenLogoWithFallback(
   const gh = getGitHubCdnCandidate(address, chainId, blockchainType);
   if (gh) candidates.push(gh);
 
+  // Add Symbol-based Web3 Icon CDNs (SpotHQ, CoinCap)
+  if (tokenSymbol) {
+    const iconCdns = getIconCdnCandidates(tokenSymbol);
+    candidates.push(...iconCdns);
+  }
+
   // If caller provided an initial logo URL (e.g. from user input or prior state)
   if (initialLogoUrl && typeof initialLogoUrl === 'string' && initialLogoUrl.trim()) {
-    // If not already in candidates list, add as custom/candidate
     const exists = candidates.some((c) => c.url === initialLogoUrl.trim());
     if (!exists) {
       candidates.push({
@@ -378,7 +503,7 @@ export async function resolveTokenLogoWithFallback(
     }
   }
 
-  // Sort by deterministic priority order (1 -> 2 -> 3 -> 4 -> 5)
+  // Sort by deterministic priority order
   candidates.sort((a, b) => a.priority - b.priority);
 
   // Sequentially test candidate URLs for rendering validation

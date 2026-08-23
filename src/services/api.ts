@@ -7,6 +7,10 @@ import {
   isSolanaAddress,
   isTronAddress,
   isTonAddress,
+  isPolkadotAddress,
+  isCosmosAddress,
+  isNearAddress,
+  isAptosOrSuiAddress,
 } from '../constants/chains';
 
 /**
@@ -24,7 +28,30 @@ export function resolveNetworkFromProviderChainId(
 } {
   const clean = (providerChainId || '').toLowerCase().trim();
 
-  // Non-EVM Chains
+  // 1. Polkadot & Substrate Ecosystem
+  if (
+    clean === 'polkadot' ||
+    clean === 'substrate' ||
+    clean === 'kusama' ||
+    clean === 'assethub' ||
+    clean === 'statemint' ||
+    clean === 'statemine' ||
+    clean === 'astar' ||
+    clean === 'hydradx' ||
+    clean === 'subtensor' ||
+    clean === 'bittensor' ||
+    isPolkadotAddress(address)
+  ) {
+    const isKusama = clean === 'kusama' || clean === 'statemine';
+    return {
+      blockchainType: 'polkadot',
+      blockchainName: isKusama ? 'Kusama Network' : 'Polkadot Network',
+      chainId: isKusama ? 'kusama' : 'polkadot',
+      tokenStandard: 'Substrate Asset',
+    };
+  }
+
+  // 2. TON Network
   if (clean === 'ton' || clean === 'ton-network' || isTonAddress(address)) {
     return {
       blockchainType: 'ton',
@@ -34,6 +61,7 @@ export function resolveNetworkFromProviderChainId(
     };
   }
 
+  // 3. XRP Ledger
   if (clean === 'xrpl' || clean === 'xrp' || clean === 'ripple' || isXrplAddress(address)) {
     return {
       blockchainType: 'xrpl',
@@ -43,6 +71,7 @@ export function resolveNetworkFromProviderChainId(
     };
   }
 
+  // 4. Solana
   if (clean === 'solana' || clean === 'sol' || clean === 'mainnet-beta' || isSolanaAddress(address)) {
     return {
       blockchainType: 'solana',
@@ -52,6 +81,7 @@ export function resolveNetworkFromProviderChainId(
     };
   }
 
+  // 5. TRON
   if (clean === 'tron' || clean === 'trx' || isTronAddress(address)) {
     return {
       blockchainType: 'tron',
@@ -61,7 +91,63 @@ export function resolveNetworkFromProviderChainId(
     };
   }
 
-  // EVM chains mapping from provider IDs
+  // 6. Cosmos / IBC Ecosystem
+  if (
+    clean === 'cosmos' ||
+    clean === 'osmosis' ||
+    clean === 'injective' ||
+    clean === 'celestia' ||
+    clean === 'sei' ||
+    clean === 'kujira' ||
+    isCosmosAddress(address)
+  ) {
+    const cosmosName =
+      clean === 'osmosis'
+        ? 'Osmosis'
+        : clean === 'injective'
+        ? 'Injective'
+        : clean === 'celestia'
+        ? 'Celestia'
+        : clean === 'sei'
+        ? 'Sei Network'
+        : 'Cosmos Hub';
+    return {
+      blockchainType: 'cosmos',
+      blockchainName: cosmosName,
+      chainId: clean || 'cosmos',
+      tokenStandard: 'IBC Token',
+    };
+  }
+
+  // 7. Move Ecosystem (Sui / Aptos)
+  if (clean === 'sui') {
+    return {
+      blockchainType: 'sui',
+      blockchainName: 'Sui Network',
+      chainId: 'sui',
+      tokenStandard: 'Coin',
+    };
+  }
+  if (clean === 'aptos') {
+    return {
+      blockchainType: 'aptos',
+      blockchainName: 'Aptos',
+      chainId: 'aptos',
+      tokenStandard: 'Fungible Asset',
+    };
+  }
+
+  // 8. NEAR Protocol
+  if (clean === 'near' || isNearAddress(address)) {
+    return {
+      blockchainType: 'near',
+      blockchainName: 'NEAR Protocol',
+      chainId: 'near',
+      tokenStandard: 'NEP-141',
+    };
+  }
+
+  // 9. EVM chains mapping from provider IDs
   const evmChainMap: Record<string, { chainId: string; name: string }> = {
     polygon: { chainId: '137', name: 'Polygon' },
     polygon_pos: { chainId: '137', name: 'Polygon' },
@@ -77,6 +163,9 @@ export function resolveNetworkFromProviderChainId(
     scroll: { chainId: '534352', name: 'Scroll' },
     fantom: { chainId: '250', name: 'Fantom' },
     celo: { chainId: '42220', name: 'Celo' },
+    berachain: { chainId: '80094', name: 'Berachain' },
+    monad: { chainId: '10143', name: 'Monad' },
+    hyperevm: { chainId: '999', name: 'HyperEVM' },
   };
 
   if (evmChainMap[clean]) {
@@ -88,14 +177,24 @@ export function resolveNetworkFromProviderChainId(
     };
   }
 
-  const chainInfo = getChainInfo(clean || preferredChainId);
+  // If the address format is strictly non-EVM (e.g. SS58, Base58), avoid defaulting to Polygon/EVM
+  if (isPolkadotAddress(address)) {
+    return {
+      blockchainType: 'polkadot',
+      blockchainName: 'Polkadot Network',
+      chainId: 'polkadot',
+      tokenStandard: 'Substrate Asset',
+    };
+  }
+
   const isEvm = isEvmChain(clean || preferredChainId);
+  const chainInfo = getChainInfo(clean || preferredChainId);
 
   return {
-    blockchainType: isEvm ? 'evm' : clean || 'unknown',
-    blockchainName: chainInfo.name,
-    chainId: String(chainInfo.id || preferredChainId),
-    tokenStandard: isEvm ? 'ERC-20' : 'token',
+    blockchainType: isEvm ? 'evm' : clean || 'non_evm',
+    blockchainName: chainInfo.name || (clean ? clean.toUpperCase() : 'Decentralized Network'),
+    chainId: String(chainInfo.id || clean || preferredChainId),
+    tokenStandard: isEvm ? 'ERC-20' : 'Token Asset',
   };
 }
 
@@ -321,6 +420,60 @@ export async function discoverToken(
     };
   }
 
+  // 6. Polkadot & Substrate fallback discovery
+  if (isPolkadotAddress(address)) {
+    const nonEvm = await fetchNonEvmTokenMetadata(address, 'polkadot', 'polkadot').catch(() => null);
+    if (nonEvm) {
+      return {
+        address,
+        name: nonEvm.name,
+        symbol: nonEvm.symbol,
+        decimals: nonEvm.decimals || 10,
+        blockchainType: 'polkadot',
+        blockchainName: 'Polkadot Network',
+        chainId: 'polkadot',
+        tokenStandard: 'Substrate Asset',
+        asset_identifier_type: 'substrate_asset',
+        logoUrl: nonEvm.logoUrl,
+        source: 'polkadot-provider',
+      };
+    }
+    const short = address.slice(0, 4).toUpperCase();
+    return {
+      address,
+      name: `Polkadot Asset (${short})`,
+      symbol: short || 'DOT',
+      decimals: 10,
+      blockchainType: 'polkadot',
+      blockchainName: 'Polkadot Network',
+      chainId: 'polkadot',
+      tokenStandard: 'Substrate Asset',
+      asset_identifier_type: 'substrate_asset',
+      logoUrl: 'https://cryptologos.cc/logos/polkadot-new-dot-logo.svg?v=035',
+      source: 'polkadot-provider',
+    };
+  }
+
+  // 7. Cosmos / Move / Generic non-EVM fallback discovery
+  if (!address.startsWith('0x') && address.length >= 1) {
+    const nonEvm = await fetchNonEvmTokenMetadata(address, 'non_evm', 'non_evm').catch(() => null);
+    if (nonEvm) {
+      return {
+        address,
+        name: nonEvm.name,
+        symbol: nonEvm.symbol,
+        decimals: nonEvm.decimals || 18,
+        blockchainType: nonEvm.blockchainType || 'non_evm',
+        blockchainName: nonEvm.blockchainName || 'Multi-Chain Network',
+        chainId: nonEvm.chainId || 'custom',
+        tokenStandard: nonEvm.tokenStandard || 'Token Asset',
+        asset_identifier_type: 'asset_identifier',
+        logoUrl: nonEvm.logoUrl,
+        source: 'generic-provider',
+      };
+    }
+  }
+
   // Return null if token metadata could not be discovered via indexers or providers
   return null;
 }
@@ -355,7 +508,9 @@ interface DexScreenerPair {
  */
 export async function fetchDexScreenerData(
   address: string,
-  chainId: ChainId
+  chainId: ChainId,
+  tokenName?: string,
+  tokenSymbol?: string
 ): Promise<(Partial<MarketData> & { name?: string; symbol?: string; logoUrl?: string }) | null> {
   try {
     const baseAddress = address.includes('__')
@@ -364,19 +519,34 @@ export async function fetchDexScreenerData(
         ? address.split('_')[0]
         : address;
 
-    let response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
-    let data = response.ok ? await response.json() : null;
+    let data: any = null;
 
-    if ((!data || !data.pairs || data.pairs.length === 0) && baseAddress !== address) {
-      const baseRes = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${baseAddress}`);
-      if (baseRes.ok) {
-        data = await baseRes.json();
+    if (address && address.length >= 1) {
+      let response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`).catch(() => null);
+      if (response && response.ok) {
+        data = await response.json().catch(() => null);
+      }
+
+      if ((!data || !data.pairs || data.pairs.length === 0) && baseAddress !== address) {
+        const baseRes = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${baseAddress}`).catch(() => null);
+        if (baseRes && baseRes.ok) {
+          data = await baseRes.json().catch(() => null);
+        }
+      }
+
+      // Fallback to dex search with address if direct token lookup returned no pairs
+      if (!data || !data.pairs || data.pairs.length === 0) {
+        const searchRes = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(address)}`).catch(() => null);
+        if (searchRes && searchRes.ok) {
+          data = await searchRes.json().catch(() => null);
+        }
       }
     }
 
-    // Fallback to dex search if direct token lookup returned no pairs
-    if (!data || !data.pairs || data.pairs.length === 0) {
-      const searchRes = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${address}`).catch(() => null);
+    // Secondary fallback: Search DexScreener by Token Symbol or Name
+    const secondaryQuery = (tokenSymbol || tokenName || '').trim();
+    if ((!data || !data.pairs || data.pairs.length === 0) && secondaryQuery) {
+      const searchRes = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(secondaryQuery)}`).catch(() => null);
       if (searchRes && searchRes.ok) {
         data = await searchRes.json().catch(() => null);
       }
@@ -676,6 +846,98 @@ export async function fetchNonEvmTokenMetadata(
     };
   }
 
+  // 5. Polkadot & Substrate Assets
+  const isPolkadot = bType === 'polkadot' || bType === 'substrate' || bType === 'kusama' || isPolkadotAddress(clean);
+  if (isPolkadot) {
+    let name: string | undefined;
+    let symbol: string | undefined;
+    let logoUrl: string | undefined;
+    let decimals = 10;
+    let totalSupply = '1000000000';
+
+    // 5a. DexScreener lookup for Polkadot / Substrate DEX pairs (HydraDX, Asset Hub, Astar)
+    try {
+      const dexRes = await fetchDexScreenerData(clean, 'polkadot' as any).catch(() => null);
+      if (dexRes) {
+        name = dexRes.name;
+        symbol = dexRes.symbol;
+        logoUrl = dexRes.logoUrl || logoUrl;
+      }
+    } catch (e) {
+      console.warn('[Polkadot] DexScreener fetch note:', e);
+    }
+
+    // 5b. Subscan / Coingecko search
+    if (!name || !symbol) {
+      try {
+        const cgRes = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(clean)}`).catch(() => null);
+        if (cgRes && cgRes.ok) {
+          const cgData = await cgRes.json().catch(() => null);
+          const firstCoin = cgData?.coins?.[0];
+          if (firstCoin) {
+            name = firstCoin.name;
+            symbol = (firstCoin.symbol || 'DOT').toUpperCase();
+            logoUrl = firstCoin.large || firstCoin.thumb || logoUrl;
+          }
+        }
+      } catch (e) {
+        console.warn('[Polkadot] CoinGecko note:', e);
+      }
+    }
+
+    // 5c. Synthesize clean Polkadot / Substrate fallback
+    if (!name || !symbol) {
+      if (clean.includes(':')) {
+        const parts = clean.split(':');
+        symbol = parts[1].toUpperCase();
+        name = `${symbol} (Substrate Asset)`;
+      } else {
+        const short = clean.slice(0, 4).toUpperCase();
+        name = `Polkadot Asset (${short})`;
+        symbol = short || 'DOT';
+      }
+    }
+
+    return {
+      address: clean,
+      chainId: 'polkadot',
+      blockchainType: 'polkadot',
+      blockchainName: 'Polkadot Network',
+      tokenStandard: 'Substrate Asset',
+      name: name || 'Polkadot Asset',
+      symbol: symbol || 'DOT',
+      decimals,
+      totalSupply,
+      rawTotalSupply: totalSupply,
+      logoUrl: logoUrl || 'https://cryptologos.cc/logos/polkadot-new-dot-logo.svg?v=035',
+      isRenounced: true,
+    };
+  }
+
+  // 6. Generic Non-EVM Asset Fallback (Cosmos, Move, NEAR, etc.)
+  if (isCosmosAddress(clean) || isNearAddress(clean) || isAptosOrSuiAddress(clean) || (!clean.startsWith('0x') && clean.length >= 1)) {
+    const isCosmos = isCosmosAddress(clean);
+    const isNear = isNearAddress(clean);
+    const chainName = isCosmos ? 'Cosmos Hub' : isNear ? 'NEAR Protocol' : 'Multi-Chain Network';
+    const chainType = isCosmos ? 'cosmos' : isNear ? 'near' : 'non_evm';
+    const standard = isCosmos ? 'IBC Token' : isNear ? 'NEP-141' : 'Asset';
+    const shortSym = clean.includes('.') ? clean.split('.')[0].toUpperCase() : clean.slice(0, 4).toUpperCase();
+
+    return {
+      address: clean,
+      chainId: chainType,
+      blockchainType: chainType,
+      blockchainName: chainName,
+      tokenStandard: standard,
+      name: `${chainName} Token (${shortSym})`,
+      symbol: shortSym || 'TOKEN',
+      decimals: 18,
+      totalSupply: '1000000000',
+      rawTotalSupply: '1000000000',
+      isRenounced: true,
+    };
+  }
+
   return null;
 }
 
@@ -693,37 +955,105 @@ export interface CoinGeckoTokenData {
 
 /**
  * Fetches token supply and market details from CoinGecko public endpoints
+ * Uses platform contract lookup with robust CoinGecko Search API fallback by name and symbol.
  */
 export async function fetchCoinGeckoSupplyData(
   address: string,
-  chainId: ChainId
+  chainId: ChainId,
+  tokenName?: string,
+  tokenSymbol?: string
 ): Promise<CoinGeckoTokenData | null> {
   try {
+    const clean = (address || '').trim().toLowerCase();
     const platform = SUPPORTED_CHAINS[chainId]?.coingeckoPlatform || 'ethereum';
-    const res = await fetch(
-      `https://api.coingecko.com/api/v3/coins/${platform}/contract/${address.toLowerCase()}`
-    );
 
-    if (!res.ok) return null;
+    // 1. Direct platform contract lookup
+    if (clean && clean.length >= 2) {
+      const res = await fetch(
+        `https://api.coingecko.com/api/v3/coins/${platform}/contract/${clean}`
+      ).catch(() => null);
 
-    const data = await res.json();
-    const marketData = data.market_data;
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data) {
+          const marketData = data.market_data;
+          return {
+            name: data.name || undefined,
+            symbol: data.symbol ? data.symbol.toUpperCase() : undefined,
+            logoUrl: data.image?.large || data.image?.small || data.image?.thumb || undefined,
+            priceUsd: marketData?.current_price?.usd || undefined,
+            priceChange24h: marketData?.price_change_percentage_24h || undefined,
+            marketCapUsd: marketData?.market_cap?.usd || undefined,
+            circulatingSupply: marketData?.circulating_supply || undefined,
+            totalSupplyCG: marketData?.total_supply || marketData?.max_supply || undefined,
+            maxSupplyCG: marketData?.max_supply || undefined,
+          };
+        }
+      }
+    }
 
-    return {
-      name: data.name || undefined,
-      symbol: data.symbol ? data.symbol.toUpperCase() : undefined,
-      logoUrl: data.image?.large || data.image?.small || undefined,
-      priceUsd: marketData?.current_price?.usd || undefined,
-      priceChange24h: marketData?.price_change_percentage_24h || undefined,
-      marketCapUsd: marketData?.market_cap?.usd || undefined,
-      circulatingSupply: marketData?.circulating_supply || undefined,
-      totalSupplyCG: marketData?.total_supply || marketData?.max_supply || undefined,
-      maxSupplyCG: marketData?.max_supply || undefined,
-    };
+    // 2. CoinGecko Search API query by Name, Symbol, or Address
+    const query = (tokenName || tokenSymbol || clean || '').trim();
+    if (query) {
+      const searchRes = await fetch(
+        `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(query)}`
+      ).catch(() => null);
+
+      if (searchRes && searchRes.ok) {
+        const searchData = await searchRes.json().catch(() => null);
+        const coins = searchData?.coins || [];
+        if (coins.length > 0) {
+          const targetSym = (tokenSymbol || '').toUpperCase();
+          const targetName = (tokenName || '').toLowerCase();
+
+          let matchedCoin = coins.find((c: any) => targetSym && c.symbol?.toUpperCase() === targetSym);
+          if (!matchedCoin && targetName) {
+            matchedCoin = coins.find((c: any) => c.name?.toLowerCase() === targetName);
+          }
+          if (!matchedCoin) {
+            matchedCoin = coins[0];
+          }
+
+          if (matchedCoin?.id) {
+            // Attempt to fetch coin details for full market data
+            try {
+              const coinRes = await fetch(
+                `https://api.coingecko.com/api/v3/coins/${matchedCoin.id}?localization=false&tickers=false&community_data=false&developer_data=false`
+              ).catch(() => null);
+
+              if (coinRes && coinRes.ok) {
+                const coinData = await coinRes.json().catch(() => null);
+                if (coinData) {
+                  const m = coinData.market_data;
+                  return {
+                    name: coinData.name || matchedCoin.name,
+                    symbol: (coinData.symbol || matchedCoin.symbol || '').toUpperCase(),
+                    logoUrl: coinData.image?.large || coinData.image?.small || matchedCoin.large || matchedCoin.thumb || undefined,
+                    priceUsd: m?.current_price?.usd || undefined,
+                    priceChange24h: m?.price_change_percentage_24h || undefined,
+                    marketCapUsd: m?.market_cap?.usd || undefined,
+                    circulatingSupply: m?.circulating_supply || undefined,
+                    totalSupplyCG: m?.total_supply || m?.max_supply || undefined,
+                    maxSupplyCG: m?.max_supply || undefined,
+                  };
+                }
+              }
+            } catch {}
+
+            // If direct coin lookup fails (e.g. rate limit), return what search provided
+            return {
+              name: matchedCoin.name,
+              symbol: (matchedCoin.symbol || '').toUpperCase(),
+              logoUrl: matchedCoin.large || matchedCoin.thumb || undefined,
+            };
+          }
+        }
+      }
+    }
   } catch (err) {
     console.warn('[API] CoinGecko supply fetch error:', err);
-    return null;
   }
+  return null;
 }
 
 export interface BlockchainLookupResult {
@@ -797,42 +1127,99 @@ export async function lookupBlockchainForToken(
     };
   }
 
-  // 2. EVM Address: Look up exact blockchain via DexScreener liquidity index
+  if (isPolkadotAddress(address)) {
+    return {
+      blockchain: 'Polkadot Network',
+      chainId: 'polkadot',
+      blockchainType: 'polkadot',
+      tokenStandard: 'Substrate Asset',
+      source: 'address_pattern',
+    };
+  }
+
+  if (isCosmosAddress(address)) {
+    return {
+      blockchain: 'Cosmos Hub',
+      chainId: 'cosmos',
+      blockchainType: 'cosmos',
+      tokenStandard: 'IBC Token',
+      source: 'address_pattern',
+    };
+  }
+
+  if (isNearAddress(address)) {
+    return {
+      blockchain: 'NEAR Protocol',
+      chainId: 'near',
+      blockchainType: 'near',
+      tokenStandard: 'NEP-141',
+      source: 'address_pattern',
+    };
+  }
+
+  if (isAptosOrSuiAddress(address)) {
+    return {
+      blockchain: 'Move Ecosystem',
+      chainId: 'sui',
+      blockchainType: 'sui',
+      tokenStandard: 'Coin',
+      source: 'address_pattern',
+    };
+  }
+
+  // 2. Multi-Chain Address Search: Look up exact blockchain via DexScreener liquidity index
   try {
     const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.pairs && data.pairs.length > 0) {
-        const sorted = [...data.pairs].sort(
-          (a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0)
-        );
-        const topPair = sorted[0];
-        const rawChainId = (topPair.chainId || '').toLowerCase().trim();
-        const resolved = resolveNetworkFromProviderChainId(rawChainId, address, preferredChainId);
-        return {
-          blockchain: resolved.blockchainName,
-          chainId: resolved.chainId,
-          blockchainType: resolved.blockchainType,
-          tokenStandard: resolved.tokenStandard,
-          name: topPair.baseToken?.name,
-          symbol: topPair.baseToken?.symbol?.toUpperCase(),
-          source: 'dexscreener_lookup',
-        };
+    let data = res.ok ? await res.json() : null;
+
+    if (!data || !data.pairs || data.pairs.length === 0) {
+      const searchRes = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${address}`).catch(() => null);
+      if (searchRes && searchRes.ok) {
+        data = await searchRes.json().catch(() => null);
       }
+    }
+
+    if (data && data.pairs && data.pairs.length > 0) {
+      const sorted = [...data.pairs].sort(
+        (a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0)
+      );
+      const topPair = sorted[0];
+      const rawChainId = (topPair.chainId || '').toLowerCase().trim();
+      const resolved = resolveNetworkFromProviderChainId(rawChainId, address, preferredChainId);
+      return {
+        blockchain: resolved.blockchainName,
+        chainId: resolved.chainId,
+        blockchainType: resolved.blockchainType,
+        tokenStandard: resolved.tokenStandard,
+        name: topPair.baseToken?.name,
+        symbol: topPair.baseToken?.symbol?.toUpperCase(),
+        source: 'dexscreener_lookup',
+      };
     }
   } catch (err) {
     console.warn('[lookupBlockchainForToken] DexScreener lookup error:', err);
   }
 
-  // 3. Fallback to preferred or default chain info
-  const prefInfo = getChainInfo(preferredChainId);
-  const isEvm = isEvmChain(preferredChainId);
+  // 3. If standard EVM address format (0x + 40 hex chars)
+  if (/^0x[a-fA-F0-9]{40}$/.test(address)) {
+    const prefInfo = getChainInfo(preferredChainId);
+    const isEvm = isEvmChain(preferredChainId);
+    return {
+      blockchain: prefInfo.name,
+      chainId: String(prefInfo.id || preferredChainId),
+      blockchainType: isEvm ? 'evm' : 'unknown',
+      tokenStandard: isEvm ? 'ERC-20' : 'token',
+      source: 'preferred_chain',
+    };
+  }
+
+  // 4. Non-EVM Fallback (Unknown blockchain != invalid asset)
   return {
-    blockchain: prefInfo.name,
-    chainId: String(prefInfo.id || preferredChainId),
-    blockchainType: isEvm ? 'evm' : 'unknown',
-    tokenStandard: isEvm ? 'ERC-20' : 'token',
-    source: 'preferred_chain',
+    blockchain: 'Multi-Chain Asset',
+    chainId: 'custom',
+    blockchainType: 'non_evm',
+    tokenStandard: 'Asset Identifier',
+    source: 'generic_detector',
   };
 }
 

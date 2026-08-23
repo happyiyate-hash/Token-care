@@ -391,7 +391,9 @@ export const TokenInformationCard: React.FC<TokenInformationCardProps> = ({
 
                 <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md">
                   <div className="text-[8px] text-zinc-400">Standard</div>
-                  <div className="font-bold text-white font-mono text-[10px]">ERC-20</div>
+                  <div className="font-bold text-white font-mono text-[10px] truncate" title={metadata.tokenStandard || 'ERC-20'}>
+                    {metadata.tokenStandard || 'ERC-20'}
+                  </div>
                 </div>
                 <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md">
                   <div className="text-[8px] text-zinc-400">Decimals</div>
@@ -412,24 +414,53 @@ export const TokenInformationCard: React.FC<TokenInformationCardProps> = ({
 
             {/* Explorer & Dex Links */}
             <div className="flex items-center justify-between text-[9px] pt-1.5 border-t border-zinc-800/60">
-              <a
-                href={`${chainInfo.explorerUrl}/token/${metadata.address}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
-              >
-                <span>{chainInfo.name.split(' ')[0]}scan</span>
-                <ExternalLink className="w-2.5 h-2.5" />
-              </a>
-              <a
-                href={`https://dexscreener.com/${chainInfo.dexScreenerChain}/${metadata.address}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
-              >
-                <span>DEX Chart</span>
-                <ExternalLink className="w-2.5 h-2.5" />
-              </a>
+              {(() => {
+                const bType = (metadata.blockchainType || String(selectedChain)).toLowerCase();
+                let explorerHref = `${chainInfo?.explorerUrl || 'https://polygonscan.com'}/token/${metadata.address}`;
+                let explorerLabel = `${chainInfo?.name?.split(' ')[0] || 'Block'}scan`;
+
+                if (bType === 'polkadot' || bType === 'substrate' || bType === 'kusama') {
+                  explorerHref = `https://${bType === 'kusama' ? 'kusama' : 'polkadot'}.subscan.io/account/${metadata.address}`;
+                  explorerLabel = 'Subscan';
+                } else if (bType === 'solana') {
+                  explorerHref = `https://solscan.io/token/${metadata.address}`;
+                  explorerLabel = 'Solscan';
+                } else if (bType === 'ton') {
+                  explorerHref = `https://tonviewer.com/${metadata.address.split('__')[0]}`;
+                  explorerLabel = 'Tonviewer';
+                } else if (bType === 'xrpl') {
+                  explorerHref = `https://xrpscan.com/account/${metadata.address.includes('.') ? metadata.address.split('.')[1] : metadata.address}`;
+                  explorerLabel = 'XRPScan';
+                } else if (bType === 'tron') {
+                  explorerHref = `https://tronscan.org/#/token20/${metadata.address}`;
+                  explorerLabel = 'Tronscan';
+                }
+
+                const dexChain = bType === 'solana' ? 'solana' : bType === 'ton' ? 'ton' : bType === 'xrpl' ? 'xrpl' : bType === 'tron' ? 'tron' : bType === 'polkadot' ? 'polkadot' : chainInfo?.dexScreenerChain || 'polygon';
+
+                return (
+                  <>
+                    <a
+                      href={explorerHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
+                    >
+                      <span>{explorerLabel}</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                    <a
+                      href={`https://dexscreener.com/${dexChain}/${metadata.address}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
+                    >
+                      <span>DEX Chart</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </>
+                );
+              })()}
             </div>
           </>
         )}

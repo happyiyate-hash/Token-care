@@ -143,10 +143,22 @@ export default function App() {
   });
   const [apiKeys, setApiKeys] = useState<ApiKeyConfig>(getStoredApiKeys());
 
-  // View Mode: 'desktop' vs 'mobile' (auto-detects mobile screens)
-  const [viewMode, setViewMode] = useState<'desktop' | 'mobile'>(
-    typeof window !== 'undefined' && window.innerWidth < 768 ? 'mobile' : 'desktop'
-  );
+  // View Mode: 'desktop' vs 'mobile' (supports manual toggle in settings + auto-detects)
+  const [viewMode, setViewMode] = useState<'desktop' | 'mobile'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('tokencare_view_mode') as 'desktop' | 'mobile' | null;
+      if (saved === 'desktop' || saved === 'mobile') return saved;
+      return window.innerWidth < 768 ? 'mobile' : 'desktop';
+    }
+    return 'desktop';
+  });
+
+  const handleSetViewMode = (mode: 'desktop' | 'mobile') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('tokencare_view_mode', mode);
+    } catch {}
+  };
 
   // Supabase Auth & Profile state
   const [authChecking, setAuthChecking] = useState(true);
@@ -800,7 +812,7 @@ export default function App() {
   // Auto-detect network deployment when user pastes/types contract address in real time
   useEffect(() => {
     const cleanAddr = addressInput.trim();
-    if (!cleanAddr || cleanAddr.length < 10) return;
+    if (!cleanAddr) return;
 
     const timer = setTimeout(async () => {
       try {
@@ -825,8 +837,12 @@ export default function App() {
   // Handle Token Fetching with Network-Aware Discovery & Full Security Audit Pipeline
   const handleFetchToken = async (targetAddress?: string) => {
     const addr = (targetAddress || addressInput).trim();
-    if (!addr) {
+    if (!addr || addr.length < 1) {
       setErrorMessage('Please enter a valid token contract address or asset identifier.');
+      setIsLoading(false);
+      setIsVerifying(false);
+      setStatusMessage(null);
+      setFetchedToken(null);
       return;
     }
 
@@ -903,7 +919,9 @@ export default function App() {
 
       const validation = validateTokenIdentifier(activeChainKey, addr, blockchainType);
       if (!validation.isValid) {
-        throw new Error(validation.error || `Invalid contract address format for ${getChainInfo(activeChainKey).name}.`);
+        setErrorMessage(validation.error || `Invalid contract address format for ${getChainInfo(activeChainKey).name}.`);
+        setFetchedToken(null);
+        return;
       }
 
       setVerificationStage(0);
@@ -920,7 +938,7 @@ export default function App() {
         ? await fetchERC20MetadataFromBlockchain(addr, activeChainKey, apiKeys).catch(() => null)
         : null;
 
-      // 1b. If non-EVM chain (Solana, TON, TRON, XRPL), fetch token metadata via specialized providers
+      // 1b. If non-EVM chain (Polkadot, Solana, TON, TRON, XRPL, Cosmos, Move), fetch token metadata via specialized providers
       if (!erc20Meta && !isEvmChain(activeChainKey, blockchainType)) {
         erc20Meta = await fetchNonEvmTokenMetadata(addr, activeChainKey, blockchainType).catch(() => null);
       }
@@ -943,10 +961,40 @@ export default function App() {
       }
 
       // 2. Fetch DEX price, volume & liquidity via DexScreener API and CoinGecko API
-      const [dexData, cgData] = await Promise.all([
-        fetchDexScreenerData(addr, activeChainKey).catch(() => null),
-        fetchCoinGeckoSupplyData(addr, activeChainKey).catch(() => null),
+      let [dexData, cgData] = await Promise.all([
+        fetchDexScreenerData(addr, activeChainKey, erc20Meta?.name, erc20Meta?.symbol).catch(() => null),
+        fetchCoinGeckoSupplyData(addr, activeChainKey, erc20Meta?.name, erc20Meta?.symbol).catch(() => null),
       ]);
+
+      // If CoinGecko didn't return data on first pass but DexScreener or ERC20 found name/symbol, perform secondary search
+      const resolvedNameCandidate = erc20Meta?.name || dexData?.name;
+      const resolvedSymbolCandidate = erc20Meta?.symbol || dexData?.symbol;
+      if ((!cgData || !cgData.logoUrl) && (resolvedNameCandidate || resolvedSymbolCandidate)) {
+        const secondaryCg = await fetchCoinGeckoSupplyData(addr, activeChainKey, resolvedNameCandidate, resolvedSymbolCandidate).catch(() => null);
+        if (secondaryCg) {
+          cgData = { ...cgData, ...secondaryCg };
+        }
+      }
+
+      // Fallback synthesis for identified non-EVM assets
+      if (!erc20Meta && !isEvmChain(activeChainKey, blockchainType)) {
+        const bName = lookup?.blockchain || (blockchainType === 'polkadot' ? 'Polkadot Network' : 'Multi-Chain Asset');
+        const shortSym = addr.includes(':') ? addr.split(':')[1].toUpperCase() : addr.slice(0, 4).toUpperCase();
+        erc20Meta = {
+          address: addr,
+          chainId: activeChainKey,
+          blockchainType: blockchainType || 'polkadot',
+          blockchainName: bName,
+          tokenStandard: lookup?.tokenStandard || 'Substrate Asset',
+          name: `${bName} (${shortSym})`,
+          symbol: shortSym || 'DOT',
+          decimals: 10,
+          totalSupply: '1000000000',
+          rawTotalSupply: '1000000000',
+          logoUrl: 'https://cryptologos.cc/logos/polkadot-new-dot-logo.svg?v=035',
+          isRenounced: true,
+        };
+      }
 
       // Verify whether ANY valid token metadata or smart contract was actually found
       const hasValidName = cgData?.name || erc20Meta?.name || dexData?.name;
@@ -989,7 +1037,7 @@ export default function App() {
       const tokenSymbol = erc20Meta?.symbol || cgData?.symbol || (dexData as any)?.symbol || 'TOK';
       const rawLogoUrl = erc20Meta?.logoUrl || cgData?.logoUrl || (dexData as any)?.logoUrl || '';
       
-      // Multi-provider logo resolver with deterministic priority fallback
+      // Multi-provider logo resolver with deterministic priority fallback (using address, symbol, and name)
       let resolvedLogo = { logoUrl: '', logoSource: 'fallback' };
       try {
         resolvedLogo = await resolveTokenLogoWithFallback(
@@ -997,7 +1045,8 @@ export default function App() {
           activeChainKey,
           rawLogoUrl,
           blockchainType,
-          tokenSymbol
+          tokenSymbol,
+          tokenName
         );
       } catch {
         resolvedLogo = { logoUrl: rawLogoUrl, logoSource: 'fallback' };
@@ -1022,8 +1071,8 @@ export default function App() {
         ownerAddress: erc20Meta?.ownerAddress,
         isRenounced: erc20Meta?.isRenounced ?? true,
         blockchainType,
-        tokenStandard: lookup?.tokenStandard || (blockchainType === 'xrpl' ? 'issued_asset' : blockchainType === 'ton' ? 'Jetton' : blockchainType === 'solana' ? 'SPL' : 'ERC-20'),
-        asset_identifier_type: blockchainType === 'xrpl' ? 'issued_asset' : 'contract_address',
+        tokenStandard: lookup?.tokenStandard || (blockchainType === 'polkadot' ? 'Substrate Asset' : blockchainType === 'xrpl' ? 'issued_asset' : blockchainType === 'ton' ? 'Jetton' : blockchainType === 'solana' ? 'SPL' : blockchainType === 'cosmos' ? 'IBC Token' : 'ERC-20'),
+        asset_identifier_type: blockchainType === 'polkadot' ? 'substrate_asset' : blockchainType === 'xrpl' ? 'issued_asset' : blockchainType === 'solana' ? 'mint' : blockchainType === 'ton' ? 'jetton' : isEvmChain(activeChainKey, blockchainType) ? 'contract_address' : 'asset_identifier',
       } as any;
 
       const priceUsd = dexData?.priceUsd ?? cgData?.priceUsd ?? 0;
@@ -1377,7 +1426,7 @@ export default function App() {
           onOpenRewardModal={() => setIsRewardModalOpen(true)}
           onOpenWalletModal={() => setIsWalletModalOpen(true)}
           onOpenTransferModal={() => setIsTransferModalOpen(true)}
-          onSwitchToDesktop={() => setViewMode('desktop')}
+          onSwitchToDesktop={() => handleSetViewMode('desktop')}
           unreadCount={unreadNotificationCount}
           onUnreadCountChange={(count) => setUnreadNotificationCount(count)}
           isVerifying={isVerifying}

@@ -142,7 +142,7 @@ export async function detectEVMChainForContractAddress(
   address: string
 ): Promise<{ chainId: string; dexChainId: string; name: string; symbol: string; logoUrl: string } | null> {
   const clean = address.trim();
-  if (!clean || clean.length < 10) return null;
+  if (!clean || clean.length < 1) return null;
 
   try {
     const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${clean}`);

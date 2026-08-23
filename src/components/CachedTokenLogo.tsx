@@ -8,6 +8,7 @@ interface CachedTokenLogoProps {
   chain: string;
   address: string;
   symbol?: string;
+  name?: string;
   alt: string;
   className?: string;
   fallbackSrc?: string;
@@ -18,6 +19,7 @@ export const CachedTokenLogo: React.FC<CachedTokenLogoProps> = ({
   chain,
   address,
   symbol,
+  name,
   alt,
   className = 'w-9 h-9 rounded-full object-cover',
   fallbackSrc = NEUTRAL_TOKEN_FALLBACK,
@@ -57,23 +59,23 @@ export const CachedTokenLogo: React.FC<CachedTokenLogoProps> = ({
           setCurrentSrc(downloadedDataUrl);
         }
       });
-    } else if (address) {
-      // If no src but address provided, attempt multi-provider resolution in background
-      resolveTokenLogoWithFallback(address, chain, undefined, undefined, symbol).then((res) => {
+    } else if (address || symbol) {
+      // If no src but address/symbol provided, attempt multi-provider resolution in background
+      resolveTokenLogoWithFallback(address, chain, undefined, undefined, symbol, name || alt).then((res) => {
         if (res.isValid && res.logoUrl) {
           setCurrentSrc(res.logoUrl);
         }
       }).catch(() => {});
     }
-  }, [src, chain, address, symbol, retryAttempt]);
+  }, [src, chain, address, symbol, name, alt, retryAttempt]);
 
   const handleError = async () => {
     if (retryAttempt === 0 && src && !src.startsWith('data:')) {
       // Retry attempt 1: Multi-provider fallback resolution across DexScreener, CoinGecko, GeckoTerminal, etc.
       setRetryAttempt(1);
-      if (address) {
+      if (address || symbol) {
         try {
-          const res = await resolveTokenLogoWithFallback(address, chain, undefined, undefined, symbol);
+          const res = await resolveTokenLogoWithFallback(address, chain, undefined, undefined, symbol, name || alt);
           if (res.isValid && res.logoUrl && res.logoUrl !== currentSrc) {
             setCurrentSrc(res.logoUrl);
             return;

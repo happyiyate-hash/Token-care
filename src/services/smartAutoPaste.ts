@@ -49,10 +49,10 @@ export function extractContractAddress(rawText: string): string | null {
     return xrplMatch[0];
   }
 
-  // 8. Broad fallback for clean single non-whitespace crypto token address string (20-90 chars)
+  // 8. Broad fallback for clean single non-whitespace crypto token address string (1-120 chars)
   if (
-    clean.length >= 20 &&
-    clean.length <= 90 &&
+    clean.length >= 1 &&
+    clean.length <= 120 &&
     !/\s/.test(clean) &&
     /^[A-Za-z0-9_\-\.:]+$/.test(clean)
   ) {

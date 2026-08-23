@@ -6,6 +6,7 @@ interface MultiProviderTokenLogoProps {
   chain?: string;
   address?: string;
   symbol?: string;
+  name?: string;
   alt: string;
   className?: string;
   onLogoResolved?: (workingUrl: string, provider: string) => void;
@@ -23,6 +24,7 @@ export const MultiProviderTokenLogo: React.FC<MultiProviderTokenLogoProps> = ({
   chain = 'polygon',
   address,
   symbol,
+  name,
   alt,
   className = 'w-9 h-9 rounded-full object-cover',
   onLogoResolved,
@@ -33,8 +35,8 @@ export const MultiProviderTokenLogo: React.FC<MultiProviderTokenLogoProps> = ({
 
   useEffect(() => {
     setActiveUrl(src);
-    setHasFailedAll(!src && !address);
-  }, [src, address]);
+    setHasFailedAll(!src && !address && !symbol);
+  }, [src, address, symbol]);
 
   const announceRendered = (url: string) => {
     if (typeof window !== 'undefined') {
@@ -56,10 +58,17 @@ export const MultiProviderTokenLogo: React.FC<MultiProviderTokenLogoProps> = ({
   };
 
   const handleImageError = async () => {
-    if (address && !isResolving) {
+    if ((address || symbol) && !isResolving) {
       setIsResolving(true);
       try {
-        const result = await resolveTokenLogoWithFallback(address, chain, undefined, undefined, symbol);
+        const result = await resolveTokenLogoWithFallback(
+          address || '',
+          chain,
+          undefined,
+          undefined,
+          symbol,
+          name || alt
+        );
         if (result.isValid && result.logoUrl && result.logoUrl !== activeUrl) {
           setActiveUrl(result.logoUrl);
           setIsResolving(false);

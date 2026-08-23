@@ -50,7 +50,7 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
 
   const prepareFetch = async (addr: string, forceDetection = false) => {
     const clean = addr.trim();
-    if (!clean) return;
+    if (!clean || clean.length < 1) return;
 
     if (onSelectChain && (forceDetection || String(selectedChain) === '137')) {
       const detected = await detectTokenBlockchain(clean);

@@ -3,6 +3,7 @@ import {
   isTronAddress,
   isTonAddress,
   isXrplAddress,
+  isPolkadotAddress,
 } from '../constants/chains';
 
 export type ChainDetectionSource = 'address-format' | 'dexscreener' | 'geckoterminal';
@@ -52,6 +53,10 @@ const STATIC_ALIASES: Record<string, DetectedChain> = {
   xrpl: { blockchain: 'xrpl', chainId: 'xrpl', name: 'XRP Ledger', tokenStandard: 'Issued Asset', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
   xrp: { blockchain: 'xrpl', chainId: 'xrpl', name: 'XRP Ledger', tokenStandard: 'Issued Asset', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
   ripple: { blockchain: 'xrpl', chainId: 'xrpl', name: 'XRP Ledger', tokenStandard: 'Issued Asset', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
+  polkadot: { blockchain: 'polkadot', chainId: 'polkadot', name: 'Polkadot Network', tokenStandard: 'Substrate Asset', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
+  dot: { blockchain: 'polkadot', chainId: 'polkadot', name: 'Polkadot Network', tokenStandard: 'Substrate Asset', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
+  kusama: { blockchain: 'polkadot', chainId: 'kusama', name: 'Kusama Network', tokenStandard: 'Substrate Asset', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
+  ksm: { blockchain: 'polkadot', chainId: 'kusama', name: 'Kusama Network', tokenStandard: 'Substrate Asset', source: 'address-format', confidence: 'high', supportedByTokenCare: false },
   ...EVM_CHAIN_MAP,
 };
 
@@ -79,6 +84,7 @@ function dynamicChain(chainId: string, source: ChainDetectionSource): DetectedCh
 export function detectChainFromAddressFormat(address: string): DetectedChain | null {
   const value = address.trim();
   if (!value) return null;
+  if (isPolkadotAddress(value)) return STATIC_ALIASES.polkadot;
   if (isTonAddress(value)) return STATIC_ALIASES.ton;
   if (isXrplAddress(value)) return STATIC_ALIASES.xrpl;
   if (isTronAddress(value)) return STATIC_ALIASES.tron;
