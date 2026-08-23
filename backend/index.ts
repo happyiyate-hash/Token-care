@@ -40,7 +40,6 @@ export async function saveToken(body: TokenSaveRequest, authorization?: string):
   if (validationError) return responseBody({ success: false, error: validationError }, 400);
 
   await verifyUser(userId, authorization);
-
   const requestId = randomUUID();
 
   // Duplicate checks happen BEFORE any write. If either side already has it,
@@ -51,24 +50,16 @@ export async function saveToken(body: TokenSaveRequest, authorization?: string):
   ]);
 
   if (userDuplicate || globalDuplicate) {
-    return responseBody({
-      success: false,
-      error: 'TOKEN_ALREADY_EXISTS',
-      message: 'Token already exists',
-      user_duplicate: userDuplicate,
-      global_duplicate: globalDuplicate,
-    }, 409);
+    return responseBody({ success: false, error: 'TOKEN_ALREADY_EXISTS', message: 'Token already exists', user_duplicate: userDuplicate, global_duplicate: globalDuplicate }, 409);
   }
 
-  // User worker receives the exact token JSON supplied by the app, wrapped only
-  // by the required user_id/tokens structure of that worker.
+  // User worker receives the exact token JSON supplied by the app, wrapped only by its required user_id/tokens structure.
   await saveUserToken(userId, token);
-
   // Global worker receives a clean global token object with no user_id.
   await saveGlobalToken(token);
 
   const reward = await grantReward(userId, token, requestId, config.rewardAmount);
-  const notification = {
+  const notification = reward?.notification || {
     id: reward?.notification_id,
     type: 'reward',
     title: 'Token saved successfully',
