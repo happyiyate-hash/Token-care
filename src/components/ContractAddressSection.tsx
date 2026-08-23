@@ -56,20 +56,28 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
       const detected = await detectTokenBlockchain(clean);
 
       if (!detected) {
+        // Detection is a convenience, never a hard validation gate. The
+        // verification engine performs a second chain-agnostic resolution pass.
         setDetectedChain(null);
-        setDetectionToast('Could not detect the exact blockchain. Please select the blockchain for this token.');
-        setIsChainModalOpen(true);
+        setDetectionToast('Blockchain not resolved by the first detector. Continuing with provider-based discovery...');
+        onFetchToken(clean);
         return;
       }
 
-      // Detection is independent of the hardcoded selector. A newly discovered
-      // network is still a valid blockchain identity and must remain selectable.
+      // A detected network may be outside TokenCare's static chain registry.
+      // Keep its exact identity instead of forcing it into Polygon/EVM.
       setDetectedChain(detected);
       const selectorId = chainIdToSelectorId(detected.chainId) as ChainId;
       if (String(selectorId) !== String(selectedChain)) onSelectChain(selectorId);
-      setDetectionToast(`Detected ${detected.name} via ${detected.source === 'dexscreener' ? 'DEX Screener' : detected.source === 'geckoterminal' ? 'GeckoTerminal' : 'address format'}.`);
+      setDetectionToast(
+        `${detected.name} detected${detected.supportedByTokenCare ? '' : ' (external network)'} via ${
+          detected.source === 'dexscreener' ? 'DEX Screener' : detected.source === 'geckoterminal' ? 'GeckoTerminal' : 'address format'
+        }.`
+      );
     }
 
+    // Always continue. Unknown/unsupported chain adapters must not block
+    // metadata discovery or saving the original asset identifier.
     onFetchToken(clean);
   };
 
@@ -95,7 +103,7 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
       void prepareFetch(newAddr, false);
     });
     if (res.status === 'PERMISSION_DENIED' || res.status === 'CLIPBOARD_EMPTY') {
-      const fallbackText = window.prompt('Paste contract address (EVM, Solana, TON, TRON, XRPL) below:');
+      const fallbackText = window.prompt('Paste a token/asset identifier (EVM, Solana, TON, TRON, XRPL, Polkadot, or another supported/indexed blockchain):');
       if (fallbackText && fallbackText.trim()) {
         const valid = extractContractAddress(fallbackText);
         if (valid) {
@@ -128,8 +136,8 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
         </button>}
 
         <div className="flex-1 flex items-center bg-[#06080F] border border-zinc-800 rounded-lg focus-within:border-emerald-500/70 focus-within:ring-1 focus-within:ring-emerald-500/20 transition-all px-2 h-9 min-w-0 space-x-1.5">
-          <button type="button" onClick={handlePaste} className="p-1 hover:bg-zinc-800 text-[#00E575] hover:text-emerald-300 rounded transition-colors cursor-pointer shrink-0" title={t('contract.pasteTooltip', 'Paste contract address from clipboard')}><Clipboard className="w-3.5 h-3.5" /></button>
-          <input type="text" value={addressInput} onChange={(e) => setAddressInput(e.target.value)} placeholder={t('contract.inputPlaceholder', 'Paste contract address (EVM, Solana, TON, TRON, XRPL...)...')} className="w-full bg-transparent text-white font-mono text-[11px] focus:outline-none placeholder:text-zinc-600 truncate" onKeyDown={(e) => { if (e.key === 'Enter') void prepareFetch(addressInput, true); }} />
+          <button type="button" onClick={handlePaste} className="p-1 hover:bg-zinc-800 text-[#00E575] hover:text-emerald-300 rounded transition-colors cursor-pointer shrink-0" title={t('contract.pasteTooltip', 'Paste token or asset identifier from clipboard')}><Clipboard className="w-3.5 h-3.5" /></button>
+          <input type="text" value={addressInput} onChange={(e) => setAddressInput(e.target.value)} placeholder={t('contract.inputPlaceholder', 'Paste token/asset identifier (EVM, Solana, TON, TRON, XRPL...)...')} className="w-full bg-transparent text-white font-mono text-[11px] focus:outline-none placeholder:text-zinc-600 truncate" onKeyDown={(e) => { if (e.key === 'Enter') void prepareFetch(addressInput, true); }} />
           {addressInput && <button type="button" onClick={handleClear} className="p-1 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded transition-colors cursor-pointer shrink-0" title={t('common.clear', 'Clear')}><X className="w-3 h-3" /></button>}
           <button type="button" onClick={() => void prepareFetch(addressInput, true)} disabled={isLoading || isVerifying || !addressInput.trim()} className="px-2.5 py-1 bg-[#00E575] hover:bg-emerald-400 disabled:opacity-50 text-black font-extrabold text-[10px] rounded-md shadow transition-all cursor-pointer disabled:cursor-not-allowed flex items-center space-x-1 shrink-0 h-7">
             {isLoading || isVerifying ? <><div className="w-2.5 h-2.5 border-2 border-black border-t-transparent rounded-full animate-spin shrink-0" /><span>{t('contract.analyzing', 'Analyzing Contract...')}</span></> : <><Zap className="w-2.5 h-2.5 fill-black stroke-black shrink-0" /><span>{t('contract.verify', 'Verify')}</span></>}
