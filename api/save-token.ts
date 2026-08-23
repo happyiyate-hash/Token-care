@@ -1,7 +1,6 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { handler } from '../backend/index';
 
-export default async function saveTokenApi(req: VercelRequest, res: VercelResponse) {
+export default async function saveTokenApi(req: any, res: any) {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   const rawBody = Buffer.concat(chunks).toString('utf8');
