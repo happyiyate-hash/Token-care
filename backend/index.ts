@@ -42,8 +42,6 @@ export async function saveToken(body: TokenSaveRequest, authorization?: string):
   await verifyUser(userId, authorization);
   const requestId = randomUUID();
 
-  // Duplicate checks happen BEFORE any write. If either side already has it,
-  // nothing is saved and no reward/notification is created.
   const [userDuplicate, globalDuplicate] = await Promise.all([
     userTokenExists(userId, token),
     globalTokenExists(token),
@@ -53,9 +51,7 @@ export async function saveToken(body: TokenSaveRequest, authorization?: string):
     return responseBody({ success: false, error: 'TOKEN_ALREADY_EXISTS', message: 'Token already exists', user_duplicate: userDuplicate, global_duplicate: globalDuplicate }, 409);
   }
 
-  // User worker receives the exact token JSON supplied by the app, wrapped only by its required user_id/tokens structure.
   await saveUserToken(userId, token);
-  // Global worker receives a clean global token object with no user_id.
   await saveGlobalToken(token);
 
   const reward = await grantReward(userId, token, requestId, config.rewardAmount);
@@ -73,6 +69,13 @@ export async function saveToken(body: TokenSaveRequest, authorization?: string):
     reward: { amount: config.rewardAmount, symbol: 'TC', ledger_id: reward?.ledger_id },
     notification,
   }, 200);
+}
+
+// Compatibility adapter for the existing Express/API routes in this repository.
+// The new token-save implementation above remains the single source of truth.
+export async function uploadToken(body: Record<string, unknown>, authorization?: string): Promise<any> {
+  const response = await saveToken(body as TokenSaveRequest, authorization);
+  return response.json();
 }
 
 export async function handler(request: Request): Promise<Response> {
