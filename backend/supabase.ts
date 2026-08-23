@@ -26,8 +26,14 @@ export async function verifyUser(userId: string, authorization?: string): Promis
 }
 
 export async function grantReward(userId: string, token: Record<string, unknown>, requestId: string, amount: number): Promise<any> {
-  return request('/rest/v1/rpc/grant_token_donation_reward', {
+  const result = await request('/rest/v1/rpc/grant_token_donation_reward', {
     method: 'POST',
     body: JSON.stringify({ p_user_id: userId, p_amount: amount, p_token: token, p_request_id: requestId }),
   });
+
+  if (result?.notification_id) {
+    const rows = await request(`/rest/v1/notifications?id=eq.${encodeURIComponent(result.notification_id)}&select=*`);
+    return { ...result, notification: Array.isArray(rows) ? rows[0] : rows };
+  }
+  return result;
 }
