@@ -1,4 +1,9 @@
 import { getActiveDeveloperApiKey } from './developerCache';
+import {
+  fetchExploreTokensFromBackend,
+  saveTokensToBackend,
+  VERCEL_TOKEN_GATEWAY_URL,
+} from './vercelTokenBackend';
 
 function getRequestHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -12,103 +17,16 @@ function getRequestHeaders(): Record<string, string> {
 }
 
 /**
- * Fetches full token details by contract address and chain
- * Payload action: "getTokenDetails"
- */
-export async function getTokenDetailsFromWorker(
-  chain: string,
-  contractAddress: string
-): Promise<{ success: boolean; token?: any; raw?: any; error?: string }> {
-  const payload = {
-    action: 'getTokenDetails',
-    chain: (chain || 'ethereum').toLowerCase(),
-    contractAddress: (contractAddress || '').trim().toLowerCase(),
-  };
-
-  return executeWorkerGenericAction(payload);
-}
-
-/**
- * Fetches live price for a single token
- * Payload action: "getTokenPrice"
- */
-export async function getTokenPriceFromWorker(
-  chain: string,
-  contractAddress: string
-): Promise<{ success: boolean; chain?: string; contractAddress?: string; priceUsd?: number; change24h?: number; updatedAt?: string; raw?: any; error?: string }> {
-  const payload = {
-    action: 'getTokenPrice',
-    chain: (chain || 'ethereum').toLowerCase(),
-    contractAddress: (contractAddress || '').trim().toLowerCase(),
-  };
-
-  return executeWorkerGenericAction(payload);
-}
-
-/**
- * Batch fetches prices for an array of tokens across blockchains
- * Payload action: "getTokenPrices"
- */
-export async function getTokenPricesBatchFromWorker(
-  tokens: Array<{ chain: string; contractAddress: string }>
-): Promise<{ success: boolean; prices?: any[]; raw?: any; error?: string }> {
-  const payload = {
-    action: 'getTokenPrices',
-    tokens: (tokens || []).map((t) => ({
-      chain: (t.chain || 'ethereum').toLowerCase(),
-      contractAddress: (t.contractAddress || '').trim().toLowerCase(),
-    })),
-  };
-
-  return executeWorkerGenericAction(payload);
-}
-
-/**
- * Inspects token for security, verification and smart contract metadata
- * Payload action: "inspectToken"
- */
-export async function inspectTokenFromWorker(
-  chain: string,
-  contractAddress: string
-): Promise<{ success: boolean; chain?: string; contractAddress?: string; inspection?: any; raw?: any; error?: string }> {
-  const payload = {
-    action: 'inspectToken',
-    chain: (chain || 'ethereum').toLowerCase(),
-    contractAddress: (contractAddress || '').trim().toLowerCase(),
-  };
-
-  return executeWorkerGenericAction(payload);
-}
-
-/**
- * Universal execution proxy helper for Cloudflare Worker actions.
- * Tries server proxy first (/api/worker-proxy), then direct worker fetch.
+ * Universal execution proxy helper for Token Backend actions.
  */
 export async function executeWorkerGenericAction(
   payload: Record<string, any>
 ): Promise<any> {
-  // 1. Try server-side proxy route
-  try {
-    const proxyResponse = await fetch('/api/worker-proxy', {
-      method: 'POST',
-      headers: getRequestHeaders(),
-      body: JSON.stringify(payload),
-    });
-
-    if (proxyResponse.ok) {
-      const data = await proxyResponse.json();
-      return data.result || data;
-    }
-  } catch (proxyError) {
-    console.warn('[Worker API Proxy] Server route note:', proxyError);
-  }
-
-  // 2. Direct fetch fallback with timeout
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeoutId = controller ? setTimeout(() => controller.abort(), 4000) : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), 6000) : null;
 
   try {
-    const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
+    const response = await fetch(VERCEL_TOKEN_GATEWAY_URL, {
       method: 'POST',
       headers: getRequestHeaders(),
       body: JSON.stringify(payload),
@@ -126,10 +44,10 @@ export async function executeWorkerGenericAction(
     return result;
   } catch (error: any) {
     if (timeoutId) clearTimeout(timeoutId);
-    console.warn('[Worker API Direct] Execution fallback note:', error?.message || error);
+    console.warn('[Backend API Direct] Execution fallback note:', error?.message || error);
     return {
       success: false,
-      error: error?.message || 'Worker connection unavailable',
+      error: error?.message || 'Token backend service unavailable',
     };
   }
 }
@@ -240,147 +158,62 @@ export async function getTokenByAddressFromWorker(
 }
 
 /**
- * Fetches global token directory from Cloudflare Worker
+ * Fetches global token directory from Vercel backend gateway
  * Payload action: "getAllTokens"
  */
 export async function getAllTokensFromWorker(
-  page: number = 1,
-  limit: number = 100
+  _page: number = 1,
+  _limit: number = 100
 ): Promise<{ success: boolean; tokens?: any[]; raw?: any; error?: string }> {
-  const payload = {
-    action: 'getAllTokens',
-    page,
-    limit,
-  };
-
-  // 1. Try server proxy first
   try {
-    const proxyResponse = await fetch('/api/get-all-tokens', {
-      method: 'POST',
-      headers: getRequestHeaders(),
-      body: JSON.stringify(payload),
-    });
-
-    if (proxyResponse.ok) {
-      const data = await proxyResponse.json();
-      const res = data.result || data;
-      const tokens = res?.tokens || res?.data || (Array.isArray(res) ? res : []);
-      return {
-        success: true,
-        tokens,
-        raw: res,
-      };
-    }
-  } catch (proxyError) {
-    console.warn('[Worker API Directory Proxy] Note:', proxyError);
-  }
-
-  // 2. Direct fetch fallback with timeout
-  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeoutId = controller ? setTimeout(() => controller.abort(), 4000) : null;
-
-  try {
-    const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
-      method: 'POST',
-      headers: getRequestHeaders(),
-      body: JSON.stringify(payload),
-      signal: controller?.signal,
-    });
-    if (timeoutId) clearTimeout(timeoutId);
-
-    let result: any = null;
-    try {
-      result = await response.json();
-    } catch {
-      result = await response.text();
-    }
-
-    const tokens = result?.tokens || result?.data || (Array.isArray(result) ? result : []);
-
+    const rawTokens = await fetchExploreTokensFromBackend();
     return {
-      success: response.ok,
-      tokens,
-      raw: result,
+      success: true,
+      tokens: rawTokens,
+      raw: rawTokens,
     };
   } catch (error: any) {
-    if (timeoutId) clearTimeout(timeoutId);
-    console.warn('[Worker API Directory Direct] Directory fetch note:', error?.message || error);
+    console.warn('[Backend API Directory] Fetch note:', error?.message || error);
     return {
       success: false,
       tokens: [],
-      error: error?.message || 'Worker directory connection unavailable',
+      error: error?.message || 'Token backend directory unavailable',
     };
   }
 }
 
 /**
- * Uploads token metadata array to Cloudflare Worker endpoint
- * Primary path: Uses backend Express proxy route (/api/upload-tokens) to avoid browser CORS restrictions
- * Fallback path: Direct fetch to Worker endpoint
+ * Uploads token metadata array to save-token endpoint
  */
 export async function uploadTokensToWorker(
   tokens: WorkerTokenPayload[],
-  blockchain: string = 'polygon'
+  blockchain: string = 'polygon',
+  userId?: string
 ): Promise<{ success: boolean; result?: any; error?: string }> {
   if (!tokens || tokens.length === 0) {
     return { success: false, error: 'No tokens provided for upload.' };
   }
 
-  const payload = {
-    action: 'uploadTokens',
-    blockchain: blockchain.toLowerCase(),
-    tokens: tokens.map((t) => ({
+  try {
+    const payloadTokens = tokens.map((t) => ({
       name: t.name || 'Unknown Token',
       symbol: t.symbol || 'TOK',
       contractAddress: t.contractAddress || '0x0000000000000000000000000000000000000000',
+      blockchain: blockchain.toLowerCase(),
       logoUrl: t.logoUrl || '',
-      verified: t.verified ?? true,
-    })),
-  };
+    }));
 
-  // 1. Try server-side proxy route first (bypasses browser CORS)
-  try {
-    const proxyResponse = await fetch('/api/upload-tokens', {
-      method: 'POST',
-      headers: getRequestHeaders(),
-      body: JSON.stringify(payload),
-    });
-
-    if (proxyResponse.ok) {
-      const data = await proxyResponse.json();
-      return { success: true, result: data.result };
-    }
-  } catch (proxyError) {
-    console.warn('[Worker API Proxy] Upload proxy note:', proxyError);
-  }
-
-  // 2. Direct client-side fetch fallback with timeout
-  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeoutId = controller ? setTimeout(() => controller.abort(), 4000) : null;
-
-  try {
-    const response = await fetch('https://rough-meadow-6435.happyiyate.workers.dev/', {
-      method: 'POST',
-      headers: getRequestHeaders(),
-      body: JSON.stringify(payload),
-      signal: controller?.signal,
-    });
-    if (timeoutId) clearTimeout(timeoutId);
-
-    let result: any = null;
-    try {
-      result = await response.json();
-    } catch {
-      result = await response.text();
-    }
-
-    return { success: response.ok, result };
+    const res = await saveTokensToBackend(userId || 'anonymous_user', payloadTokens);
+    return {
+      success: res.success,
+      result: res,
+      error: res.error || (res.success ? undefined : res.message),
+    };
   } catch (error: any) {
-    if (timeoutId) clearTimeout(timeoutId);
-    console.warn('[Worker API Direct] Failed to upload tokens note:', error?.message || error);
+    console.warn('[Backend API Save] Upload note:', error?.message || error);
     return {
       success: false,
-      error: error?.message || 'Failed to connect to Cloudflare Worker endpoint.',
+      error: error?.message || 'Failed to connect to token save endpoint.',
     };
   }
 }

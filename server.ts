@@ -236,6 +236,10 @@ async function startServer() {
   app.post('/api/upload-token', handleTokenUpload);
   app.post('/api/tokens/upload', handleTokenUpload);
   app.get('/api/upload-token', handleTokenUpload);
+  app.post('/api/save-token', handleTokenUpload);
+  app.get('/api/save-token', (req, res) => {
+    return res.status(200).json({ success: true, service: 'TokenCare token-save backend', status: 'ok' });
+  });
 
   // 4. POST /api/token/price
   app.post('/api/token/price', async (req, res) => {

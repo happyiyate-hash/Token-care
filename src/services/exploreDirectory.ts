@@ -2,12 +2,11 @@ import { SubmittedToken } from '../types';
 import { REWARD_RATE_USD } from '../constants/chains';
 import { getNetworkInfo } from './chainLogos';
 import { safeSetItem, sanitizeTokenForStorage } from './storage';
+import { fetchExploreTokensFromBackend } from './vercelTokenBackend';
 
 const EXPLORE_CACHE_KEY = 'tokencare_explore_directory_v5';
 const EXPLORE_CACHE_VERSION = 5;
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes TTL
-
-const WORKER_ENDPOINT = 'https://rough-meadow-6435.happyiyate.workers.dev/';
 
 export interface ExploreDirectoryStatus {
   state: 'cached' | 'loading' | 'success' | 'unavailable';
@@ -172,70 +171,15 @@ export function normalizeWorkerToken(item: any, index?: number): SubmittedToken 
 }
 
 /**
- * Direct call to Cloudflare Worker to fetch all tokens.
- * Features:
- * - Direct call to https://rough-meadow-6435.happyiyate.workers.dev/
- * - 1 automatic retry on failure
- * - If still failing after 1 retry, gracefully stops retrying
- */
-async function fetchTokensFromCloudflareWorker(): Promise<any[]> {
-  const payload = { action: 'getAllTokens', page: 1, limit: 150 };
-
-  const attemptFetch = async (): Promise<any[]> => {
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timeoutId = controller ? setTimeout(() => controller.abort(), 6000) : null;
-
-    try {
-      const response = await fetch(WORKER_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller?.signal,
-      });
-
-      if (timeoutId) clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`Worker HTTP ${response.status}`);
-      }
-
-      const json = await response.json();
-      const rawList = json?.tokens || json?.data || (Array.isArray(json) ? json : []);
-      if (Array.isArray(rawList)) {
-        return rawList;
-      }
-      return [];
-    } catch (err) {
-      if (timeoutId) clearTimeout(timeoutId);
-      throw err;
-    }
-  };
-
-  // Attempt 1
-  try {
-    return await attemptFetch();
-  } catch (firstErr) {
-    console.warn('[ExploreDirectory] Worker fetch attempt 1 failed, retrying once...', firstErr);
-    // Exactly 1 retry after 800ms
-    await new Promise((res) => setTimeout(res, 800));
-    try {
-      return await attemptFetch();
-    } catch (retryErr) {
-      console.warn('[ExploreDirectory] Worker fetch retry failed. Halting further retries.', retryErr);
-      throw retryErr;
-    }
-  }
-}
-
-/**
- * Initializes Explore using ONLY the Cloudflare Worker directory.
+ * Initializes Explore using the Vercel backend token gateway:
+ * POST https://token-save-backend-p74bbibkg-happyiyate-hashs-projects.vercel.app/api
+ * with { "action": "getAllTokens" }
  *
  * Rules:
- * - Only fetches from Cloudflare Worker (https://rough-meadow-6435.happyiyate.workers.dev/).
- * - No database calls.
+ * - Direct call to Vercel backend API.
+ * - No direct Cloudflare Worker URLs in Explore.
  * - If cached and within TTL (15 mins / same day), ZERO network requests.
  * - Saves logos, tokens, metadata into localStorage.
- * - 1 retry on network error, then stops.
  */
 export async function initGlobalExploreDirectory(
   onUpdate?: (tokens: SubmittedToken[]) => void,
@@ -260,12 +204,12 @@ export async function initGlobalExploreDirectory(
     onUpdate?.(cached.tokens);
   }
 
-  onStatus?.({ state: 'loading', message: 'Fetching tokens from Cloudflare...' });
+  onStatus?.({ state: 'loading', message: 'Fetching tokens...' });
 
   try {
-    const rawTokens = await fetchTokensFromCloudflareWorker();
+    const rawTokens = await fetchExploreTokensFromBackend();
 
-    // Deduplicate incoming worker tokens by unique chain + contract address key
+    // Deduplicate incoming tokens by unique chain + contract address key
     const seen = new Set<string>();
     const deduplicatedRaw: any[] = [];
     for (const item of rawTokens) {
@@ -279,16 +223,16 @@ export async function initGlobalExploreDirectory(
       }
     }
 
-    const workerTokens = deduplicatedRaw
+    const backendTokens = deduplicatedRaw
       .map((t, idx) => normalizeWorkerToken(t, idx))
       .filter((t) => Boolean(t.address));
 
-    saveDirectoryCache(workerTokens, 'success');
-    onUpdate?.(workerTokens);
+    saveDirectoryCache(backendTokens, 'success');
+    onUpdate?.(backendTokens);
     onStatus?.({ state: 'success' });
-    return workerTokens;
+    return backendTokens;
   } catch (err) {
-    // If request failed after 1 retry, mark unavailable for the current window and stop retrying
+    console.warn('[ExploreDirectory] Vercel backend fetch note:', err);
     if (!cached || cached.tokens.length === 0) {
       saveDirectoryCache([], 'unavailable');
       onUpdate?.([]);

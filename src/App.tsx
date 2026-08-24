@@ -60,7 +60,11 @@ import { SupportLiveChatView } from './components/SupportLiveChatView';
 import { TermsAndPrivacyView } from './components/TermsAndPrivacyView';
 
 import { uploadTokensToWorker, getTokenByAddressFromWorker } from './services/workerApi';
-import { initGlobalExploreDirectory } from './services/exploreDirectory';
+import { initGlobalExploreDirectory, normalizeWorkerToken } from './services/exploreDirectory';
+import {
+  fetchTokensByUserFromBackend,
+  saveTokensToBackend,
+} from './services/vercelTokenBackend';
 import {
   getSupabase,
   SupabaseUserProfile,
@@ -242,7 +246,7 @@ export default function App() {
     };
   }, [currentUser?.id]);
 
-  // Load User Profile and Tokens from Cloudflare Token Cache Worker (small-pine-71f9) & local storage
+  // Load User Profile and Tokens from Vercel Backend gateway (getTokensByUser) & local storage
   const loadUserAndTokens = async (userId?: string, sessionUser?: any) => {
     if (!userId) {
       setTokens([]);
@@ -255,28 +259,34 @@ export default function App() {
       setTokens(localTokens);
     }
 
-    // 2. Fetch user tokens from Cloudflare User Token Cache Worker (Cloudflare B)
+    // 2. Fetch user tokens from Vercel backend using action: getTokensByUser
     try {
-      const { getUserTokensFromWorker } = await import('./services/userTokenCacheWorker');
-      const workerRes = await getUserTokensFromWorker(userId);
-      if (workerRes && Array.isArray(workerRes.tokens) && workerRes.tokens.length > 0) {
-        // Normalize worker items into SubmittedToken list
-        const { normalizeWorkerToken } = await import('./services/exploreDirectory');
-        const formattedTokens: SubmittedToken[] = workerRes.tokens.map((t, idx) => {
-          return normalizeWorkerToken({
-            ...t,
-            contractAddress: t.id,
-            address: t.id,
-            blockchain: t.blockchain,
-          }, idx);
-        });
+      const rawUserTokens = await fetchTokensByUserFromBackend(userId);
+      if (rawUserTokens && Array.isArray(rawUserTokens) && rawUserTokens.length > 0) {
+        // Normalize returned token items directly into SubmittedToken list
+        const formattedTokens: SubmittedToken[] = rawUserTokens.map((t, idx) => {
+          const contractAddr = String(t.contractAddress || t.address || t.id || '').trim();
+          const chain = String(t.blockchain || t.chainId || 'polygon').trim().toLowerCase();
+          return normalizeWorkerToken(
+            {
+              ...t,
+              contractAddress: contractAddr,
+              address: contractAddr,
+              blockchain: chain,
+            },
+            idx
+          );
+        }).filter((t) => Boolean(t.address));
 
-        setTokens(formattedTokens);
-        // Update local storage cache
-        saveSubmittedTokens(formattedTokens, userId);
+        if (formattedTokens.length > 0) {
+          setTokens(formattedTokens);
+          saveSubmittedTokens(formattedTokens, userId);
+        } else if (localTokens && localTokens.length > 0) {
+          setTokens(localTokens);
+        }
       } else {
-        // If not in Cloudflare B yet, fetch from Supabase database
-        const supabaseTokens = await fetchTokensFromSupabase(userId);
+        // If empty from backend, fallback to Supabase or keep local
+        const supabaseTokens = await fetchTokensFromSupabase(userId).catch(() => []);
         if (supabaseTokens && supabaseTokens.length > 0) {
           setTokens(supabaseTokens);
           saveSubmittedTokens(supabaseTokens, userId);
@@ -285,7 +295,7 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.warn('[UserTokens] Cloudflare Worker fetch note, querying database/cache:', e);
+      console.warn('[UserTokens] Vercel Backend getTokensByUser note, using local cache:', e);
       const supabaseTokens = await fetchTokensFromSupabase(userId).catch(() => []);
       if (supabaseTokens && supabaseTokens.length > 0) {
         setTokens(supabaseTokens);
@@ -382,9 +392,9 @@ export default function App() {
       const userId = serverUser.id;
 
       // Concurrently fetch fresh user profile, tokens, and unread notification count
-      const [freshProfile, freshTokens, freshUnread] = await Promise.all([
+      const [freshProfile, rawBackendTokens, freshUnread] = await Promise.all([
         getUserProfile(userId, serverUser).catch(() => null),
-        fetchTokensFromSupabase(userId).catch(() => null),
+        fetchTokensByUserFromBackend(userId).catch(() => null),
         fetchUnreadNotificationCount(userId).catch(() => 0),
       ]);
 
@@ -395,9 +405,27 @@ export default function App() {
       }
 
       let finalTokens = tokens;
-      if (freshTokens && Array.isArray(freshTokens)) {
-        finalTokens = freshTokens;
-        setTokens(freshTokens);
+      if (rawBackendTokens && Array.isArray(rawBackendTokens) && rawBackendTokens.length > 0) {
+        finalTokens = rawBackendTokens
+          .map((t, idx) => {
+            const contractAddr = String(t.contractAddress || t.address || t.id || '').trim();
+            const chain = String(t.blockchain || t.chainId || 'polygon').trim().toLowerCase();
+            return normalizeWorkerToken(
+              {
+                ...t,
+                contractAddress: contractAddr,
+                address: contractAddr,
+                blockchain: chain,
+              },
+              idx
+            );
+          })
+          .filter((t) => Boolean(t.address));
+
+        if (finalTokens.length > 0) {
+          setTokens(finalTokens);
+          saveSubmittedTokens(finalTokens, userId);
+        }
       }
 
       setUnreadNotificationCount(freshUnread);
@@ -1134,50 +1162,9 @@ export default function App() {
         verified: verificationReport.status === 'APPROVED',
       };
 
-      // Check duplicate status without blocking
-      let isSavedInCloudflare = false;
-      let isSavedInSupabase = false;
-
-      try {
-        const cfCheck = await getTokenByAddressFromWorker(activeChainKey, erc20Meta.address).catch(() => ({ exists: false }));
-        if (cfCheck.exists) {
-          isSavedInCloudflare = true;
-        }
-      } catch (cfErr) {
-        console.warn('[Verification] Cloudflare Worker duplicate check note:', cfErr);
-      }
-
-      if (currentUser?.id) {
-        try {
-          isSavedInSupabase = await checkTokenAlreadySaved(
-            currentUser.id,
-            activeChainKey,
-            erc20Meta.address
-          ).catch(() => false);
-        } catch (err) {
-          console.warn('[Verification] Supabase check note:', err);
-        }
-      }
-
-      const isEvmToken = isEvmChain(activeChainKey, (erc20Meta as any).blockchainType);
-      const cleanAddr = isEvmToken ? erc20Meta.address.toLowerCase().trim() : erc20Meta.address.trim();
-      const activeChainClean = activeChainKey.toLowerCase().trim();
-      const existsLocally = tokens.some((t) => {
-        const tIsEvm = isEvmChain(t.chainId, (t.metadata as any)?.blockchainType);
-        const tAddr = tIsEvm ? t.address.toLowerCase().trim() : t.address.trim();
-        const tChain = (t.chainId || '').toLowerCase().trim();
-        return tAddr === cleanAddr && tChain === activeChainClean;
-      });
-      const alreadySaved = isSavedInCloudflare || existsLocally || isSavedInSupabase;
-
-      setIsTokenSavedInAccount(alreadySaved);
-      if (alreadySaved) {
-        setErrorMessage('This token already exists in TokenCare.');
-      } else {
-        setErrorMessage(null);
-      }
-
-      // Display the fully fetched token details immediately
+      // Display the fully fetched token details immediately for review
+      setIsTokenSavedInAccount(false);
+      setErrorMessage(null);
       setFetchedToken(tokenObj);
       setCurrentStep(3); // Advance to Review Details
     } catch (err: any) {
@@ -1191,7 +1178,7 @@ export default function App() {
     }
   };
 
-  // Handle Saving Token to Directory
+  // Handle Saving Token to Directory via Vercel Backend
   const handleSaveToken = async (settings: any) => {
     if (!fetchedToken) return;
 
@@ -1200,81 +1187,7 @@ export default function App() {
 
     try {
       const targetChain = fetchedToken.chainId || selectedChain;
-      const bType = (fetchedToken.metadata as any)?.blockchainType;
-      const isEvm = isEvmChain(targetChain, bType);
-
-      // Log duplicate check parameters for debugging
-      console.log('TOKEN DUPLICATE CHECK', {
-        userId: currentUser?.id,
-        chainId: String(targetChain),
-        blockchainType: bType,
-        contractAddress: fetchedToken.address,
-      });
-
-      // 1. Cloudflare Worker Global Registry Duplicate Check
-      const cfCheck = await getTokenByAddressFromWorker(targetChain, fetchedToken.address);
-      if (cfCheck.exists) {
-        setErrorMessage('This token already exists in TokenCare.');
-        setIsSavingToken(false);
-        return;
-      }
-
-      // 2. Verify Duplicate Address in Local State for this user on this chain
-      const cleanAddress = isEvm ? fetchedToken.address.toLowerCase().trim() : fetchedToken.address.trim();
-      const targetChainClean = targetChain.toLowerCase().trim();
-
-      const existsLocally = tokens.some((t) => {
-        const tIsEvm = isEvmChain(t.chainId, (t.metadata as any)?.blockchainType);
-        const tAddr = tIsEvm ? t.address.toLowerCase().trim() : t.address.trim();
-        const tChain = (t.chainId || '').toLowerCase().trim();
-        return tAddr === cleanAddress && tChain === targetChainClean && t.id !== fetchedToken.id;
-      });
-
-      if (existsLocally) {
-        setErrorMessage(
-          `This token is already saved in your account.`
-        );
-        setIsSavingToken(false);
-        return;
-      }
-
-      // 3. Save / Merge Token into Cloudflare User Token Cache Worker (small-pine-71f9)
-      const userId = currentUser?.id || wallet.walletAddress || 'anonymous_user';
-      const tokenBlockchain = fetchedToken.metadata.blockchainName || fetchedToken.chainId || selectedChain;
-
-      const { saveUserTokensToWorker } = await import('./services/userTokenCacheWorker');
-      const saveWorkerRes = await saveUserTokensToWorker(
-        userId,
-        [
-          {
-            blockchain: tokenBlockchain,
-            id: fetchedToken.address,
-            name: fetchedToken.metadata.name,
-            symbol: fetchedToken.metadata.symbol,
-            logoUrl: fetchedToken.metadata.logoUrl || '',
-          },
-        ],
-        true // merge=true to add without replacing existing tokens
-      );
-
-      if (!saveWorkerRes.success) {
-        console.warn('[UserTokenCacheWorker] Notice saving token to worker:', saveWorkerRes.error);
-      }
-
-      // 4. Record Reward & Update Local State
-      const { updatedWallet, rewardEarnedTokens } = recordTokenSubmissionReward(
-        fetchedToken,
-        wallet,
-        currentUser?.id
-      );
-      setWallet(updatedWallet);
-
-      const updatedTokens = [fetchedToken, ...tokens.filter((t) => t.id !== fetchedToken.id)];
-      setTokens(updatedTokens);
-      saveSubmittedTokens(updatedTokens, currentUser?.id);
-
-      // 5. Automatically post token payload to Cloudflare Global Worker endpoint
-      const chainInfo = getChainInfo(fetchedToken.chainId || selectedChain);
+      const chainInfo = getChainInfo(targetChain);
       const chainKey =
         fetchedToken.metadata.blockchainName ||
         (fetchedToken.metadata as any)?.blockchain_name ||
@@ -1282,43 +1195,91 @@ export default function App() {
         fetchedToken.metadata.chainName ||
         fetchedToken.metadata.network ||
         chainInfo.name ||
-        fetchedToken.chainId;
+        targetChain;
 
-      await uploadTokensToWorker(
-        [
-          {
-            name: fetchedToken.metadata.name,
-            symbol: fetchedToken.metadata.symbol,
-            contractAddress: fetchedToken.address,
-            logoUrl: fetchedToken.metadata.logoUrl || '',
-            verified: fetchedToken.verified ?? true,
-          },
-        ],
-        chainKey
-      );
+      const userId = currentUser?.id || wallet.walletAddress || 'anonymous_user';
 
-      if (currentUser?.id) {
-        loadUserProfile(currentUser.id);
+      // Submit token array directly to Vercel backend /api/save-token
+      const payloadTokens = [
+        {
+          name: fetchedToken.metadata.name || 'Unknown Token',
+          symbol: fetchedToken.metadata.symbol || 'TOK',
+          contractAddress: fetchedToken.address,
+          blockchain: chainKey,
+          logoUrl: fetchedToken.metadata.logoUrl || '',
+        },
+      ];
+
+      const saveResponse = await saveTokensToBackend(userId, payloadTokens);
+
+      if (saveResponse.success) {
+        // If rejected as duplicate by backend
+        const isDuplicateRejected =
+          Array.isArray(saveResponse.rejected) &&
+          saveResponse.rejected.length > 0 &&
+          (!saveResponse.saved || saveResponse.saved.length === 0);
+
+        if (isDuplicateRejected) {
+          const rejectReason =
+            saveResponse.rejected?.[0]?.reason ||
+            saveResponse.message ||
+            'This token already exists in TokenCare.';
+          setErrorMessage(rejectReason);
+          setIsSavingToken(false);
+          return;
+        }
+
+        // Update local tokens list
+        const updatedTokens = [
+          fetchedToken,
+          ...tokens.filter((t) => t.id !== fetchedToken.id && t.address.toLowerCase() !== fetchedToken.address.toLowerCase()),
+        ];
+        setTokens(updatedTokens);
+        saveSubmittedTokens(updatedTokens, currentUser?.id);
+
+        // Reflect rewards if returned from server response
+        if (saveResponse.reward?.amount) {
+          const earned = Number(saveResponse.reward.amount);
+          setWallet((prev) => ({
+            ...prev,
+            totalTokens: prev.totalTokens + earned,
+            totalUsd: (prev.totalTokens + earned) * REWARD_RATE_USD,
+            unclaimedTokens: prev.unclaimedTokens + earned,
+            unclaimedUsd: (prev.unclaimedTokens + earned) * REWARD_RATE_USD,
+          }));
+        }
+
+        if (currentUser?.id) {
+          loadUserProfile(currentUser.id);
+          fetchUnreadNotificationCount(currentUser.id).then((count) => setUnreadNotificationCount(count)).catch(() => {});
+        }
+
+        confetti({
+          particleCount: 100,
+          spread: 80,
+          origin: { y: 0.6 },
+          colors: ['#10B981', '#34D399', '#059669', '#F59E0B'],
+        });
+
+        setCurrentStep(4);
+        const successMsg =
+          saveResponse.message ||
+          (saveResponse.reward?.amount
+            ? `Token has been successfully saved! You received ${saveResponse.reward.amount} ${saveResponse.reward.symbol || 'TC'}.`
+            : 'Token has been successfully saved to TokenCare.');
+        setSaveSuccessMessage(successMsg);
+
+        setTimeout(() => {
+          setSaveSuccessMessage(null);
+        }, 5000);
+      } else {
+        setErrorMessage(
+          saveResponse.message || saveResponse.error || 'Failed to save token. Please try again.'
+        );
       }
-
-      confetti({
-        particleCount: 100,
-        spread: 80,
-        origin: { y: 0.6 },
-        colors: ['#10B981', '#34D399', '#059669', '#F59E0B'],
-      });
-
-      setCurrentStep(4);
-      setSaveSuccessMessage(
-        `Token has been successfully saved. You receive ${rewardEarnedTokens || 15} TokenCare tokens.`
-      );
-
-      setTimeout(() => {
-        setSaveSuccessMessage(null);
-      }, 5000);
     } catch (err: any) {
       console.error('[App] Save error:', err);
-      setErrorMessage(err.message || 'An error occurred while saving the token to database.');
+      setErrorMessage(err?.message || 'An error occurred while communicating with the token save backend.');
     } finally {
       setIsSavingToken(false);
     }

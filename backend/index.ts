@@ -4,7 +4,7 @@ import { userTokenExists, globalTokenExists, saveUserToken, saveGlobalToken } fr
 import { grantReward, verifyUser } from './supabase';
 
 export type TokenSaveRequest = {
-  user_id: string;
+  user_id?: string;
   token?: Record<string, unknown>;
   [key: string]: unknown;
 };
@@ -13,8 +13,8 @@ function responseBody(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST,OPTIONS', 'access-control-allow-headers': 'Content-Type, Authorization' } });
 }
 
-function extractToken(body: TokenSaveRequest): Record<string, unknown> {
-  if (body.token && typeof body.token === 'object' && !Array.isArray(body.token)) return body.token;
+function extractToken(body: TokenSaveRequest | Record<string, unknown>): Record<string, unknown> {
+  if (body.token && typeof body.token === 'object' && !Array.isArray(body.token)) return body.token as Record<string, unknown>;
   const copy = { ...body };
   delete copy.user_id;
   delete copy.token;

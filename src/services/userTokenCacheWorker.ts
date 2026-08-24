@@ -1,15 +1,18 @@
 /**
- * User Token Cache Cloudflare Worker Service
+ * User Token Cache Service
  *
- * Dedicated Worker: https://small-pine-71f9.happyiyate.workers.dev/
- *
- * A token's blockchain identity is data, not a whitelist. The worker therefore
- * accepts and preserves dynamically discovered chains even when TokenCare has
- * no local selector entry for them yet.
+ * Interacts through the central Vercel Token Backend API Gateway:
+ * - getTokensByUser: POST /api
+ * - save-token: POST /api/save-token
  */
 
-export const USER_TOKEN_CACHE_WORKER_URL =
-  'https://small-pine-71f9.happyiyate.workers.dev/tokens';
+import {
+  fetchTokensByUserFromBackend,
+  saveTokensToBackend,
+  VERCEL_TOKEN_GATEWAY_URL,
+} from './vercelTokenBackend';
+
+export const USER_TOKEN_CACHE_WORKER_URL = VERCEL_TOKEN_GATEWAY_URL;
 
 export interface WorkerUserTokenItem {
   blockchain: string;
@@ -18,6 +21,7 @@ export interface WorkerUserTokenItem {
   blockchainSymbol?: string;
   tokenStandard?: string;
   id: string;
+  contractAddress?: string;
   name?: string;
   symbol?: string;
   logoUrl?: string;
@@ -50,72 +54,53 @@ export async function saveUserTokensToWorker(
   if (!userId || !userId.trim()) return { success: false, error: 'User ID is required.' };
   if (!Array.isArray(tokens) || tokens.length === 0) return { success: false, error: 'No tokens provided.' };
 
-  const endpoint = merge ? `${USER_TOKEN_CACHE_WORKER_URL}?merge=true` : USER_TOKEN_CACHE_WORKER_URL;
-
-  const payload: SaveUserTokensWorkerRequest = {
-    user_id: userId.trim(),
-    tokens: tokens.map((t) => {
-      const blockchain = String(t.blockchain || t.blockchainName || '').trim().toLowerCase();
-      const id = String(t.id || (t as any).address || (t as any).contractAddress || '').trim();
-      return {
-        blockchain,
-        ...(t.chainId !== undefined && t.chainId !== null ? { chainId: t.chainId } : {}),
-        ...(t.blockchainName ? { blockchainName: String(t.blockchainName).trim() } : {}),
-        ...(t.blockchainSymbol ? { blockchainSymbol: String(t.blockchainSymbol).trim() } : {}),
-        ...(t.tokenStandard ? { tokenStandard: String(t.tokenStandard).trim() } : {}),
-        id,
-        ...(t.name ? { name: t.name } : {}),
-        ...(t.symbol ? { symbol: t.symbol } : {}),
-        ...(t.logoUrl ? { logoUrl: t.logoUrl } : {}),
-      };
-    }),
-  };
-
-  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeoutId = controller ? setTimeout(() => controller.abort(), 6000) : null;
-
   try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller?.signal,
-    });
-    if (timeoutId) clearTimeout(timeoutId);
-    const json = await response.json();
-    if (!response.ok || json.success === false) throw new Error(json.error || `HTTP ${response.status}`);
+    const formatted = tokens.map((t) => ({
+      name: t.name || 'Unknown Token',
+      symbol: t.symbol || 'TOK',
+      contractAddress: String(t.contractAddress || t.id || (t as any).address || '').trim(),
+      blockchain: String(t.blockchain || t.blockchainName || 'polygon').trim().toLowerCase(),
+      logoUrl: t.logoUrl || '',
+    }));
+
+    const res = await saveTokensToBackend(userId, formatted);
     return {
-      success: true,
-      user_id: json.user_id || userId,
-      tokens: Array.isArray(json.tokens) ? json.tokens : payload.tokens,
-      mode: json.mode || (merge ? 'merge' : 'replace'),
+      success: res.success,
+      user_id: userId,
+      tokens,
+      mode: merge ? 'merge' : 'replace',
+      error: res.error || (res.success ? undefined : res.message),
     };
   } catch (err: any) {
-    if (timeoutId) clearTimeout(timeoutId);
-    console.warn('[UserTokenCacheWorker] Failed to save tokens to worker:', err?.message || err);
-    return { success: false, error: err?.message || 'Failed to save tokens to worker.' };
+    console.warn('[UserTokenCache] Failed to save tokens to backend:', err?.message || err);
+    return { success: false, error: err?.message || 'Failed to save tokens.' };
   }
 }
 
 export async function getUserTokensFromWorker(userId: string): Promise<GetUserTokensWorkerResponse> {
   if (!userId || !userId.trim()) return { user_id: '', tokens: [] };
-  const endpoint = `${USER_TOKEN_CACHE_WORKER_URL}?user_id=${encodeURIComponent(userId.trim())}`;
-  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeoutId = controller ? setTimeout(() => controller.abort(), 5000) : null;
 
   try {
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller?.signal,
+    const rawTokens = await fetchTokensByUserFromBackend(userId);
+    const mapped: WorkerUserTokenItem[] = (rawTokens || []).map((t) => {
+      const id = String(t.contractAddress || t.address || t.id || '').trim();
+      const blockchain = String(t.blockchain || t.chainId || 'polygon').trim().toLowerCase();
+      return {
+        id,
+        contractAddress: id,
+        blockchain,
+        blockchainName: t.blockchainName || t.chainName || blockchain,
+        name: t.name || 'Token',
+        symbol: t.symbol || 'TOK',
+        logoUrl: t.logoUrl || '',
+        ...t,
+      };
     });
-    if (timeoutId) clearTimeout(timeoutId);
-    if (!response.ok) throw new Error(`Worker HTTP ${response.status}`);
-    const json = await response.json();
-    return { user_id: json.user_id || userId, tokens: Array.isArray(json.tokens) ? json.tokens : [] };
+
+    return { user_id: userId, tokens: mapped };
   } catch (err: any) {
-    if (timeoutId) clearTimeout(timeoutId);
-    console.warn('[UserTokenCacheWorker] Failed to retrieve tokens for user:', userId, err?.message || err);
+    console.warn('[UserTokenCache] Failed to retrieve tokens for user:', userId, err?.message || err);
     return { user_id: userId, tokens: [] };
   }
 }
+
