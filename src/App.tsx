@@ -207,7 +207,6 @@ export default function App() {
   const [logoStatus, setLogoStatus] = useState<LogoStatus>('checking');
   const [isSavingToken, setIsSavingToken] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
-  const [isTokenSavedInAccount, setIsTokenSavedInAccount] = useState<boolean>(false);
 
   // Progressive Verification Flow States
   const [isVerifying, setIsVerifying] = useState(false);
@@ -1163,7 +1162,6 @@ export default function App() {
       };
 
       // Display the fully fetched token details immediately for review
-      setIsTokenSavedInAccount(false);
       setErrorMessage(null);
       setFetchedToken(tokenObj);
       setCurrentStep(3); // Advance to Review Details
@@ -1188,24 +1186,40 @@ export default function App() {
     try {
       const targetChain = fetchedToken.chainId || selectedChain;
       const chainInfo = getChainInfo(targetChain);
-      const chainKey =
+      const blockchain =
         fetchedToken.metadata.blockchainName ||
         (fetchedToken.metadata as any)?.blockchain_name ||
         (fetchedToken.metadata as any)?.blockchain ||
         fetchedToken.metadata.chainName ||
-        fetchedToken.metadata.network ||
         chainInfo.name ||
-        targetChain;
+        'Polygon';
+
+      const blockchainSymbol =
+        fetchedToken.metadata.chainSymbol ||
+        (fetchedToken.metadata as any)?.blockchainSymbol ||
+        chainInfo.symbol ||
+        'MATIC';
+
+      let chainIdNum = 137;
+      if (typeof targetChain === 'number' && !isNaN(targetChain)) {
+        chainIdNum = targetChain;
+      } else if (chainInfo.id && !isNaN(Number(chainInfo.id))) {
+        chainIdNum = Number(chainInfo.id);
+      } else if (!isNaN(Number(targetChain)) && Number(targetChain) > 0) {
+        chainIdNum = Number(targetChain);
+      }
 
       const userId = currentUser?.id || wallet.walletAddress || 'anonymous_user';
 
-      // Submit token array directly to Vercel backend /api/save-token
+      // Submit token array directly to Vercel backend /api/save-token matching strict payload structure
       const payloadTokens = [
         {
-          name: fetchedToken.metadata.name || 'Unknown Token',
-          symbol: fetchedToken.metadata.symbol || 'TOK',
+          blockchain,
+          blockchainSymbol,
+          chainId: chainIdNum,
           contractAddress: fetchedToken.address,
-          blockchain: chainKey,
+          tokenName: fetchedToken.metadata.name || 'Unknown Token',
+          tokenSymbol: (fetchedToken.metadata.symbol || 'TOK').toUpperCase(),
           logoUrl: fetchedToken.metadata.logoUrl || '',
         },
       ];
@@ -1290,7 +1304,6 @@ export default function App() {
     setAddressInput('');
     setFetchedToken(null);
     setAutoSwitchNotice(null);
-    setIsTokenSavedInAccount(false);
     setErrorMessage(null);
   };
 
@@ -1809,12 +1822,6 @@ export default function App() {
                     logoReport={logoReport}
                     logoStatus={logoStatus}
                     trustScore={fetchedToken.verificationReport?.trustScore}
-                    isAlreadySaved={
-                      isTokenSavedInAccount ||
-                      tokens.some(
-                        (t) => t.address.toLowerCase().trim() === fetchedToken.address.toLowerCase().trim()
-                      )
-                    }
                     onSaveToken={handleSaveToken}
                     onCancel={handleResetForm}
                     isSaving={isSavingToken}

@@ -187,24 +187,13 @@ export async function initGlobalExploreDirectory(
 ): Promise<SubmittedToken[]> {
   const cached = readCache();
 
-  // Fresh cache in localStorage: return immediately without making any network request
-  if (isCacheFresh(cached) && cached) {
-    const status: ExploreDirectoryStatus =
-      cached.status === 'success'
-        ? { state: 'cached' }
-        : { state: 'unavailable', message: 'Token directory is not available right now.' };
-
-    onStatus?.(status);
+  // If we have cached tokens, display them immediately while live fetch runs
+  if (cached && Array.isArray(cached.tokens) && cached.tokens.length > 0) {
     onUpdate?.(cached.tokens);
-    return cached.tokens;
+    onStatus?.({ state: 'cached' });
+  } else {
+    onStatus?.({ state: 'loading', message: 'Fetching tokens...' });
   }
-
-  // If we have stale cache, show it immediately while background fetch executes
-  if (cached && cached.tokens.length > 0) {
-    onUpdate?.(cached.tokens);
-  }
-
-  onStatus?.({ state: 'loading', message: 'Fetching tokens...' });
 
   try {
     const rawTokens = await fetchExploreTokensFromBackend();

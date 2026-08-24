@@ -319,9 +319,6 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
               logoReport={logoReport}
               logoStatus={logoStatus}
               trustScore={fetchedToken.verificationReport?.trustScore ?? fetchedToken.safety?.score}
-              isAlreadySaved={tokens.some(
-                (t) => t.address.toLowerCase().trim() === fetchedToken.address.toLowerCase().trim()
-              )}
               onSaveToken={handleSaveToken}
               onCancel={handleResetForm}
               isSaving={isSavingToken}

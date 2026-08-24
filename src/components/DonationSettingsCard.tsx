@@ -29,7 +29,6 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
   logoReport,
   logoStatus = 'checking',
   trustScore = 84,
-  isAlreadySaved = false,
   onSaveToken,
   onCancel,
   isSaving,
@@ -44,13 +43,10 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
     `${metadata.name} (${metadata.symbol}) verified token contract for community donations.`
   );
 
-  // A remote logo is an asset URL, not a security gate. The visible token
-  // renderer handles fallback sources. Saving must not be blocked because a
-  // hidden/download-based logo analyzer could not inspect the URL.
+  // A remote logo is an asset URL.
+  // Saving is delegated to the backend save-token API.
   let saveDisabledReason: string | null = null;
-  if (isAlreadySaved) {
-    saveDisabledReason = 'Token contract address is already saved in the directory.';
-  } else if (!metadata.logoUrl || !metadata.logoUrl.trim()) {
+  if (!metadata.logoUrl || !metadata.logoUrl.trim()) {
     saveDisabledReason = 'Logo is required. Please upload or provide a valid token logo.';
   } else if (trustScore !== undefined && trustScore < 45) {
     saveDisabledReason = `Token trust score is too low (${trustScore}/100) to pass security review.`;
@@ -98,43 +94,83 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
           <button
             type="button"
             onClick={() => setAcceptDonations(!acceptDonations)}
-            className={`w-7 h-3.5 rounded-full transition-colors p-0.5 flex items-center cursor-pointer shrink-0 ${
-              acceptDonations ? 'bg-emerald-500 justify-end' : 'bg-zinc-800 justify-start'
+            className={`w-7 h-4 rounded-full p-0.5 transition-colors cursor-pointer ${
+              acceptDonations ? 'bg-emerald-500' : 'bg-zinc-700'
             }`}
           >
-            <div className="w-2.5 h-2.5 rounded-full bg-white shadow-sm" />
+            <div
+              className={`w-3 h-3 rounded-full bg-black transform transition-transform ${
+                acceptDonations ? 'translate-x-3' : 'translate-x-0'
+              }`}
+            />
           </button>
         </div>
 
-        <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md space-y-0.5">
-          <label className="text-[8px] font-semibold text-zinc-400 uppercase block">
-            Min Donation ({metadata.symbol})
-          </label>
-          <input
-            type="number"
-            min="0.0001"
-            step="any"
-            value={minDonation}
-            onChange={(e) => setMinDonation(parseFloat(e.target.value) || 0)}
-            className="w-full bg-zinc-900 border border-zinc-800 text-white font-mono text-[9.5px] rounded px-1.5 py-0.5 focus:outline-none focus:border-emerald-500"
-          />
+        <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md flex items-center justify-between">
+          <div>
+            <div className="font-bold text-white text-[9.5px] flex items-center space-x-1">
+              <span>Featured</span>
+              <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+            </div>
+            <div className="text-[8px] text-zinc-400">Highlight in explore</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setFeatured(!featured)}
+            className={`w-7 h-4 rounded-full p-0.5 transition-colors cursor-pointer ${
+              featured ? 'bg-amber-500' : 'bg-zinc-700'
+            }`}
+          >
+            <div
+              className={`w-3 h-3 rounded-full bg-black transform transition-transform ${
+                featured ? 'translate-x-3' : 'translate-x-0'
+              }`}
+            />
+          </button>
         </div>
 
-        <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md space-y-0.5">
-          <label className="text-[8px] font-semibold text-zinc-400 uppercase block">
-            Token Category
-          </label>
+        <div className="bg-[#06080F] border border-zinc-800/80 p-1.5 rounded-md flex items-center justify-between">
+          <div>
+            <div className="font-bold text-white text-[9.5px]">Min Donation</div>
+            <div className="text-[8px] text-zinc-400">Per transaction</div>
+          </div>
+          <div className="flex items-center space-x-1">
+            <input
+              type="number"
+              min="0.0001"
+              step="any"
+              value={minDonation}
+              onChange={(e) => setMinDonation(Number(e.target.value))}
+              className="w-14 bg-zinc-900 border border-zinc-700/80 rounded px-1 py-0.5 text-right font-mono text-[9px] text-white focus:outline-none focus:border-emerald-500"
+            />
+            <span className="text-[8px] text-zinc-400">{metadata.symbol}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[9px]">
+        <div>
+          <label className="block text-[8px] text-zinc-400 mb-0.5 font-medium">Category</label>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            className="w-full bg-zinc-900 border border-zinc-800 text-white text-[9.5px] rounded px-1.5 py-0.5 focus:outline-none focus:border-emerald-500 cursor-pointer"
+            className="w-full bg-[#06080F] border border-zinc-800/80 rounded px-1.5 py-0.5 text-[9px] text-white focus:outline-none focus:border-emerald-500"
           >
-            <option value="Ecosystem">Ecosystem & Layer 2</option>
-            <option value="DeFi">DeFi & Liquidity</option>
-            <option value="Social Impact">Social Impact</option>
+            <option value="DeFi">DeFi & Yield</option>
+            <option value="NFT">NFT & Gaming</option>
             <option value="Infrastructure">Infrastructure</option>
-            <option value="Community">Community & Memes</option>
+            <option value="Ecosystem">Ecosystem</option>
+            <option value="Meme">Community & Meme</option>
           </select>
+        </div>
+        <div>
+          <label className="block text-[8px] text-zinc-400 mb-0.5 font-medium">Custom Description</label>
+          <input
+            type="text"
+            value={customDescription}
+            onChange={(e) => setCustomDescription(e.target.value)}
+            className="w-full bg-[#06080F] border border-zinc-800/80 rounded px-1.5 py-0.5 text-[9px] text-white focus:outline-none focus:border-emerald-500"
+          />
         </div>
       </div>
 
@@ -161,40 +197,28 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
             <span>Cancel</span>
           </button>
 
-          {isAlreadySaved ? (
-            <button
-              type="button"
-              disabled
-              className="px-2.5 py-0.5 font-bold rounded text-[9px] flex items-center space-x-1 bg-zinc-800/90 text-emerald-400 border border-emerald-500/30 cursor-default shadow-none"
-              title="This token contract is already saved in directory"
-            >
-              <Check className="w-2.5 h-2.5 text-emerald-400 stroke-[3]" />
-              <span>Saved</span>
-            </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={isSaveDisabled || isSaving}
-              className={`px-2.5 py-0.5 font-bold rounded text-[9px] flex items-center space-x-1 shadow-sm transition-all ${
-                isSaveDisabled
-                  ? 'bg-zinc-800 text-zinc-500 border border-zinc-700/50 cursor-not-allowed opacity-70'
-                  : 'bg-emerald-500 hover:bg-emerald-400 text-black cursor-pointer'
-              }`}
-              title={isSaveDisabled ? saveDisabledReason || 'Save disabled' : 'Save token to directory'}
-            >
-              {isSaving ? (
-                <>
-                  <div className="w-2.5 h-2.5 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                  <span>Saving...</span>
-                </>
-              ) : (
-                <>
-                  <Check className="w-2.5 h-2.5 stroke-[3]" />
-                  <span>Save Token</span>
-                </>
-              )}
-            </button>
-          )}
+          <button
+            type="submit"
+            disabled={isSaveDisabled || isSaving}
+            className={`px-2.5 py-0.5 font-bold rounded text-[9px] flex items-center space-x-1 shadow-sm transition-all ${
+              isSaveDisabled
+                ? 'bg-zinc-800 text-zinc-500 border border-zinc-700/50 cursor-not-allowed opacity-70'
+                : 'bg-emerald-500 hover:bg-emerald-400 text-black cursor-pointer'
+            }`}
+            title={isSaveDisabled ? saveDisabledReason || 'Save disabled' : 'Save token to directory'}
+          >
+            {isSaving ? (
+              <>
+                <div className="w-2.5 h-2.5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                <span>Saving...</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-2.5 h-2.5 stroke-[3]" />
+                <span>Save Token</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
     </form>

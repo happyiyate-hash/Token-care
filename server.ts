@@ -188,6 +188,56 @@ async function startServer() {
   // Vercel Standalone Python Backend API Routes
   // ==========================================
 
+  const REMOTE_VERCEL_BACKEND_URL =
+    process.env.VERCEL_TOKEN_GATEWAY_URL ||
+    'https://token-save-backend.vercel.app/api';
+
+  const REMOTE_VERCEL_SAVE_URL =
+    process.env.VERCEL_SAVE_TOKEN_URL ||
+    'https://token-save-backend.vercel.app/api/save-token';
+
+  // Server-side proxy for Vercel Token Gateway (getAllTokens, getTokensByUser)
+  app.post('/api/token-backend-gateway', async (req, res) => {
+    try {
+      const response = await fetch(REMOTE_VERCEL_BACKEND_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body || {}),
+      });
+
+      const data = await response.json().catch(() => null);
+      return res.status(response.status).json(data);
+    } catch (err: any) {
+      console.error('[Token Backend Proxy Gateway] Error:', err);
+      return res.status(502).json({
+        success: false,
+        error: 'Proxy Error',
+        message: err?.message || 'Failed to communicate with remote token backend',
+      });
+    }
+  });
+
+  // Server-side proxy for Vercel Save-Token Gateway
+  app.post('/api/token-backend-save', async (req, res) => {
+    try {
+      const response = await fetch(REMOTE_VERCEL_SAVE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body || {}),
+      });
+
+      const data = await response.json().catch(() => null);
+      return res.status(response.status).json(data);
+    } catch (err: any) {
+      console.error('[Token Backend Proxy Save] Error:', err);
+      return res.status(502).json({
+        success: false,
+        error: 'Proxy Error',
+        message: err?.message || 'Failed to communicate with remote token save backend',
+      });
+    }
+  });
+
   // 1. GET /api/health
   app.get('/api/health', (req, res) => {
     return res.status(200).json({
