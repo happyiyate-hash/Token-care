@@ -1,5 +1,10 @@
 import { getActiveDeveloperApiKey } from './developerCache';
-import { fetchExploreTokensFromBackend, saveTokensToBackend, VERCEL_TOKEN_GATEWAY_URL } from './vercelTokenBackend';
+import {
+  fetchExploreTokensFromBackend,
+  saveTokensToBackend,
+  LOCAL_TOKEN_GATEWAY_URL,
+  VERCEL_TOKEN_GATEWAY_URL,
+} from './vercelTokenBackend';
 
 function getRequestHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -8,20 +13,36 @@ function getRequestHeaders(): Record<string, string> {
   return headers;
 }
 
-/** All token operations are routed through the Vercel token gateway. */
+/** All token operations are routed through the token gateway. */
 export async function executeWorkerGenericAction(payload: Record<string, any>): Promise<any> {
-  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeoutId = controller ? setTimeout(() => controller.abort(), 10000) : null;
+  const tryPost = async (url: string) => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), 8000) : null;
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify(payload),
+        signal: controller?.signal,
+      });
+      const result = await response.json().catch(() => null);
+      return result ?? { success: false, error: `HTTP ${response.status}` };
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  };
+
   try {
-    const response = await fetch(VERCEL_TOKEN_GATEWAY_URL, {
-      method: 'POST', headers: getRequestHeaders(), body: JSON.stringify(payload), signal: controller?.signal,
-    });
-    const result = await response.json().catch(() => null);
-    return result ?? { success: false, error: `HTTP ${response.status}` };
+    const localResult = await tryPost(LOCAL_TOKEN_GATEWAY_URL);
+    if (localResult && (localResult.success || localResult.tokens || localResult.token || localResult.found)) {
+      return localResult;
+    }
+  } catch {}
+
+  try {
+    return await tryPost(VERCEL_TOKEN_GATEWAY_URL);
   } catch (error: any) {
     return { success: false, error: error?.message || 'Token backend service unavailable' };
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 

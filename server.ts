@@ -3,7 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import nodemailer from 'nodemailer';
 import { validateAndConsumeDeveloperQuota, finalizeDeveloperRequestLog } from './src/server/developerUsage';
-import { uploadToken } from './backend';
+import { tokenBackendRouter, handleTokenRequest, uploadToken } from './backend';
 
 // Shared Nodemailer transporter instance
 let cachedTransporter: nodemailer.Transporter | null = null;
@@ -185,34 +185,22 @@ async function startServer() {
   });
 
   // ==========================================
-  // Vercel Standalone Python Backend API Routes
+  // Modular Token Backend Routes & Handlers
   // ==========================================
-
-  const REMOTE_VERCEL_BACKEND_URL =
-    process.env.VERCEL_TOKEN_GATEWAY_URL ||
-    'https://token-save-backend.vercel.app/api';
-
-  const REMOTE_VERCEL_SAVE_URL =
-    process.env.VERCEL_SAVE_TOKEN_URL ||
-    'https://token-save-backend.vercel.app/api/save-token';
+  app.use('/api/token', tokenBackendRouter);
+  app.use('/backend', tokenBackendRouter);
 
   // Server-side proxy for Vercel Token Gateway (getAllTokens, getTokensByUser)
   app.post('/api/token-backend-gateway', async (req, res) => {
     try {
-      const response = await fetch(REMOTE_VERCEL_BACKEND_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(req.body || {}),
-      });
-
-      const data = await response.json().catch(() => null);
-      return res.status(response.status).json(data);
+      const response = await handleTokenRequest(req.body || {});
+      return res.status(200).json(response);
     } catch (err: any) {
       console.error('[Token Backend Proxy Gateway] Error:', err);
-      return res.status(502).json({
+      return res.status(500).json({
         success: false,
         error: 'Proxy Error',
-        message: err?.message || 'Failed to communicate with remote token backend',
+        message: err?.message || 'Failed to process token gateway request',
       });
     }
   });
@@ -220,20 +208,18 @@ async function startServer() {
   // Server-side proxy for Vercel Save-Token Gateway
   app.post('/api/token-backend-save', async (req, res) => {
     try {
-      const response = await fetch(REMOTE_VERCEL_SAVE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(req.body || {}),
-      });
-
-      const data = await response.json().catch(() => null);
-      return res.status(response.status).json(data);
+      const payload = {
+        action: 'saveToken',
+        ...(req.body || {}),
+      };
+      const response = await handleTokenRequest(payload);
+      return res.status(response.success ? 200 : 400).json(response);
     } catch (err: any) {
       console.error('[Token Backend Proxy Save] Error:', err);
-      return res.status(502).json({
+      return res.status(500).json({
         success: false,
         error: 'Proxy Error',
-        message: err?.message || 'Failed to communicate with remote token save backend',
+        message: err?.message || 'Failed to process token save request',
       });
     }
   });

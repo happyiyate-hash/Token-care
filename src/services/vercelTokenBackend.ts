@@ -4,10 +4,13 @@ import { getChainInfo } from '../constants/chains';
 import { resolveChainLogo } from './chainLogos';
 import { notifyBackendError, extractBackendErrorMessage } from './toastManager';
 
-export const VERCEL_TOKEN_GATEWAY_URL = 'https://token-save-backend-p74bbibkg-happyiyate-hashs-projects.vercel.app/api/token';
+export const VERCEL_TOKEN_GATEWAY_URL =
+  'https://token-save-backend-p74bbibkg-happyiyate-hashs-projects.vercel.app/api/token';
+export const LOCAL_TOKEN_GATEWAY_URL = '/api/token';
+
 export const VERCEL_SAVE_TOKEN_URL = VERCEL_TOKEN_GATEWAY_URL;
-export const LOCAL_PROXY_GATEWAY_URL = VERCEL_TOKEN_GATEWAY_URL;
-export const LOCAL_PROXY_SAVE_URL = VERCEL_TOKEN_GATEWAY_URL;
+export const LOCAL_PROXY_GATEWAY_URL = LOCAL_TOKEN_GATEWAY_URL;
+export const LOCAL_PROXY_SAVE_URL = LOCAL_TOKEN_GATEWAY_URL;
 
 export interface BackendTokenItem {
   blockchain: string;
@@ -52,20 +55,38 @@ export function formatTokenForBackend(token: any, fallbackChainId?: string | num
 }
 
 async function postTokenApi(payload: any, timeoutMs = 12000): Promise<{ status: number; ok: boolean; json: any }> {
-  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  const tryPost = async (url: string) => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller?.signal,
+      });
+      const json = await res.json().catch(() => null);
+      return { status: res.status, ok: res.ok, json };
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  };
+
+  // Try local backend handler first
   try {
-    const res = await fetch(VERCEL_TOKEN_GATEWAY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller?.signal,
-    });
-    const json = await res.json().catch(() => null);
-    return { status: res.status, ok: res.ok, json };
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    const localResult = await tryPost(LOCAL_TOKEN_GATEWAY_URL);
+    if (localResult.ok && localResult.json && localResult.json.success !== false) {
+      return localResult;
+    }
+    if (localResult.status !== 404 && localResult.status !== 502) {
+      return localResult;
+    }
+  } catch (err) {
+    console.debug('[TokenBackend] Local endpoint note:', err);
   }
+
+  // Fallback to direct Vercel Gateway URL
+  return tryPost(VERCEL_TOKEN_GATEWAY_URL);
 }
 
 export async function fetchExploreTokensFromBackend(): Promise<any[]> {
