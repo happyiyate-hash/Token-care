@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyToken } from '../backend/verification/tokenVerifier';
+import { verifyToken } from '../backend/tokenVerifier';
 
 function normalizeBlockchainInput(value: unknown): string {
   const clean = String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '');

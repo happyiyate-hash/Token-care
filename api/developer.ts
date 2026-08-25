@@ -1,15 +1,18 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const upstreamUrl = process.env.DEVELOPER_UPSTREAM_URL;
+let supabaseClient: SupabaseClient | null = null;
 
-if (!supabaseUrl || !serviceRoleKey) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
-
-const supabase = createClient(supabaseUrl, serviceRoleKey, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
+function getSupabase(): SupabaseClient | null {
+  if (supabaseClient) return supabaseClient;
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) return null;
+  supabaseClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  return supabaseClient;
+}
 
 function send(res: VercelResponse, status: number, body: unknown) {
   return res.status(status).json(body);
@@ -55,6 +58,8 @@ async function updateDailyUsage(p: {
   statusCode: number;
   errorCode?: string | null;
 }) {
+  const supabase = getSupabase();
+  if (!supabase) return;
   const usageDate = new Date().toISOString().slice(0, 10);
   const isBlocked =
     p.statusCode === 429 ||
@@ -105,6 +110,8 @@ async function writeLog(p: {
   statusCode: number; startedAt: number; errorCode?: string | null;
   message: string; creditsCharged: number;
 }) {
+  const supabase = getSupabase();
+  if (!supabase) return;
   const { error } = await supabase.from('developer_request_logs').insert({
     project_id: p.projectId,
     endpoint: p.requestKey,
@@ -137,8 +144,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const requestKey = getRequestKey(body);
   const apiKey = getApiKey(req);
 
+  const supabase = getSupabase();
+  const upstreamUrl = process.env.DEVELOPER_UPSTREAM_URL;
+
   if (method !== 'POST') return send(res, 405, { success: false, code: 'METHOD_NOT_ALLOWED', message: 'Use POST.' });
   if (!apiKey) return send(res, 401, { success: false, code: 'API_KEY_REQUIRED', message: 'API key required.', request_id: requestId });
+  if (!supabase) return send(res, 500, { success: false, code: 'SUPABASE_NOT_CONFIGURED', message: 'Database connection is not configured.', request_id: requestId });
   if (!upstreamUrl) return send(res, 500, { success: false, code: 'UPSTREAM_NOT_CONFIGURED', message: 'Developer upstream is not configured.', request_id: requestId });
   if (requestKey === 'unknown') return send(res, 400, { success: false, code: 'REQUEST_KEY_REQUIRED', message: 'The JSON body must contain a string `key`.', request_id: requestId });
 

@@ -11,10 +11,12 @@ export interface TokenBackendRequest {
   action?: 'getAllTokens' | 'getTokensByUser' | 'getTokenByAddress' | 'saveToken' | 'health' | string;
   userId?: string;
   tokens?: any[];
+  token?: any;
   blockchain?: string;
   contractAddress?: string;
   page?: number;
   limit?: number;
+  [key: string]: any;
 }
 
 export interface TokenBackendResponse {
@@ -182,9 +184,16 @@ export async function handleTokenRequest(body: TokenBackendRequest): Promise<Tok
   }
 
   // 5. Action: saveToken / save-token (Donation Setup & Campaign Submission)
-  if (action === 'saveToken' || action === 'save-token') {
-    const userId = body.userId || 'anonymous_user';
-    const rawTokens = Array.isArray(body.tokens) ? body.tokens : [];
+  if (action === 'saveToken' || action === 'save-token' || action === 'uploadTokens') {
+    const userId = body.userId || (body as any).user_id || 'anonymous_user';
+    let rawTokens: any[] = [];
+    if (Array.isArray(body.tokens)) {
+      rawTokens = body.tokens;
+    } else if (body.token && typeof body.token === 'object') {
+      rawTokens = [body.token];
+    } else if (body.contractAddress || (body as any).address) {
+      rawTokens = [body];
+    }
 
     if (rawTokens.length === 0) {
       return {
@@ -194,9 +203,20 @@ export async function handleTokenRequest(body: TokenBackendRequest): Promise<Tok
       };
     }
 
+    const normalizedTokens = rawTokens.map((t) => ({
+      ...t,
+      name: t.tokenName || t.name || t.symbol || 'Unknown Token',
+      symbol: (t.tokenSymbol || t.symbol || 'TOK').toUpperCase(),
+      contractAddress: String(t.contractAddress || t.address || t.tokenAddress || t.id || t.metadata?.address || '').trim(),
+      blockchain: t.blockchain || t.chain || body.blockchain || 'Polygon',
+      blockchainSymbol: t.blockchainSymbol || t.chainSymbol || 'MATIC',
+      chainId: t.chainId ?? t.chain_id ?? 137,
+      logoUrl: t.logoUrl || t.logo_url || t.metadata?.logoUrl || '',
+    }));
+
     // Try remote if enabled
     if (BACKEND_CONFIG.forwardToRemote) {
-      const remoteData = await tryForwardUpstream(body);
+      const remoteData = await tryForwardUpstream({ ...body, tokens: normalizedTokens });
       if (remoteData && remoteData.success !== false) {
         return {
           ...remoteData,
@@ -206,7 +226,8 @@ export async function handleTokenRequest(body: TokenBackendRequest): Promise<Tok
     }
 
     // Save to local store
-    const { saved, rejected } = globalTokenStore.saveTokens(userId, rawTokens);
+    const { saved, rejected } = globalTokenStore.saveTokens(userId, normalizedTokens);
+
 
     const isPartial = rejected.length > 0 && saved.length > 0;
     const isSuccess = saved.length > 0;

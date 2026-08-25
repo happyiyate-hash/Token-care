@@ -190,6 +190,29 @@ async function startServer() {
   app.use('/api/token', tokenBackendRouter);
   app.use('/backend', tokenBackendRouter);
 
+  // Direct endpoints for /api/save-token and /api/upload-token
+  app.post('/api/save-token', async (req, res) => {
+    try {
+      const payload = { action: 'saveToken', ...(req.body || {}) };
+      const response = await handleTokenRequest(payload);
+      return res.status(response.success ? 200 : 400).json(response);
+    } catch (err: any) {
+      console.error('[Token Backend save-token] Error:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to save token' });
+    }
+  });
+
+  app.post('/api/upload-token', async (req, res) => {
+    try {
+      const payload = { action: 'saveToken', ...(req.body || {}) };
+      const response = await handleTokenRequest(payload);
+      return res.status(response.success ? 200 : 400).json(response);
+    } catch (err: any) {
+      console.error('[Token Backend upload-token] Error:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to upload token' });
+    }
+  });
+
   // Server-side proxy for Vercel Token Gateway (getAllTokens, getTokensByUser)
   app.post('/api/token-backend-gateway', async (req, res) => {
     try {
