@@ -1,8 +1,8 @@
 {
   "version": 2,
   "installCommand": "npm install --include=dev",
-  "buildCommand": "npm run prepare:brand && npm run build:web",
-  "outputDirectory": "dist",
+  "buildCommand": "npm run prepare:brand && npm run build:web && rm -rf vercel-dist && mkdir -p vercel-dist && cp -R dist/. vercel-dist/",
+  "outputDirectory": "vercel-dist",
   "functions": {
     "api/save-token.ts": {
       "runtime": "nodejs22.x"
