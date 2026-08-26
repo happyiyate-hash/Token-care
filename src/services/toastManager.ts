@@ -51,11 +51,25 @@ export function extractBackendErrorMessage(responseStatus: number, responseBody:
     return trimmed.length > 0 ? trimmed : `Backend HTTP ${responseStatus} error`;
   }
 
-  const errorField = responseBody.error
-    ? typeof responseBody.error === 'string'
-      ? responseBody.error.trim()
-      : JSON.stringify(responseBody.error)
-    : '';
+  // Handle nested error objects: responseBody.error = { message: "...", details: "..." }
+  let errorField = '';
+  if (responseBody.error) {
+    if (typeof responseBody.error === 'string') {
+      errorField = responseBody.error.trim();
+    } else if (typeof responseBody.error === 'object') {
+      const nestedMsg =
+        responseBody.error.message ||
+        responseBody.error.details ||
+        responseBody.error.error ||
+        responseBody.error.description ||
+        responseBody.error.reason;
+      if (nestedMsg && typeof nestedMsg === 'string') {
+        errorField = nestedMsg.trim();
+      } else {
+        errorField = JSON.stringify(responseBody.error);
+      }
+    }
+  }
 
   const messageField = responseBody.message
     ? typeof responseBody.message === 'string'
@@ -75,28 +89,60 @@ export function extractBackendErrorMessage(responseStatus: number, responseBody:
       : JSON.stringify(responseBody.details)
     : '';
 
-  const upstreamField = responseBody.upstreamError || responseBody.upstream_error || responseBody.cause || responseBody.error_description;
+  const upstreamField =
+    responseBody.upstreamError ||
+    responseBody.upstream_error ||
+    responseBody.upstreamResponse ||
+    responseBody.edgeError ||
+    responseBody.edge_error ||
+    responseBody.workerError ||
+    responseBody.worker_error ||
+    responseBody.cause ||
+    responseBody.error_description ||
+    responseBody.description;
+
   const upstreamStr = upstreamField
     ? typeof upstreamField === 'string'
       ? upstreamField.trim()
+      : typeof upstreamField === 'object' && upstreamField.message
+      ? String(upstreamField.message).trim()
       : JSON.stringify(upstreamField)
     : '';
 
   // Gather all informative pieces of the error
   const detailsParts: string[] = [];
 
-  if (messageField) detailsParts.push(messageField);
-  if (detailsField && detailsField !== messageField) detailsParts.push(detailsField);
-  if (reasonField && reasonField !== messageField && reasonField !== detailsField) detailsParts.push(reasonField);
+  // Check rejected array
+  if (Array.isArray(responseBody.rejected) && responseBody.rejected.length > 0) {
+    for (const r of responseBody.rejected) {
+      const rejectReason = r?.reason || r?.error || r?.message || r?.details;
+      if (rejectReason) {
+        const text = typeof rejectReason === 'string' ? rejectReason.trim() : JSON.stringify(rejectReason);
+        if (text && !detailsParts.includes(text)) {
+          detailsParts.push(text);
+        }
+      }
+    }
+  }
+
+  if (messageField && !detailsParts.includes(messageField)) detailsParts.push(messageField);
+  if (detailsField && !detailsParts.includes(detailsField)) detailsParts.push(detailsField);
+  if (reasonField && !detailsParts.includes(reasonField)) detailsParts.push(reasonField);
   if (upstreamStr && !detailsParts.includes(upstreamStr)) detailsParts.push(upstreamStr);
 
-  // If we have detailed explanation parts
+  // If we have detailed explanation parts from the edge function
   if (detailsParts.length > 0) {
     const detailedMessage = detailsParts.join(' — ');
 
-    // If there is also an error code (e.g. CLOUDFLARE_UPLOAD_FAILED) and it's not already in the detailed message:
+    // If errorField is a generic code (e.g. CLOUDFLARE_UPLOAD_FAILED, BACKEND_ERROR, SAVE_ERROR),
+    // show the exact specific error message from the edge function first
+    const isGenericCode = /^[A-Z0-9_-]+$/.test(errorField) && errorField.length < 35;
+    if (isGenericCode && detailedMessage.length > 0) {
+      return detailedMessage;
+    }
+
     if (errorField && !detailedMessage.toLowerCase().includes(errorField.toLowerCase())) {
-      return `${errorField}: ${detailedMessage}`;
+      return `${detailedMessage} (${errorField})`;
     }
     return detailedMessage;
   }
@@ -104,15 +150,6 @@ export function extractBackendErrorMessage(responseStatus: number, responseBody:
   // Fallback to error field if only error is present
   if (errorField) {
     return errorField;
-  }
-
-  // Check rejected array
-  if (Array.isArray(responseBody.rejected) && responseBody.rejected.length > 0) {
-    const firstReject = responseBody.rejected[0];
-    const rejectReason = firstReject?.reason || firstReject?.error || firstReject?.message;
-    if (rejectReason) {
-      return typeof rejectReason === 'string' ? rejectReason : JSON.stringify(rejectReason);
-    }
   }
 
   return `Backend returned HTTP ${responseStatus || 'error'}`;

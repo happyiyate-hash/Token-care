@@ -95,7 +95,7 @@ interface MobileViewProps {
   onOpenRewardModal: () => void;
   onOpenWalletModal: () => void;
   onOpenTransferModal?: () => void;
-  onSwitchToDesktop: () => void;
+  onSwitchToDesktop?: () => void;
   unreadCount?: number;
   onUnreadCountChange?: (count: number) => void;
   isVerifying?: boolean;

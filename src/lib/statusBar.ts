@@ -4,8 +4,6 @@ import { StatusBar, Style } from '@capacitor/status-bar';
 
 const DEFAULT_APP_BACKGROUND = '#06080E';
 const DEFAULT_HEADER_BACKGROUND = '#090C12';
-const VIEW_MODE_KEY = 'tokencare_view_mode';
-const VIEW_MODE_BUTTON_ID = 'tokencare-settings-view-mode';
 
 function isTransparent(color: string): boolean {
   return !color || color === 'transparent' || color === 'rgba(0, 0, 0, 0)';
@@ -126,113 +124,8 @@ async function applyStatusBar(color: string) {
   }
 }
 
-function getSavedMode(): 'desktop' | 'mobile' | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const saved = localStorage.getItem(VIEW_MODE_KEY);
-    return saved === 'desktop' || saved === 'mobile' ? saved : null;
-  } catch {
-    return null;
-  }
-}
-
-function forceViewportWidth(mode: 'desktop' | 'mobile') {
-  if (typeof window === 'undefined') return;
-  const width = mode === 'mobile' ? 390 : Math.max(window.screen?.width || 1024, 1024);
-  try {
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      get: () => width,
-    });
-  } catch {}
-}
-
-// App.tsx chooses its React tree from window.innerWidth during initial render.
-// Apply a saved preview mode before React renders so the preference survives reloads.
-if (typeof window !== 'undefined') {
-  const savedMode = getSavedMode();
-  if (savedMode) forceViewportWidth(savedMode);
-}
-
-function isSettingsPage(): boolean {
-  if (typeof document === 'undefined' || !document.body) return false;
-  const text = document.body.innerText.toLowerCase();
-  return text.includes('manage your account and preferences') ||
-    (text.includes('wallet & security') && text.includes('appearance'));
-}
-
-function installSettingsViewModeControl() {
-  if (typeof window === 'undefined' || typeof document === 'undefined' || !document.body) return;
-  if ((window as any).__tokencareViewModeControlInstalled) return;
-  (window as any).__tokencareViewModeControlInstalled = true;
-
-  const remove = () => document.getElementById(VIEW_MODE_BUTTON_ID)?.remove();
-
-  const render = () => {
-    if (!isSettingsPage()) {
-      remove();
-      return;
-    }
-    const currentMode: 'desktop' | 'mobile' = getSavedMode() || (window.innerWidth < 768 ? 'mobile' : 'desktop');
-    const nextMode = currentMode === 'mobile' ? 'desktop' : 'mobile';
-    let button = document.getElementById(VIEW_MODE_BUTTON_ID) as HTMLButtonElement | null;
-
-    if (!button) {
-      button = document.createElement('button');
-      button.id = VIEW_MODE_BUTTON_ID;
-      button.type = 'button';
-      button.addEventListener('click', () => {
-        const current: 'desktop' | 'mobile' = getSavedMode() || (window.innerWidth < 768 ? 'mobile' : 'desktop');
-        const next: 'desktop' | 'mobile' = current === 'mobile' ? 'desktop' : 'mobile';
-        try { localStorage.setItem(VIEW_MODE_KEY, next); } catch {}
-        forceViewportWidth(next);
-        window.location.reload();
-      });
-      document.body.appendChild(button);
-    }
-
-    button.innerHTML = nextMode === 'mobile'
-      ? '<span style="font-size:16px;line-height:1">▯</span><span>Switch to Mobile</span>'
-      : '<span style="font-size:16px;line-height:1">▣</span><span>Switch to Desktop</span>';
-    button.title = `Switch to ${nextMode} view`;
-    button.setAttribute('aria-label', `Switch to ${nextMode} view`);
-    button.style.cssText = [
-      'position:fixed',
-      'right:16px',
-      'bottom:calc(env(safe-area-inset-bottom, 0px) + 74px)',
-      'z-index:2147483647',
-      'display:flex',
-      'align-items:center',
-      'gap:8px',
-      'padding:11px 14px',
-      'border-radius:14px',
-      'border:1px solid rgba(52,211,153,.30)',
-      'background:rgba(9,12,18,.96)',
-      'backdrop-filter:blur(16px)',
-      'box-shadow:0 10px 35px rgba(0,0,0,.48)',
-      'color:#e5e7eb',
-      'font:600 12px/1 system-ui,sans-serif',
-      'cursor:pointer',
-    ].join(';');
-  };
-
-  const observer = new MutationObserver(() => window.requestAnimationFrame(render));
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-  render();
-}
-
-if (typeof window !== 'undefined') {
-  const startControl = () => installSettingsViewModeControl();
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', startControl, { once: true });
-  } else {
-    startControl();
-  }
-}
-
 export async function setStatusBarColor(color: string) {
   if (!color) return;
-  installSettingsViewModeControl();
   await applyStatusBar(color);
 }
 
@@ -244,7 +137,6 @@ export function useStatusBarColor(color: string) {
       if (disposed) return;
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
-        installSettingsViewModeControl();
         applyStatusBar(color).catch(() => {});
       }, 0);
     };
@@ -258,3 +150,4 @@ export function useStatusBarColor(color: string) {
     };
   }, [color]);
 }
+

@@ -49,8 +49,12 @@ import { DashboardOverview } from './components/DashboardOverview';
 import { TransferTokensModal } from './components/TransferTokensModal';
 import { ExploreView } from './components/ExploreView';
 import { SettingsView } from './components/SettingsView';
+import { DesktopSettingsView } from './components/DesktopSettingsView';
 import { WithdrawalView } from './components/WithdrawalView';
+import { DesktopWithdrawalView } from './components/DesktopWithdrawalView';
+import { MySavedTokensView } from './components/MySavedTokensView';
 import { NotificationCenterView } from './components/NotificationCenterView';
+import { DesktopNotificationPopover } from './components/DesktopNotificationPopover';
 import { MfaManagementView } from './components/MfaManagementView';
 import { ApiConsoleModal } from './components/ApiConsoleModal';
 import DeveloperView from './views/DeveloperView';
@@ -107,7 +111,7 @@ import {
   SessionStatus,
   CachedAppData,
 } from './services/appCache';
-import { Loader2, Smartphone, Monitor } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 // Persistent network transition tracker outside component lifecycle
 let isGenuinelyOffline = typeof navigator !== 'undefined' ? !navigator.onLine : false;
@@ -147,22 +151,13 @@ export default function App() {
   });
   const [apiKeys, setApiKeys] = useState<ApiKeyConfig>(getStoredApiKeys());
 
-  // View Mode: 'desktop' vs 'mobile' (supports manual toggle in settings + auto-detects)
-  const [viewMode, setViewMode] = useState<'desktop' | 'mobile'>(() => {
+  // Automatic View Mode: strictly adapts to viewport width (<768px for mobile, >=768px for desktop)
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('tokencare_view_mode') as 'desktop' | 'mobile' | null;
-      if (saved === 'desktop' || saved === 'mobile') return saved;
-      return window.innerWidth < 768 ? 'mobile' : 'desktop';
+      return window.innerWidth < 768;
     }
-    return 'desktop';
+    return false;
   });
-
-  const handleSetViewMode = (mode: 'desktop' | 'mobile') => {
-    setViewMode(mode);
-    try {
-      localStorage.setItem('tokencare_view_mode', mode);
-    } catch {}
-  };
 
   // Supabase Auth & Profile state
   const [authChecking, setAuthChecking] = useState(true);
@@ -215,6 +210,7 @@ export default function App() {
 
   // Notification state
   const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(0);
+  const [isDesktopNotificationOpen, setIsDesktopNotificationOpen] = useState<boolean>(false);
 
   // Load user unread notification count
   const loadUnreadCount = async (userId: string) => {
@@ -659,14 +655,10 @@ export default function App() {
     return () => window.removeEventListener('focus', handleFocus);
   }, [currentUser]);
 
-  // Auto-detect screen size and switch between Mobile and Desktop views
+  // Auto-detect screen size and switch between Mobile and Desktop views automatically
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth < 768) {
-        setViewMode('mobile');
-      } else {
-        setViewMode('desktop');
-      }
+      setIsMobile(window.innerWidth < 768);
     };
 
     handleResize(); // Check initially on mount
@@ -688,7 +680,7 @@ export default function App() {
       setStatusBarColor('#030710');
       initMobileStatusBar(true, '#030710');
     }
-  }, [authChecking, currentUser, viewMode, activeTab]);
+  }, [authChecking, currentUser, isMobile, activeTab]);
 
   // Capacitor Mobile Lifecycle (Splash Screen & Android Hardware Back Button)
   useEffect(() => {
@@ -1355,7 +1347,7 @@ export default function App() {
   }
 
   // Dedicated Mobile View (Separate UI with Bottom Navigation & Real-Time Sync)
-  if (viewMode === 'mobile') {
+  if (isMobile) {
     return (
       <>
         <ToastNotification
@@ -1400,7 +1392,6 @@ export default function App() {
           onOpenRewardModal={() => setIsRewardModalOpen(true)}
           onOpenWalletModal={() => setIsWalletModalOpen(true)}
           onOpenTransferModal={() => setIsTransferModalOpen(true)}
-          onSwitchToDesktop={() => handleSetViewMode('desktop')}
           unreadCount={unreadNotificationCount}
           onUnreadCountChange={(count) => setUnreadNotificationCount(count)}
           isVerifying={isVerifying}
@@ -1486,7 +1477,7 @@ export default function App() {
       {/* Main Content Area */}
       <div
         className={`flex-1 flex flex-col min-w-0 transition-all duration-300 h-screen overflow-hidden ${
-          isSidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'
+          isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'
         }`}
       >
         {/* Top Fixed Header (Hidden on standalone views like MFA, Explore, Help Center, Contact Support, Terms & Privacy, Preferences) */}
@@ -1502,7 +1493,7 @@ export default function App() {
               {/* Mobile Sidebar Hamburger Toggle */}
               <button
                 onClick={() => setIsSidebarOpenMobile(true)}
-                className="lg:hidden p-1.5 text-zinc-400 hover:text-white bg-zinc-900 rounded-lg border border-zinc-800 cursor-pointer"
+                className="md:hidden p-1.5 text-zinc-400 hover:text-white bg-zinc-900 rounded-lg border border-zinc-800 cursor-pointer"
               >
                 <Menu className="w-4 h-4" />
               </button>
@@ -1510,7 +1501,7 @@ export default function App() {
               {/* Desktop Collapse Toggle */}
               <button
                 onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                className="hidden lg:flex p-1.5 text-zinc-400 hover:text-white bg-zinc-900/80 hover:bg-zinc-800 rounded-lg border border-zinc-800/80 transition-colors cursor-pointer"
+                className="hidden md:flex p-1.5 text-zinc-400 hover:text-white bg-zinc-900/80 hover:bg-zinc-800 rounded-lg border border-zinc-800/80 transition-colors cursor-pointer"
                 title={isSidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
               >
                 {isSidebarCollapsed ? (
@@ -1584,9 +1575,9 @@ export default function App() {
 
               {/* Notification Bell Button */}
               <button
-                onClick={() => setActiveTab('notifications')}
+                onClick={() => setIsDesktopNotificationOpen((prev) => !prev)}
                 className={`p-2 border rounded-xl relative transition-all cursor-pointer ${
-                  activeTab === 'notifications'
+                  isDesktopNotificationOpen
                     ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
                     : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300 hover:text-white'
                 }`}
@@ -1607,16 +1598,6 @@ export default function App() {
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                 <span>{wallet?.unclaimedTokens ?? 0} REWARD</span>
-              </button>
-
-              {/* View Mode Switcher Button */}
-              <button
-                onClick={() => setViewMode('mobile')}
-                className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer"
-                title="Switch to Mobile UI View"
-              >
-                <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="hidden sm:inline">Mobile View</span>
               </button>
             </div>
           </header>
@@ -1691,7 +1672,7 @@ export default function App() {
             />
           </div>
         ) : (
-          <main className="flex-1 min-h-0 p-3 sm:p-5 space-y-4 max-w-5xl w-full mx-auto overflow-y-auto">
+          <main className="flex-1 min-h-0 p-3 sm:p-5 space-y-4 max-w-7xl w-full mx-auto overflow-y-auto">
             {activeTab === 'dashboard' ? (
             <DashboardOverview
               tokens={tokens}
@@ -1706,11 +1687,12 @@ export default function App() {
               }}
             />
           ) : activeTab === 'payouts' ? (
-            <WithdrawalView
+            <DesktopWithdrawalView
               currentUser={currentUser}
               userProfile={userProfile}
               wallet={wallet}
               onUpdateWallet={setWallet}
+              onNavigateTab={(tab) => setActiveTab(tab)}
             />
           ) : activeTab === 'notifications' ? (
             <NotificationCenterView
@@ -1727,6 +1709,11 @@ export default function App() {
               onSignOut={handleSignOut}
               onNavigateTab={(tab) => setActiveTab(tab)}
               onOpenApiConsole={() => setIsApiConsoleOpen(true)}
+            />
+          ) : activeTab === 'saved-tokens' || activeTab === 'my-saved-tokens' || activeTab === 'my-saved-list' ? (
+            <MySavedTokensView
+              currentUser={currentUser}
+              onBackToDonate={() => setActiveTab('add-token')}
             />
           ) : (
             <div className="space-y-3">
@@ -1884,6 +1871,18 @@ export default function App() {
       <ApiConsoleModal
         isOpen={isApiConsoleOpen}
         onClose={() => setIsApiConsoleOpen(false)}
+      />
+
+      {/* Floating Desktop Notification Popover Card */}
+      <DesktopNotificationPopover
+        currentUser={currentUser}
+        isOpen={isDesktopNotificationOpen}
+        onClose={() => setIsDesktopNotificationOpen(false)}
+        onNavigateToTab={(tab) => {
+          setActiveTab(tab);
+          setIsDesktopNotificationOpen(false);
+        }}
+        onUnreadCountChange={(count) => setUnreadNotificationCount(count)}
       />
 
       <PWAInstallBanner />

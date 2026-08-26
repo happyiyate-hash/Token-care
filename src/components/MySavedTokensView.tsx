@@ -240,7 +240,7 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
   return (
     <div className="w-full h-full flex flex-col min-h-0 overflow-hidden text-white font-sans animate-in fade-in duration-200 bg-[#06080E]">
       {/* 1. DEDICATED HEADER: "My Saved Tokens" */}
-      <header className="shrink-0 z-40 bg-[#090C12] backdrop-blur-xl border-b border-emerald-500/30 rounded-b-2xl p-3 pt-safe-nav shadow-[0_4px_25px_rgba(0,0,0,0.7)] max-w-md mx-auto w-full transition-all flex items-center justify-between">
+      <header className="shrink-0 z-40 bg-[#090C12] backdrop-blur-xl border-b border-emerald-500/30 rounded-b-2xl p-3 sm:p-4 pt-safe-nav shadow-[0_4px_25px_rgba(0,0,0,0.7)] max-w-md lg:max-w-6xl mx-auto w-full transition-all flex items-center justify-between">
         <div className="flex items-center space-x-2.5">
           <button
             type="button"
@@ -252,12 +252,12 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
           </button>
           <div>
             <div className="flex items-center space-x-1.5">
-              <h1 className="text-sm font-extrabold text-white tracking-wide">My Saved Tokens</h1>
-              <span className="text-[10px] font-mono font-bold bg-[#22C55E]/15 text-[#4ADE80] border border-[#22C55E]/30 px-2 py-0.2 rounded-full">
+              <h1 className="text-sm sm:text-base font-extrabold text-white tracking-wide">My Saved Tokens</h1>
+              <span className="text-[10px] sm:text-xs font-mono font-bold bg-[#22C55E]/15 text-[#4ADE80] border border-[#22C55E]/30 px-2 py-0.2 rounded-full">
                 {savedTokens.length}/{MAX_SAVED_TOKENS}
               </span>
             </div>
-            <div className="text-[10px] text-zinc-400">Local pending token management</div>
+            <div className="text-[10px] sm:text-xs text-zinc-400">Local pending token batch verification & management</div>
           </div>
         </div>
 
@@ -265,33 +265,42 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
           <button
             type="button"
             onClick={handleClearAll}
-            className="p-1.5 bg-zinc-900/80 hover:bg-rose-950/40 border border-zinc-800 hover:border-rose-500/40 text-zinc-400 hover:text-rose-400 rounded-xl transition-colors cursor-pointer shrink-0"
+            className="px-3 py-1.5 bg-zinc-900/80 hover:bg-rose-950/40 border border-zinc-800 hover:border-rose-500/40 text-zinc-400 hover:text-rose-400 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 shrink-0"
             title="Clear all saved tokens"
           >
             <Trash2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Clear All</span>
           </button>
         )}
       </header>
 
       {/* 2. SCROLLABLE BODY CONTENT */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-3 pb-28 max-w-md mx-auto w-full">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 space-y-4 pb-32 max-w-md lg:max-w-6xl mx-auto w-full">
         {/* Info Banner / Verification Results Overview */}
         {savedTokens.length > 0 && (
-          <div className="bg-gradient-to-r from-[#0C151F] via-[#0E1B2B] to-[#0A131C] border border-emerald-500/20 rounded-2xl p-3 shadow-md space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center space-x-2.5">
-                <div className="w-8 h-8 rounded-xl bg-[#22C55E]/15 border border-[#22C55E]/30 flex items-center justify-center text-[#4ADE80] shrink-0">
-                  <Layers className="w-4 h-4" />
+          <div className="bg-gradient-to-r from-[#0C151F] via-[#0E1B2B] to-[#0A131C] border border-emerald-500/20 rounded-2xl p-4 shadow-md space-y-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-[#22C55E]/15 border border-[#22C55E]/30 flex items-center justify-center text-[#4ADE80] shrink-0">
+                  <Layers className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-xs font-bold text-white">Pending Saved Tokens ({savedTokens.length})</h2>
-                  <p className="text-[10px] text-zinc-400 leading-tight">
+                  <h2 className="text-sm font-bold text-white">Pending Saved Tokens ({savedTokens.length})</h2>
+                  <p className="text-xs text-zinc-400 leading-tight">
                     {hasVerifiedBatch
-                      ? `${existingTokens.length} token(s) already exist • ${availableTokens.length} token(s) available`
-                      : 'Saved locally in app. Press Verify All Tokens below to check registration.'}
+                      ? `${existingTokens.length} token(s) already exist • ${availableTokens.length} token(s) available for batch saving`
+                      : 'Saved locally in your browser. Click Verify All Tokens below to validate registration status.'}
                   </p>
                 </div>
               </div>
+
+              {hasVerifiedBatch && (
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs font-mono text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+                    {availableTokens.length} Ready
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -345,14 +354,14 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
             </div>
           </div>
         ) : (
-          <div className="space-y-2.5 animate-in fade-in duration-300">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 animate-in fade-in duration-300">
             {savedTokens.map((token) => {
               const tokenKey = `${token.blockchain.toLowerCase()}:${token.contractAddress.toLowerCase()}`;
 
               return (
                 <div
                   key={token.id || tokenKey}
-                  className="bg-[#0C0E17]/95 border border-zinc-800/90 hover:border-emerald-500/40 rounded-2xl p-3.5 space-y-2.5 shadow-md transition-all relative group"
+                  className="bg-[#0C0E17]/95 border border-zinc-800/90 hover:border-emerald-500/40 rounded-2xl p-4 space-y-3 shadow-md transition-all relative group flex flex-col justify-between"
                 >
                   {/* Top Row: Token Name, Symbol, Blockchain, Delete */}
                   <div className="flex items-start justify-between gap-2">
@@ -378,7 +387,7 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
                       {/* Name & Blockchain */}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center space-x-1.5">
-                          <h3 className="text-xs font-bold text-white truncate">{token.name}</h3>
+                          <h3 className="text-xs sm:text-sm font-bold text-white truncate">{token.name}</h3>
                           <span className="text-[10px] font-mono font-bold text-[#4ADE80] bg-[#22C55E]/10 px-1.5 py-0.2 rounded">
                             {token.symbol}
                           </span>
@@ -393,7 +402,7 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
                     <button
                       type="button"
                       onClick={() => handleRemove(token.contractAddress, token.blockchain)}
-                      className="p-1 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer shrink-0"
+                      className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer shrink-0"
                       title="Remove from saved list"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -451,79 +460,81 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
 
       {/* 4. FIXED BOTTOM ACTION BAR: [ VERIFY ALL TOKENS ] -> [ SAVE X AVAILABLE TOKENS ] */}
       {savedTokens.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#090C12]/95 backdrop-blur-xl border-t border-emerald-500/30 p-3 pb-safe-nav max-w-md mx-auto shadow-[0_-8px_30px_rgba(0,0,0,0.8)]">
-          {!hasVerifiedBatch ? (
-            /* State 1: Before verification -> [ VERIFY ALL TOKENS ] */
-            <button
-              type="button"
-              onClick={handleVerifyAll}
-              disabled={isVerifyingAll}
-              className="w-full py-3 px-4 bg-gradient-to-r from-[#16A34A] to-[#22C55E] hover:from-[#15803D] hover:to-[#16A34A] disabled:opacity-50 text-black font-extrabold text-xs uppercase tracking-wider rounded-2xl shadow-[0_4px_20px_rgba(34,197,94,0.4)] transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed active:scale-[0.99]"
-            >
-              {isVerifyingAll ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                  <span>Verifying All Tokens...</span>
-                </>
-              ) : (
-                <>
-                  <Zap className="w-4 h-4 fill-black stroke-black" />
-                  <span>Verify All Tokens ({savedTokens.length})</span>
-                </>
-              )}
-            </button>
-          ) : (
-            /* State 2: After verification -> [ SAVE X AVAILABLE TOKENS ] or Summary */
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-[11px] px-1">
-                <span className="text-zinc-400">
-                  <strong className="text-amber-400">{existingTokens.length}</strong> already saved •{' '}
-                  <strong className="text-emerald-400">{availableTokens.length}</strong> available
-                </span>
-                <button
-                  type="button"
-                  onClick={handleVerifyAll}
-                  disabled={isVerifyingAll}
-                  className="text-zinc-400 hover:text-emerald-400 flex items-center space-x-1 transition-colors cursor-pointer text-[10px]"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isVerifyingAll ? 'animate-spin' : ''}`} />
-                  <span>Re-verify</span>
-                </button>
-              </div>
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#090C12]/95 backdrop-blur-xl border-t border-emerald-500/30 p-3 sm:p-4 pb-safe-nav shadow-[0_-8px_30px_rgba(0,0,0,0.8)]">
+          <div className="max-w-md lg:max-w-6xl mx-auto">
+            {!hasVerifiedBatch ? (
+              /* State 1: Before verification -> [ VERIFY ALL TOKENS ] */
+              <button
+                type="button"
+                onClick={handleVerifyAll}
+                disabled={isVerifyingAll}
+                className="w-full py-3.5 px-4 bg-gradient-to-r from-[#16A34A] to-[#22C55E] hover:from-[#15803D] hover:to-[#16A34A] disabled:opacity-50 text-black font-extrabold text-xs uppercase tracking-wider rounded-2xl shadow-[0_4px_20px_rgba(34,197,94,0.4)] transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed active:scale-[0.99]"
+              >
+                {isVerifyingAll ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                    <span>Verifying All Tokens...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4 fill-black stroke-black" />
+                    <span>Verify All Tokens ({savedTokens.length})</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              /* State 2: After verification -> [ SAVE X AVAILABLE TOKENS ] or Summary */
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="text-zinc-400">
+                    <strong className="text-amber-400">{existingTokens.length}</strong> already saved •{' '}
+                    <strong className="text-emerald-400">{availableTokens.length}</strong> available to save
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleVerifyAll}
+                    disabled={isVerifyingAll}
+                    className="text-zinc-400 hover:text-emerald-400 flex items-center space-x-1 transition-colors cursor-pointer text-xs font-semibold"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isVerifyingAll ? 'animate-spin' : ''}`} />
+                    <span>Re-verify</span>
+                  </button>
+                </div>
 
-              {availableTokens.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={handleSaveAvailableTokens}
-                  disabled={isBatchSaving}
-                  className="w-full py-3 px-4 bg-gradient-to-r from-[#16A34A] to-[#22C55E] hover:from-[#15803D] hover:to-[#16A34A] disabled:opacity-50 text-black font-extrabold text-xs uppercase tracking-wider rounded-2xl shadow-[0_4px_20px_rgba(34,197,94,0.4)] transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed active:scale-[0.99]"
-                >
-                  {isBatchSaving ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                      <span>Saving {availableTokens.length} Available Tokens...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" />
-                      <span>
-                        Save {availableTokens.length} Available Token{availableTokens.length > 1 ? 's' : ''}
-                      </span>
-                    </>
-                  )}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="w-full py-3 px-4 bg-zinc-900 border border-zinc-800 text-zinc-500 font-extrabold text-xs uppercase tracking-wider rounded-2xl flex items-center justify-center space-x-2 cursor-not-allowed opacity-80"
-                >
-                  <CheckCircle2 className="w-4 h-4 text-zinc-600" />
-                  <span>All Tokens Already Saved</span>
-                </button>
-              )}
-            </div>
-          )}
+                {availableTokens.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={handleSaveAvailableTokens}
+                    disabled={isBatchSaving}
+                    className="w-full py-3.5 px-4 bg-gradient-to-r from-[#16A34A] to-[#22C55E] hover:from-[#15803D] hover:to-[#16A34A] disabled:opacity-50 text-black font-extrabold text-xs uppercase tracking-wider rounded-2xl shadow-[0_4px_20px_rgba(34,197,94,0.4)] transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed active:scale-[0.99]"
+                  >
+                    {isBatchSaving ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                        <span>Saving {availableTokens.length} Available Tokens...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        <span>
+                          Save {availableTokens.length} Available Token{availableTokens.length > 1 ? 's' : ''}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full py-3.5 px-4 bg-zinc-900 border border-zinc-800 text-zinc-500 font-extrabold text-xs uppercase tracking-wider rounded-2xl flex items-center justify-center space-x-2 cursor-not-allowed opacity-80"
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-zinc-600" />
+                    <span>All Tokens Already Saved</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

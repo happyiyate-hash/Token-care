@@ -298,7 +298,7 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-zinc-800/40">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 animate-in fade-in duration-300">
             {filteredTokens.map((item) => {
               const chainInfo = resolveChainLogo(item.chain, item.chainId);
 
@@ -334,7 +334,7 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
                       });
                     }
                   }}
-                  className="py-2.5 px-1 hover:bg-white/[0.03] active:bg-white/[0.06] transition-colors cursor-pointer group flex items-center justify-between gap-2.5 rounded-lg"
+                  className="p-3.5 bg-[#0C0E17] hover:bg-[#111422] border border-zinc-800/90 hover:border-emerald-500/40 rounded-2xl transition-all cursor-pointer group flex items-center justify-between gap-3 shadow-md"
                 >
                   {/* Left Column: Token Logo + Circular Chain Badge + Name & Network */}
                   <div className="flex items-center space-x-3 min-w-0">
@@ -345,11 +345,11 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
                         address={item.id}
                         symbol={item.symbol}
                         alt={item.name}
-                        className="w-9 h-9 rounded-full object-cover bg-zinc-900 border border-zinc-800/80 p-0.5"
+                        className="w-10 h-10 rounded-xl object-cover bg-zinc-900 border border-zinc-800/80 p-0.5"
                       />
                       {/* Small circular chain logo badge at bottom-right corner */}
                       <div
-                        className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border border-black/90 flex items-center justify-center bg-zinc-900 overflow-hidden ring-1 ring-black/80"
+                        className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full border border-black/90 flex items-center justify-center bg-zinc-900 overflow-hidden ring-1 ring-black/80 shadow"
                         title={chainInfo.name}
                       >
                         <img
@@ -364,19 +364,19 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
                     </div>
 
                     <div className="min-w-0">
-                      <div className="flex items-center space-x-1">
-                        <h4 className="text-xs font-bold text-white truncate group-hover:text-[#4ADE80] transition-colors">
+                      <div className="flex items-center space-x-1.5">
+                        <h4 className="text-xs sm:text-sm font-bold text-white truncate group-hover:text-[#4ADE80] transition-colors">
                           {item.name}
                         </h4>
                         {item.verified && (
-                          <CheckCircle2 className="w-3 h-3 text-[#22C55E] shrink-0" title="Verified Token" />
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[#22C55E] shrink-0" title="Verified Token" />
                         )}
                       </div>
                       <div className="flex items-center space-x-1.5 mt-0.5">
-                        <span className="text-[11px] font-semibold text-zinc-400 font-mono">
+                        <span className="text-[11px] font-semibold text-emerald-400 font-mono">
                           ${item.symbol}
                         </span>
-                        <span className="text-[10px] text-zinc-500 font-sans truncate">
+                        <span className="text-[10.5px] text-zinc-400 font-sans truncate">
                           · {chainInfo.name}
                         </span>
                       </div>
@@ -385,10 +385,10 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
 
                   {/* Right Column: Token Amount & USD Value */}
                   <div className="text-right shrink-0 font-mono">
-                    <div className="text-xs font-bold text-white">
+                    <div className="text-xs sm:text-sm font-bold text-white">
                       {item.amountFormatted}
                     </div>
-                    <div className="text-[10px] font-semibold text-zinc-400">
+                    <div className="text-[10.5px] font-semibold text-emerald-400 font-sans">
                       {item.usdValueFormatted}
                     </div>
                   </div>

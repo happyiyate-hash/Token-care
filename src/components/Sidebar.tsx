@@ -72,9 +72,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems = [
     {
       id: 'add-token',
-      label: t('nav.addToken'),
+      label: t('nav.donate', 'Donate'),
       icon: PlusCircle,
-      description: t('sidebar.addTokenDesc'),
+      description: t('sidebar.addTokenDesc', 'Submit contract address for donation verification'),
     },
     {
       id: 'directory',
@@ -101,12 +101,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       description: t('sidebar.payoutsDesc'),
     },
     {
-      id: 'notifications',
-      label: t('nav.notifications'),
-      icon: Bell,
-      description: t('sidebar.notificationsDesc'),
-    },
-    {
       id: 'mfa',
       label: t('nav.mfa'),
       icon: ShieldCheck,
@@ -125,7 +119,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Mobile Backdrop Overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 lg:hidden"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 md:hidden"
           onClick={onCloseMobile}
         />
       )}
@@ -134,7 +128,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <aside
         className={`fixed top-0 bottom-0 left-0 z-40 bg-[#0B0E17] border-r border-zinc-800/90 flex flex-col justify-between transition-all duration-300 ${
           isCollapsed ? 'w-20' : 'w-64'
-        } ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        } ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
       >
         {/* Top Header & Brand */}
         <div>
