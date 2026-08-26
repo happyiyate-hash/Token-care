@@ -47,6 +47,7 @@ import { SupportLiveChatView } from './SupportLiveChatView';
 import { TermsAndPrivacyView } from './TermsAndPrivacyView';
 import { LogoVerificationReport } from '../services/logoVerificationEngine';
 import { MfaManagementView } from './MfaManagementView';
+import { MySavedTokensView } from './MySavedTokensView';
 import DeveloperView from '../views/DeveloperView';
 import { TokenCareLogo } from './TokenCareLogo';
 import { NotificationBell } from './NotificationBell';
@@ -54,6 +55,8 @@ import { CompactBalanceCard } from './CompactBalanceCard';
 import { PromoCarousel } from './PromoCarousel';
 
 import { NotificationCenterView } from './NotificationCenterView';
+import { FloatingSavedTokensBadge } from './FloatingSavedTokensBadge';
+import { getLocalSavedTokens } from '../services/tokenBatchVerificationService';
 import { TickerNumber } from './TickerNumber';
 import { formatSmartCurrency, formatSmartNumber } from '../utils/numberFormatting';
 
@@ -141,21 +144,38 @@ export const MobileView: React.FC<MobileViewProps> = ({
   // Set mobile top status bar color to match top header background (#090C13)
   useStatusBarColor('#090C13');
 
-  // Mobile navigation tabs: 'overview', 'explore', 'donate', 'tokens', 'profile', 'withdrawals', 'notifications', 'mfa', 'help-center', 'contact-support', 'terms-privacy', 'privacy-policy', 'preferences', 'developer'
+  // Mobile navigation tabs
   const [mobileTab, setMobileTab] = useState<
-    'overview' | 'explore' | 'donate' | 'tokens' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences' | 'developer' | 'api-console'
+    'overview' | 'explore' | 'donate' | 'tokens' | 'saved-tokens' | 'my-saved-list' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences' | 'developer' | 'api-console'
   >('overview');
   const [showBalance, setShowBalance] = useState<boolean>(true);
   const [dbWithdrawals, setDbWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [savedTokensCount, setSavedTokensCount] = useState<number>(() => getLocalSavedTokens(currentUser?.id).length);
+
+  useEffect(() => {
+    const updateCount = () => {
+      setSavedTokensCount(getLocalSavedTokens(currentUser?.id).length);
+    };
+
+    updateCount();
+    window.addEventListener('tokencare_saved_tokens_updated', updateCount);
+    window.addEventListener('storage', updateCount);
+
+    return () => {
+      window.removeEventListener('tokencare_saved_tokens_updated', updateCount);
+      window.removeEventListener('storage', updateCount);
+    };
+  }, [currentUser?.id]);
 
   // Sync mobile tab selection
   const handleTabChange = (
-    tab: 'overview' | 'explore' | 'donate' | 'tokens' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences' | 'developer' | 'api-console'
+    tab: 'overview' | 'explore' | 'donate' | 'tokens' | 'saved-tokens' | 'my-saved-list' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences' | 'developer' | 'api-console'
   ) => {
     setMobileTab(tab);
     if (tab === 'overview') setActiveTab('dashboard');
     else if (tab === 'donate') setActiveTab('add-token');
     else if (tab === 'tokens') setActiveTab('dashboard');
+    else if (tab === 'saved-tokens' || tab === 'my-saved-list') setActiveTab('add-token');
     else if (tab === 'explore') setActiveTab('directory');
     else if (tab === 'withdrawals') setActiveTab('payouts');
     else if (tab === 'profile') setActiveTab('settings');
@@ -296,6 +316,8 @@ export const MobileView: React.FC<MobileViewProps> = ({
         mobileTab !== 'notifications' &&
         mobileTab !== 'donate' &&
         mobileTab !== 'tokens' &&
+        mobileTab !== 'saved-tokens' &&
+        mobileTab !== 'my-saved-list' &&
         mobileTab !== 'profile' &&
         mobileTab !== 'mfa' &&
         mobileTab !== 'explore' &&
@@ -506,7 +528,20 @@ export const MobileView: React.FC<MobileViewProps> = ({
             isSavingToken={isSavingToken}
             isVerifying={isVerifying}
             verificationStage={verificationStage}
+            userId={currentUser?.id}
+            onOpenSavedTokens={() => handleTabChange('saved-tokens')}
           />
+        )}
+
+        {/* DEDICATED SAVED TOKENS STANDALONE PAGE (No Bottom Navigation) */}
+        {(mobileTab === 'saved-tokens' || mobileTab === 'my-saved-list') && (
+          <div className="flex-1 min-h-0 w-full h-full flex flex-col overflow-hidden animate-in fade-in duration-200">
+            <MySavedTokensView
+              userId={currentUser?.id}
+              onBackToDonate={() => handleTabChange('donate')}
+              onNavigateAddToken={() => handleTabChange('donate')}
+            />
+          </div>
         )}
 
         {/* TOKENS / EXPLORER TAB */}
@@ -639,9 +674,11 @@ export const MobileView: React.FC<MobileViewProps> = ({
         )}
       </main>
 
-      {/* Fixed Bottom Navigation Bar (Hidden when on standalone sub-pages / Support pages / Developer page) */}
+      {/* Fixed Bottom Navigation Bar (Hidden when on standalone sub-pages / Support pages / Developer page / Saved Tokens page) */}
       {mobileTab !== 'withdrawals' &&
         mobileTab !== 'notifications' &&
+        mobileTab !== 'saved-tokens' &&
+        mobileTab !== 'my-saved-list' &&
         mobileTab !== 'mfa' &&
         mobileTab !== 'help-center' &&
         mobileTab !== 'contact-support' &&
@@ -718,6 +755,13 @@ export const MobileView: React.FC<MobileViewProps> = ({
           </button>
         </div>
       </nav>
+      )}
+      {/* Floating Draggable Saved Tokens Circle Indicator */}
+      {mobileTab !== 'saved-tokens' && mobileTab !== 'my-saved-list' && savedTokensCount > 0 && (
+        <FloatingSavedTokensBadge
+          count={savedTokensCount}
+          onClick={() => handleTabChange('saved-tokens')}
+        />
       )}
     </div>
   );

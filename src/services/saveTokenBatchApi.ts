@@ -1,4 +1,5 @@
 import { getSupabase } from '../lib/supabase';
+import { extractBackendErrorMessage } from './toastManager';
 
 export const SAVE_TOKEN_BATCH_URL =
   'https://pqqomaveycjeorgurpev.supabase.co/functions/v1/save-token-batch';
@@ -65,24 +66,35 @@ export async function saveTokenBatchThroughEdgeFunction(
       body: JSON.stringify({ tokens }),
     });
 
-    const result = await response.json().catch(() => ({}));
+    let result: any = null;
+    let rawText = '';
+    try {
+      rawText = await response.text();
+      if (rawText && (rawText.trim().startsWith('{') || rawText.trim().startsWith('['))) {
+        result = JSON.parse(rawText);
+      }
+    } catch {
+      result = null;
+    }
 
-    if (!response.ok) {
+    if (!response.ok || (result && result.success === false)) {
+      const exactError = extractBackendErrorMessage(response.status, result || rawText);
       return {
         success: false,
-        error: result.error || `HTTP_${response.status}`,
-        message: result.message || 'Unable to save token batch.',
-        ...result,
+        error: exactError,
+        message: exactError,
+        ...(result || {}),
       };
     }
 
     return result as BatchSaveResult;
   } catch (error: any) {
     console.error('[SaveTokenBatch] Edge Function request failed:', error);
+    const message = error?.message || 'Unable to reach token save service.';
     return {
       success: false,
-      error: 'NETWORK_ERROR',
-      message: error?.message || 'Unable to reach token save service.',
+      error: message,
+      message,
     };
   }
 }

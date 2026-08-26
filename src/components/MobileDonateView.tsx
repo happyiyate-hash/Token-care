@@ -1,5 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, Clipboard, Zap, ChevronDown, HeartHandshake, ShieldCheck, Sparkles, Layers, ArrowRight } from 'lucide-react';
+import {
+  Search,
+  X,
+  Clipboard,
+  Zap,
+  ChevronDown,
+  HeartHandshake,
+  ShieldCheck,
+  Sparkles,
+  Layers,
+  ArrowRight,
+  BookmarkPlus,
+  BookmarkCheck,
+  CheckCircle2,
+  AlertCircle,
+  ListOrdered,
+} from 'lucide-react';
 import { ChainId, SubmittedToken } from '../types';
 import { RAW_EVM_CHAINS, getChainInfo, normalizeChainKey } from '../constants/chains';
 import { LogoVerificationReport } from '../services/logoVerificationEngine';
@@ -12,6 +28,12 @@ import { ChainSelectorModal, getChainLogoUrl } from './ChainSelectorModal';
 import { TokenHuntCard } from './TokenHuntCard';
 import { LogoStatus } from '../types';
 import { useTranslation } from '../context/I18nContext';
+import {
+  addLocalSavedToken,
+  getLocalSavedTokens,
+  submittedTokenToSavedItem,
+  MAX_SAVED_TOKENS,
+} from '../services/tokenBatchVerificationService';
 
 interface MobileDonateViewProps {
   addressInput: string;
@@ -34,6 +56,8 @@ interface MobileDonateViewProps {
   isSavingToken: boolean;
   isVerifying?: boolean;
   verificationStage?: number;
+  userId?: string;
+  onOpenSavedTokens?: () => void;
 }
 
 export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
@@ -57,10 +81,60 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
   isSavingToken,
   isVerifying = false,
   verificationStage = 4,
+  userId,
+  onOpenSavedTokens,
 }) => {
   const { t } = useTranslation();
   const [isChainModalOpen, setIsChainModalOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [savedTokensCount, setSavedTokensCount] = useState<number>(() => getLocalSavedTokens(userId).length);
+  const [saveStatusMessage, setSaveStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Refresh saved tokens count
+  const refreshSavedCount = () => {
+    const list = getLocalSavedTokens(userId);
+    setSavedTokensCount(list.length);
+  };
+
+  useEffect(() => {
+    refreshSavedCount();
+
+    const handleUpdate = () => {
+      refreshSavedCount();
+    };
+
+    window.addEventListener('tokencare_saved_tokens_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+
+    return () => {
+      window.removeEventListener('tokencare_saved_tokens_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, [userId]);
+
+  const handleSaveTokenFromCard = (settings: any) => {
+    if (!fetchedToken) return;
+
+    const tokenItem = submittedTokenToSavedItem(fetchedToken, selectedChain);
+    const res = addLocalSavedToken(tokenItem, userId);
+
+    if (res.success) {
+      setSavedTokensCount(res.list.length);
+      setSaveStatusMessage({
+        type: 'success',
+        text: `"${tokenItem.symbol || tokenItem.name}" saved to your list (${res.list.length}/${MAX_SAVED_TOKENS})!`,
+      });
+    } else {
+      setSaveStatusMessage({
+        type: 'error',
+        text: res.error || 'Token is already in your saved list.',
+      });
+    }
+
+    setTimeout(() => {
+      setSaveStatusMessage(null);
+    }, 4500);
+  };
 
   const lastProcessedRef = useRef<string | null>(
     fetchedToken?.address ? fetchedToken.address.toLowerCase() : null
@@ -256,10 +330,31 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
               <h2 className="text-xs font-bold text-white mt-0.5">{t('mobileDonate.verifyAndConfigure', 'Verify & Configure Donation Campaigns')}</h2>
             </div>
           </div>
-          <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-mono font-bold">
-            {currentChainInfo.name}
-          </span>
+          
+          <div className="flex items-center space-x-1.5">
+            <span className="text-[10.5px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 px-2.5 py-1 rounded-xl font-mono font-bold shrink-0">
+              {currentChainInfo.name}
+            </span>
+          </div>
         </div>
+
+        {/* Save Status Alert / Toast */}
+        {saveStatusMessage && (
+          <div
+            className={`p-2.5 rounded-xl border flex items-center space-x-2 text-xs animate-in fade-in duration-200 ${
+              saveStatusMessage.type === 'success'
+                ? 'bg-emerald-950/50 border-emerald-500/40 text-emerald-300'
+                : 'bg-rose-950/50 border-rose-500/40 text-rose-300'
+            }`}
+          >
+            {saveStatusMessage.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span className="font-medium text-[11px] leading-tight">{saveStatusMessage.text}</span>
+          </div>
+        )}
 
         {/* 3. Stacked Cards for Real Fetched Token or Empty Search State */}
         {fetchedToken ? (
@@ -319,7 +414,7 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
               logoReport={logoReport}
               logoStatus={logoStatus}
               trustScore={fetchedToken.verificationReport?.trustScore ?? fetchedToken.safety?.score}
-              onSaveToken={handleSaveToken}
+              onSaveToken={handleSaveTokenFromCard}
               onCancel={handleResetForm}
               isSaving={isSavingToken}
               isVerifying={isLoading || isVerifying}

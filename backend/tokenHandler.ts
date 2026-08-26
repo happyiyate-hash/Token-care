@@ -183,8 +183,58 @@ export async function handleTokenRequest(body: TokenBackendRequest): Promise<Tok
     };
   }
 
-  // 5. Action: saveToken / save-token (Donation Setup & Campaign Submission)
-  if (action === 'saveToken' || action === 'save-token' || action === 'uploadTokens') {
+  // 5. Action: verifyTokensBatch (Exact blueprint format)
+  if (action === 'verifyTokensBatch') {
+    const inputTokens: Array<{ blockchain: string; contractAddress: string }> = Array.isArray(body.tokens)
+      ? body.tokens
+      : body.contractAddress
+      ? [{ blockchain: body.blockchain || 'ethereum', contractAddress: body.contractAddress }]
+      : [];
+
+    const results = inputTokens.map((item) => {
+      const targetChain = String(item.blockchain || 'ethereum').trim().toLowerCase();
+      const targetAddress = String(item.contractAddress || '').trim().toLowerCase();
+      const found = globalTokenStore.getByAddress(targetAddress, targetChain);
+
+      if (found) {
+        return {
+          blockchain: item.blockchain || 'ethereum',
+          contractAddress: item.contractAddress,
+          exists: true,
+          ownedBy: null,
+          error: 'Token already exists',
+        };
+      } else {
+        return {
+          blockchain: item.blockchain || 'ethereum',
+          contractAddress: item.contractAddress,
+          exists: false,
+          ownedBy: null,
+          error: null,
+        };
+      }
+    });
+
+    const existedCount = results.filter((r) => r.exists).length;
+    const notExistedCount = results.filter((r) => !r.exists).length;
+
+    return {
+      success: true,
+      total: results.length,
+      existed: existedCount,
+      notExisted: notExistedCount,
+      results,
+      source: 'local_store',
+    };
+  }
+
+  // 6. Action: saveToken / batchSaveTokens (Donation Setup & Campaign Submission)
+  if (
+    action === 'saveToken' ||
+    action === 'batchSaveTokens' ||
+    action === 'save-token' ||
+    action === 'uploadTokens'
+  ) {
     const userId = body.userId || (body as any).user_id || 'anonymous_user';
     let rawTokens: any[] = [];
     if (Array.isArray(body.tokens)) {

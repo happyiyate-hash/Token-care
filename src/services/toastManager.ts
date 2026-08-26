@@ -33,12 +33,11 @@ export function dispatchToast(message: string, type: ToastType = 'info', duratio
 
 /**
  * Extracts the most accurate and descriptive error message from a backend response.
- * Follows the strict rule: "Do not replace it with generic messages."
- * If both `error` and `message` are present and distinct, formats as `${error} — ${message}`.
+ * Preserves the exact error message and details returned by the Edge Function or backend.
  */
 export function extractBackendErrorMessage(responseStatus: number, responseBody: any): string {
   if (!responseBody) {
-    return `Backend HTTP ${responseStatus} error`;
+    return responseStatus ? `Backend HTTP ${responseStatus} error` : 'Unknown backend error';
   }
 
   if (typeof responseBody === 'string') {
@@ -52,50 +51,71 @@ export function extractBackendErrorMessage(responseStatus: number, responseBody:
     return trimmed.length > 0 ? trimmed : `Backend HTTP ${responseStatus} error`;
   }
 
-  const errorField = responseBody.error ? String(responseBody.error).trim() : '';
-  const messageField = responseBody.message ? String(responseBody.message).trim() : '';
-  const reasonField = responseBody.reason ? String(responseBody.reason).trim() : '';
+  const errorField = responseBody.error
+    ? typeof responseBody.error === 'string'
+      ? responseBody.error.trim()
+      : JSON.stringify(responseBody.error)
+    : '';
+
+  const messageField = responseBody.message
+    ? typeof responseBody.message === 'string'
+      ? responseBody.message.trim()
+      : JSON.stringify(responseBody.message)
+    : '';
+
+  const reasonField = responseBody.reason
+    ? typeof responseBody.reason === 'string'
+      ? responseBody.reason.trim()
+      : JSON.stringify(responseBody.reason)
+    : '';
+
   const detailsField = responseBody.details
     ? typeof responseBody.details === 'string'
       ? responseBody.details.trim()
       : JSON.stringify(responseBody.details)
     : '';
 
-  // Case 1: Both error and message exist and are distinct
-  if (errorField && messageField && errorField.toLowerCase() !== messageField.toLowerCase()) {
-    return `${errorField} — ${messageField}`;
+  const upstreamField = responseBody.upstreamError || responseBody.upstream_error || responseBody.cause || responseBody.error_description;
+  const upstreamStr = upstreamField
+    ? typeof upstreamField === 'string'
+      ? upstreamField.trim()
+      : JSON.stringify(upstreamField)
+    : '';
+
+  // Gather all informative pieces of the error
+  const detailsParts: string[] = [];
+
+  if (messageField) detailsParts.push(messageField);
+  if (detailsField && detailsField !== messageField) detailsParts.push(detailsField);
+  if (reasonField && reasonField !== messageField && reasonField !== detailsField) detailsParts.push(reasonField);
+  if (upstreamStr && !detailsParts.includes(upstreamStr)) detailsParts.push(upstreamStr);
+
+  // If we have detailed explanation parts
+  if (detailsParts.length > 0) {
+    const detailedMessage = detailsParts.join(' — ');
+
+    // If there is also an error code (e.g. CLOUDFLARE_UPLOAD_FAILED) and it's not already in the detailed message:
+    if (errorField && !detailedMessage.toLowerCase().includes(errorField.toLowerCase())) {
+      return `${errorField}: ${detailedMessage}`;
+    }
+    return detailedMessage;
   }
 
-  // Case 2: Only message exists
-  if (messageField) {
-    return messageField;
-  }
-
-  // Case 3: Only error exists
+  // Fallback to error field if only error is present
   if (errorField) {
     return errorField;
   }
 
-  // Case 4: reason exists (e.g. rejected reasons)
-  if (reasonField) {
-    return reasonField;
-  }
-
-  // Case 5: details exists
-  if (detailsField) {
-    return detailsField;
-  }
-
-  // Case 6: Array of rejection objects
+  // Check rejected array
   if (Array.isArray(responseBody.rejected) && responseBody.rejected.length > 0) {
     const firstReject = responseBody.rejected[0];
     const rejectReason = firstReject?.reason || firstReject?.error || firstReject?.message;
     if (rejectReason) {
-      return String(rejectReason);
+      return typeof rejectReason === 'string' ? rejectReason : JSON.stringify(rejectReason);
     }
   }
 
-  return `Backend returned HTTP ${responseStatus}`;
+  return `Backend returned HTTP ${responseStatus || 'error'}`;
 }
 
 /**
