@@ -70,7 +70,6 @@ type DesktopSettingsTab =
   | 'localization'
   | 'address'
   | 'storage'
-  | 'developer'
   | 'support'
   | 'danger';
 
@@ -379,7 +378,6 @@ export const DesktopSettingsView: React.FC<DesktopSettingsViewProps> = ({
     { id: 'localization' as const, label: 'Language & Currency', icon: Globe, desc: 'Multi-currency & localization' },
     { id: 'address' as const, label: 'Saved Payout Address', icon: Wallet, desc: 'Polygon EVM withdrawal destination' },
     { id: 'storage' as const, label: 'Storage & Diagnostics', icon: Database, desc: 'Offline storage & cache manager' },
-    { id: 'developer' as const, label: 'Developer & API Keys', icon: Code2, desc: 'API Console & Webhook endpoints' },
     { id: 'support' as const, label: 'Support & Legal', icon: HelpCircle, desc: 'Help Center, chat & terms' },
     { id: 'danger' as const, label: 'Danger Zone', icon: AlertTriangle, desc: 'Account deletion & purge' },
   ];
@@ -893,50 +891,7 @@ export const DesktopSettingsView: React.FC<DesktopSettingsViewProps> = ({
             </div>
           )}
 
-          {/* TAB 6: Developer & API Access */}
-          {activeTab === 'developer' && (
-            <div className="space-y-5 animate-in fade-in">
-              <div>
-                <h2 className="text-base font-extrabold text-white">Developer API & Webhooks</h2>
-                <p className="text-xs text-zinc-400">Access developer keys, test endpoints with our live RPC console, and build external integrations.</p>
-              </div>
-
-              <div className="bg-[#06080F] border border-emerald-500/30 rounded-2xl p-5 space-y-4">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
-                    <Code2 className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Developer API Hub & RPC Tester</h3>
-                    <p className="text-xs text-zinc-400">Generate developer keys and test live JSON-RPC endpoints directly.</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-3 pt-2">
-                  {onNavigateTab && (
-                    <button
-                      type="button"
-                      onClick={() => onNavigateTab('developer')}
-                      className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-emerald-500 text-black font-extrabold text-xs rounded-xl cursor-pointer"
-                    >
-                      Open Developer Hub
-                    </button>
-                  )}
-                  {onOpenApiConsole && (
-                    <button
-                      type="button"
-                      onClick={onOpenApiConsole}
-                      className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs rounded-xl cursor-pointer"
-                    >
-                      API Key Console
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 7: Support & Legal */}
+          {/* TAB 6: Support & Legal */}
           {activeTab === 'support' && (
             <div className="space-y-5 animate-in fade-in">
               <div>

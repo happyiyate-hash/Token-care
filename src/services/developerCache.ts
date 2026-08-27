@@ -1,8 +1,10 @@
-import { DeveloperApiLog, DeveloperPlan, DeveloperProject, DeveloperQuota, DeveloperSubscription, DeveloperUsage } from './developerApi';
+import { DeveloperApiLog, DeveloperPlan, DeveloperProject, DeveloperQuota, DeveloperSubscription, DeveloperUsage, DeveloperDailyCallsStats } from './developerApi';
 
 export interface CachedDeveloperViewData {
   userId: string;
   project: DeveloperProject | null;
+  credits?: number;
+  dailyCallsStats?: DeveloperDailyCallsStats;
   quota: DeveloperQuota | null;
   plans: DeveloperPlan[];
   subscriptions: DeveloperSubscription[];

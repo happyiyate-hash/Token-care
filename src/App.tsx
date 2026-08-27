@@ -43,7 +43,6 @@ import { LogoVerificationCard } from './components/LogoVerificationCard';
 import { DonationSettingsCard } from './components/DonationSettingsCard';
 import { TokenHuntCard } from './components/TokenHuntCard';
 import { HowItWorksModal } from './components/HowItWorksModal';
-import { RewardWalletModal } from './components/RewardWalletModal';
 import { WalletConnectModal } from './components/WalletConnectModal';
 import { DashboardOverview } from './components/DashboardOverview';
 import { ExploreView } from './components/ExploreView';
@@ -190,7 +189,6 @@ export default function App() {
 
   // Modals
   const [isHowItWorksOpen, setIsHowItWorksOpen] = useState(false);
-  const [isRewardModalOpen, setIsRewardModalOpen] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [isApiConsoleOpen, setIsApiConsoleOpen] = useState(false);
 
@@ -718,11 +716,6 @@ export default function App() {
         triggerHaptic.light();
         return true;
       }
-      if (isRewardModalOpen) {
-        setIsRewardModalOpen(false);
-        triggerHaptic.light();
-        return true;
-      }
       if (isWalletModalOpen) {
         setIsWalletModalOpen(false);
         triggerHaptic.light();
@@ -756,7 +749,6 @@ export default function App() {
   }, [
     authChecking,
     isHowItWorksOpen,
-    isRewardModalOpen,
     isWalletModalOpen,
     isApiConsoleOpen,
     isSidebarOpenMobile,
@@ -1433,7 +1425,11 @@ export default function App() {
           handleSaveToken={handleSaveToken}
           handleResetForm={handleResetForm}
           onOpenHowItWorks={() => setIsHowItWorksOpen(true)}
-          onOpenRewardModal={() => setIsRewardModalOpen(true)}
+          onOpenRewardModal={() => {
+            // Navigate directly to mobile withdrawal view
+            const mobileWithdrawTab = 'withdrawals';
+            setActiveTab(mobileWithdrawTab);
+          }}
           onOpenWalletModal={() => setIsWalletModalOpen(true)}
           unreadCount={unreadNotificationCount}
           onUnreadCountChange={(count) => setUnreadNotificationCount(count)}
@@ -1445,14 +1441,6 @@ export default function App() {
         <HowItWorksModal
           isOpen={isHowItWorksOpen}
           onClose={() => setIsHowItWorksOpen(false)}
-        />
-
-        <RewardWalletModal
-          isOpen={isRewardModalOpen}
-          onClose={() => setIsRewardModalOpen(false)}
-          wallet={wallet}
-          onUpdateWallet={setWallet}
-          userId={currentUser?.id}
         />
 
         <WalletConnectModal
@@ -1502,7 +1490,7 @@ export default function App() {
         onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         wallet={wallet}
         onOpenWalletModal={() => setIsWalletModalOpen(true)}
-        onOpenRewardModal={() => setIsRewardModalOpen(true)}
+        onOpenRewardModal={() => setActiveTab('payouts')}
         onOpenApiConsole={() => setIsApiConsoleOpen(true)}
         unreadCount={unreadNotificationCount}
       />
@@ -1626,7 +1614,7 @@ export default function App() {
 
               {/* Reward Pill */}
               <button
-                onClick={() => setIsRewardModalOpen(true)}
+                onClick={() => setActiveTab('payouts')}
                 className="hidden sm:flex px-3 py-1.5 bg-gradient-to-r from-amber-500/10 to-emerald-500/10 border border-amber-500/30 hover:border-amber-500/50 text-amber-300 rounded-lg text-xs font-bold font-mono items-center space-x-1.5 transition-all cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
@@ -1734,7 +1722,7 @@ export default function App() {
               onUnreadCountChange={(count) => setUnreadNotificationCount(count)}
             />
           ) : activeTab === 'settings' ? (
-            <SettingsView
+            <DesktopSettingsView
               currentUser={currentUser}
               userProfile={userProfile}
               onUpdateProfile={(updated) => setUserProfile(updated)}
@@ -1873,14 +1861,6 @@ export default function App() {
       <HowItWorksModal
         isOpen={isHowItWorksOpen}
         onClose={() => setIsHowItWorksOpen(false)}
-      />
-
-      <RewardWalletModal
-        isOpen={isRewardModalOpen}
-        onClose={() => setIsRewardModalOpen(false)}
-        wallet={wallet}
-        onUpdateWallet={setWallet}
-        userId={currentUser?.id}
       />
 
       <WalletConnectModal

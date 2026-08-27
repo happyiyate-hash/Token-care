@@ -46,6 +46,7 @@ import {
 } from 'lucide-react';
 import { ToastNotification } from '../components/ToastNotification';
 import { DeveloperLogsSection } from '../components/DeveloperLogsSection';
+import { TickerNumber } from '../components/TickerNumber';
 import { getSupabase } from '../lib/supabase';
 import { getCachedDeveloperView, setCachedDeveloperView, clearCachedDeveloperView } from '../services/developerCache';
 import {
@@ -689,16 +690,26 @@ function CallVolumeChartCard({
 }
 
 export default function DeveloperView({ onBack, currentUser }: DeveloperViewProps) {
-  // State
-  const [project, setProject] = useState<DeveloperProject | null>(null);
-  const [credits, setCredits] = useState<number>(0);
-  const [dailyCallsStats, setDailyCallsStats] = useState<DeveloperDailyCallsStats>({ total24h: 0, successful: 0, failed: 0, blocked: 0 });
-  const [quota, setQuota] = useState<DeveloperQuota | null>(null);
-  const [plans, setPlans] = useState<DeveloperPlan[]>(DEFAULT_DEVELOPER_PLANS);
-  const [subscriptions, setSubscriptions] = useState<DeveloperSubscription[]>([]);
-  const [usage, setUsage] = useState<DeveloperUsage[]>([]);
-  const [logs, setLogs] = useState<DeveloperApiLog[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Synchronous cache retrieval for instant hydration on both desktop and mobile
+  const cachedInitial = useMemo(() => {
+    const uid = currentUser?.id;
+    return getCachedDeveloperView(uid);
+  }, [currentUser?.id]);
+
+  // State initialized directly from cached data if available
+  const [project, setProject] = useState<DeveloperProject | null>(() => cachedInitial?.project || null);
+  const [credits, setCredits] = useState<number>(() => cachedInitial?.credits ?? 0);
+  const [dailyCallsStats, setDailyCallsStats] = useState<DeveloperDailyCallsStats>(
+    () => cachedInitial?.dailyCallsStats || { total24h: 0, successful: 0, failed: 0, blocked: 0 }
+  );
+  const [quota, setQuota] = useState<DeveloperQuota | null>(() => cachedInitial?.quota || null);
+  const [plans, setPlans] = useState<DeveloperPlan[]>(
+    () => (Array.isArray(cachedInitial?.plans) && cachedInitial.plans.length ? cachedInitial.plans : DEFAULT_DEVELOPER_PLANS)
+  );
+  const [subscriptions, setSubscriptions] = useState<DeveloperSubscription[]>(() => cachedInitial?.subscriptions || []);
+  const [usage, setUsage] = useState<DeveloperUsage[]>(() => cachedInitial?.usage || []);
+  const [logs, setLogs] = useState<DeveloperApiLog[]>(() => cachedInitial?.logs || []);
+  const [loading, setLoading] = useState<boolean>(() => !cachedInitial?.project);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<SubTab>('overview');
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
@@ -770,7 +781,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   const [codeLanguage, setCodeLanguage] = useState<'curl' | 'javascript' | 'python'>('curl');
 
   // Project Settings State
-  const [editProjectName, setEditProjectName] = useState('');
+  const [editProjectName, setEditProjectName] = useState(() => cachedInitial?.project?.project_name || '');
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
   const [togglingActive, setTogglingActive] = useState(false);
@@ -793,13 +804,10 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     return `${rawName} TC developer`;
   }, [project?.project_name]);
 
-  // Robust Developer dashboard loader (Option A):
-  // - Online: Supabase is authoritative. Check Supabase first while showing loading skeleton.
-  // - Online with no project in DB: clear cache, set project to null, show Create Project screen. Never call onBack.
-  // - Online with project in DB: set authentic project, load quotas/plans/usage/logs/subscriptions, cache fresh state, show Dashboard.
-  // - Offline with cached project: show cached dashboard.
-  // - Offline with no cached project: show Create Project screen. Never call onBack.
-  const loadData = async () => {
+  // Robust Developer dashboard loader:
+  // - Online: Supabase is authoritative. If cached data is present, fetches in background without flickering.
+  // - If app is foregrounded or reopened, silently updates numbers & logs.
+  const loadData = async (silent = false) => {
     // Resolve user ID from props or Supabase session
     let userId = currentUser?.id;
     if (!userId) {
@@ -828,6 +836,8 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       const cached = getCachedDeveloperView(userId);
       if (cached?.project && cached.project.id) {
         setProject(cached.project);
+        setCredits(cached.credits ?? 0);
+        setDailyCallsStats(cached.dailyCallsStats || { total24h: 0, successful: 0, failed: 0, blocked: 0 });
         setQuota(cached.quota);
         setPlans(Array.isArray(cached.plans) && cached.plans.length ? cached.plans : DEFAULT_DEVELOPER_PLANS);
         setSubscriptions(Array.isArray(cached.subscriptions) ? cached.subscriptions : []);
@@ -848,7 +858,9 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
     }
 
     // ONLINE HANDLING: Supabase is authoritative source of truth
-    setLoading(true);
+    if (!silent && !project) {
+      setLoading(true);
+    }
     setError('');
 
     try {
@@ -881,13 +893,15 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
         getDeveloperSubscriptions().catch(() => []),
       ]);
 
+      const finalCredits = typeof creditsData === 'number' ? creditsData : 0;
+      const finalDailyCalls = dailyCallsData || { total24h: 0, successful: 0, failed: 0, blocked: 0 };
       const finalPlans = Array.isArray(plansData) && plansData.length ? plansData : DEFAULT_DEVELOPER_PLANS;
       const finalUsage = Array.isArray(usageData) ? usageData : [];
       const finalLogs = Array.isArray(logData) ? logData : [];
       const finalSubs = Array.isArray(subsData) ? subsData : [];
 
-      setCredits(typeof creditsData === 'number' ? creditsData : 0);
-      setDailyCallsStats(dailyCallsData || { total24h: 0, successful: 0, failed: 0, blocked: 0 });
+      setCredits(finalCredits);
+      setDailyCallsStats(finalDailyCalls);
       setQuota(quotaData);
       setPlans(finalPlans);
       setUsage(finalUsage);
@@ -897,6 +911,8 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       setCachedDeveloperView({
         userId,
         project: proj,
+        credits: finalCredits,
+        dailyCallsStats: finalDailyCalls,
         quota: quotaData,
         plans: finalPlans,
         subscriptions: finalSubs,
@@ -909,6 +925,8 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       const cached = getCachedDeveloperView(userId);
       if (cached?.project && cached.project.id) {
         setProject(cached.project);
+        setCredits(cached.credits ?? 0);
+        setDailyCallsStats(cached.dailyCallsStats || { total24h: 0, successful: 0, failed: 0, blocked: 0 });
         setQuota(cached.quota);
         setPlans(Array.isArray(cached.plans) && cached.plans.length ? cached.plans : DEFAULT_DEVELOPER_PLANS);
         setSubscriptions(Array.isArray(cached.subscriptions) ? cached.subscriptions : []);
@@ -924,9 +942,9 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
   };
 
   useEffect(() => {
-    loadData();
+    loadData(false);
     const handleOffline = () => setLoading(false);
-    const handleOnline = () => loadData();
+    const handleOnline = () => loadData(true);
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online', handleOnline);
     return () => {
@@ -934,6 +952,23 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       window.removeEventListener('online', handleOnline);
     };
   }, [currentUser?.id]);
+
+  // Background auto-refresh whenever the user switches tabs or navigates back to the app window
+  useEffect(() => {
+    const handleForegroundRefresh = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        loadData(true);
+      }
+    };
+
+    window.addEventListener('focus', handleForegroundRefresh);
+    document.addEventListener('visibilitychange', handleForegroundRefresh);
+
+    return () => {
+      window.removeEventListener('focus', handleForegroundRefresh);
+      document.removeEventListener('visibilitychange', handleForegroundRefresh);
+    };
+  }, [currentUser?.id, project?.id]);
 
   // Realtime Supabase Database Subscriptions (Explicit INSERT and UPDATE Postgres Changes)
   useEffect(() => {
@@ -2039,8 +2074,9 @@ print("TokenCare RPC Response:", data)`;
                   <span className="text-emerald-400 font-mono font-bold">{(project.plan_code || 'FREE').toUpperCase()}</span>
                 </div>
                 <div className="text-xs font-bold text-white truncate">{project.project_name}</div>
-                <div className="text-[10px] text-emerald-400 font-mono font-bold">
-                  {credits.toLocaleString()} credits available
+                <div className="text-[10px] text-emerald-400 font-mono font-bold flex items-center gap-1">
+                  <TickerNumber value={credits.toLocaleString()} durationMs={600} />
+                  <span>credits available</span>
                 </div>
               </div>
 
@@ -2232,8 +2268,8 @@ print("TokenCare RPC Response:", data)`;
 
                     {/* Prominent Centerpiece: Big 56-64px Balance */}
                     <div className="my-5 sm:my-6">
-                      <div className="text-5xl sm:text-6xl md:text-7xl font-black font-mono tracking-tight text-white leading-none">
-                        {credits.toLocaleString()}
+                      <div className="text-5xl sm:text-6xl md:text-7xl font-black font-mono tracking-tight text-white leading-none flex items-center">
+                        <TickerNumber value={credits.toLocaleString()} durationMs={700} />
                       </div>
                       <div className="text-xs sm:text-sm text-zinc-400 font-medium mt-2">
                         credits remaining
@@ -2248,7 +2284,7 @@ print("TokenCare RPC Response:", data)`;
                       {/* 1. Daily Calls */}
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-white font-mono font-bold text-sm sm:text-base">
-                          {dailyCallsDisplay.total24h.toLocaleString()}
+                          <TickerNumber value={dailyCallsDisplay.total24h.toLocaleString()} durationMs={600} />
                         </span>
                         <span className="text-zinc-400 text-xs sm:text-[13px]">calls today</span>
                       </div>
@@ -2258,7 +2294,7 @@ print("TokenCare RPC Response:", data)`;
                       {/* 2. Successful */}
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-emerald-400 font-mono font-bold text-sm sm:text-base">
-                          {dailyCallsDisplay.successful.toLocaleString()}
+                          <TickerNumber value={dailyCallsDisplay.successful.toLocaleString()} durationMs={600} />
                         </span>
                         <span className="text-zinc-400 text-xs sm:text-[13px]">successful</span>
                       </div>
@@ -2268,7 +2304,7 @@ print("TokenCare RPC Response:", data)`;
                       {/* 3. Failed */}
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-rose-400 font-mono font-bold text-sm sm:text-base">
-                          {dailyCallsDisplay.failed.toLocaleString()}
+                          <TickerNumber value={dailyCallsDisplay.failed.toLocaleString()} durationMs={600} />
                         </span>
                         <span className="text-zinc-400 text-xs sm:text-[13px]">failed</span>
                       </div>
@@ -2278,7 +2314,7 @@ print("TokenCare RPC Response:", data)`;
                       {/* 4. Blocked */}
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-amber-400 font-mono font-bold text-sm sm:text-base">
-                          {dailyCallsDisplay.blocked.toLocaleString()}
+                          <TickerNumber value={dailyCallsDisplay.blocked.toLocaleString()} durationMs={600} />
                         </span>
                         <span className="text-zinc-400 text-xs sm:text-[13px]">blocked</span>
                       </div>
