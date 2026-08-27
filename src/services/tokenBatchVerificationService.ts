@@ -94,23 +94,28 @@ export function getLocalSavedTokens(userId?: string): SavedTokenItem[] {
     // 1. Try primary key first
     const primaryRaw = localStorage.getItem(PRIMARY_SAVED_TOKENS_KEY);
     if (primaryRaw) {
-      const parsed = JSON.parse(primaryRaw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
+      try {
+        const parsed = JSON.parse(primaryRaw);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      } catch {}
     }
 
     // 2. Check fallback/legacy keys
     const fallbackKeys = getAllPossibleKeys(userId);
     for (const key of fallbackKeys) {
+      if (key === PRIMARY_SAVED_TOKENS_KEY) continue;
       const raw = localStorage.getItem(key);
       if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Migrate to primary key
-          localStorage.setItem(PRIMARY_SAVED_TOKENS_KEY, JSON.stringify(parsed));
-          return parsed;
-        }
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            // Migrate to primary key
+            localStorage.setItem(PRIMARY_SAVED_TOKENS_KEY, JSON.stringify(parsed));
+            return parsed;
+          }
+        } catch {}
       }
     }
 
@@ -141,7 +146,7 @@ function broadcastTokensUpdate(tokens: SavedTokenItem[]) {
  */
 export function saveLocalSavedTokens(tokens: SavedTokenItem[], userId?: string): void {
   try {
-    const trimmed = tokens.slice(0, MAX_SAVED_TOKENS);
+    const trimmed = (tokens || []).slice(0, MAX_SAVED_TOKENS);
     const jsonStr = JSON.stringify(trimmed);
     localStorage.setItem(PRIMARY_SAVED_TOKENS_KEY, jsonStr);
     if (userId) {
@@ -158,27 +163,35 @@ export function saveLocalSavedTokens(tokens: SavedTokenItem[], userId?: string):
  * Add a token to the local saved list (max 20 tokens)
  */
 export function addLocalSavedToken(
-  token: Partial<SavedTokenItem> & { name: string; symbol: string; contractAddress: string; blockchain: string },
+  token: Partial<SavedTokenItem> & { name: string; symbol: string; contractAddress?: string; blockchain?: string },
   userId?: string
-): { success: boolean; error?: string; list: SavedTokenItem[]; token?: SavedTokenItem } {
+): { success: boolean; error?: string; list: SavedTokenItem[]; token?: SavedTokenItem; isFull?: boolean } {
   const currentList = getLocalSavedTokens(userId);
 
-  // Check max limit
+  // Check max limit (strictly up to 20 tokens)
   if (currentList.length >= MAX_SAVED_TOKENS) {
     return {
       success: false,
-      error: `You can save a maximum of ${MAX_SAVED_TOKENS} tokens.`,
+      error: `You have reached the maximum limit of ${MAX_SAVED_TOKENS} saved tokens in your list.`,
       list: currentList,
+      isFull: true,
     };
   }
 
-  const cleanAddress = token.contractAddress.trim().toLowerCase();
-  const cleanChain = token.blockchain.trim().toLowerCase();
+  const rawAddress = (token.contractAddress || (token as any).address || '').trim();
+  const rawChain = (token.blockchain || (token as any).chainName || 'Ethereum').trim();
+  const cleanAddress = rawAddress.toLowerCase();
+  const cleanChain = rawChain.toLowerCase();
 
-  // Check duplicate
-  const existingIdx = currentList.findIndex(
-    (t) => t.contractAddress.trim().toLowerCase() === cleanAddress && t.blockchain.trim().toLowerCase() === cleanChain
-  );
+  // Check duplicate only when meaningful address exists, otherwise compare symbol and blockchain
+  const existingIdx = currentList.findIndex((t) => {
+    const tAddr = (t.contractAddress || '').trim().toLowerCase();
+    const tChain = (t.blockchain || '').trim().toLowerCase();
+    if (cleanAddress && tAddr) {
+      return tAddr === cleanAddress && tChain === cleanChain;
+    }
+    return (t.symbol || '').toUpperCase() === (token.symbol || '').toUpperCase() && tChain === cleanChain;
+  });
 
   if (existingIdx >= 0) {
     return {
@@ -189,22 +202,22 @@ export function addLocalSavedToken(
   }
 
   const newItem: SavedTokenItem = {
-    id: `saved-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: token.id && token.id !== 'token-pending' ? token.id : `saved-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: token.name || 'Unknown Token',
     symbol: (token.symbol || 'TOK').toUpperCase(),
-    blockchain: token.blockchain || 'Ethereum',
+    blockchain: rawChain || 'Ethereum',
     chainId: token.chainId || 1,
-    contractAddress: token.contractAddress.trim(),
-    logoUrl: token.logoUrl || '',
+    contractAddress: rawAddress,
+    logoUrl: token.logoUrl || (token as any).chainLogoUrl || '',
     decimals: token.decimals || 18,
-    priceUsd: token.priceUsd,
-    trustScore: token.trustScore,
-    safetyRating: token.safetyRating,
+    priceUsd: token.priceUsd ?? (token as any).marketData?.priceUsd ?? 0,
+    trustScore: token.trustScore ?? (token as any).verificationReport?.trustScore ?? (token as any).safety?.score ?? 85,
+    safetyRating: token.safetyRating || (token as any).safety?.rating || 'SAFE',
     savedAt: new Date().toISOString(),
     verificationStatus: 'unverified',
   };
 
-  const updated = [newItem, ...currentList];
+  const updated = [newItem, ...currentList.filter((item) => item.id !== newItem.id)];
   saveLocalSavedTokens(updated, userId);
 
   return {
@@ -219,12 +232,17 @@ export function addLocalSavedToken(
  */
 export function removeLocalSavedToken(contractAddress: string, blockchain: string, userId?: string): SavedTokenItem[] {
   const current = getLocalSavedTokens(userId);
-  const cleanAddress = contractAddress.trim().toLowerCase();
-  const cleanChain = blockchain.trim().toLowerCase();
+  const cleanAddress = (contractAddress || '').trim().toLowerCase();
+  const cleanChain = (blockchain || '').trim().toLowerCase();
 
-  const updated = current.filter(
-    (t) => !(t.contractAddress.trim().toLowerCase() === cleanAddress && t.blockchain.trim().toLowerCase() === cleanChain)
-  );
+  const updated = current.filter((t) => {
+    const tAddr = (t.contractAddress || '').trim().toLowerCase();
+    const tChain = (t.blockchain || '').trim().toLowerCase();
+    if (cleanAddress && tAddr) {
+      return !(tAddr === cleanAddress && tChain === cleanChain);
+    }
+    return true;
+  });
 
   saveLocalSavedTokens(updated, userId);
   return updated;
@@ -249,20 +267,34 @@ export function submittedTokenToSavedItem(token: SubmittedToken, selectedChain: 
   const chainName =
     token.metadata?.blockchainName ||
     (token.metadata as any)?.blockchain_name ||
+    (token.metadata as any)?.blockchain ||
     token.metadata?.chainName ||
     chainInfo.name ||
     'Ethereum';
 
+  const contractAddress =
+    token.address ||
+    token.metadata?.address ||
+    (token.metadata as any)?.contractAddress ||
+    (token.metadata as any)?.asset_identifier ||
+    '';
+
+  const logoUrl =
+    token.metadata?.logoUrl ||
+    (token.metadata as any)?.logo_url ||
+    token.metadata?.chainLogoUrl ||
+    '';
+
   return {
-    id: token.id || `saved-${Date.now()}`,
+    id: token.id && token.id !== 'token-pending' ? token.id : `saved-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: token.metadata?.name || 'Verified Token',
-    symbol: token.metadata?.symbol || 'TOK',
+    symbol: (token.metadata?.symbol || 'TOK').toUpperCase(),
     blockchain: chainName,
     chainId: token.chainId || selectedChain,
-    contractAddress: token.address || token.metadata?.address || '',
-    logoUrl: token.metadata?.logoUrl || '',
+    contractAddress: contractAddress.trim(),
+    logoUrl: logoUrl,
     decimals: token.metadata?.decimals || 18,
-    priceUsd: token.marketData?.priceUsd,
+    priceUsd: token.marketData?.priceUsd ?? 0,
     trustScore: token.verificationReport?.trustScore ?? token.safety?.score ?? 85,
     safetyRating: token.safety?.rating || 'SAFE',
     savedAt: new Date().toISOString(),

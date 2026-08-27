@@ -43,16 +43,8 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
     `${metadata.name} (${metadata.symbol}) verified token contract for community donations.`
   );
 
-  // A remote logo is an asset URL.
-  // Saving is delegated to the backend save-token API.
-  let saveDisabledReason: string | null = null;
-  if (!metadata.logoUrl || !metadata.logoUrl.trim()) {
-    saveDisabledReason = 'Logo is required. Please upload or provide a valid token logo.';
-  } else if (trustScore !== undefined && trustScore < 45) {
-    saveDisabledReason = `Token trust score is too low (${trustScore}/100) to pass security review.`;
-  }
-
-  const isSaveDisabled = !!saveDisabledReason;
+  // Saving is delegated to the backend save-token API & local batch verification list.
+  const isSaveDisabled = isSaving || !metadata.name || metadata.name === 'Loading token...';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,7 +59,7 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
     });
   };
 
-  const isDisabledCard = isVerifying || stage < 4;
+  const isDisabledCard = isVerifying && (!metadata.name || metadata.name === 'Loading token...');
 
   return (
     <form
@@ -174,17 +166,10 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
         </div>
       </div>
 
-      {isSaveDisabled && (
-        <div className="bg-rose-950/40 border border-rose-500/30 rounded-md p-1.5 flex items-center space-x-1.5 text-[8.5px] text-rose-300">
-          <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-          <span className="font-semibold leading-tight">{saveDisabledReason}</span>
-        </div>
-      )}
-
       <div className="pt-1.5 border-t border-zinc-800/80 flex items-center justify-between gap-1">
         <div className="flex items-center space-x-1 text-[8.5px] text-zinc-400 min-w-0">
           <Lock className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
-          <span className="truncate">Verification & token logo URL required.</span>
+          <span className="truncate">Ready for saving & verification list.</span>
         </div>
 
         <div className="flex items-center space-x-1 shrink-0">
@@ -205,7 +190,7 @@ export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({
                 ? 'bg-zinc-800 text-zinc-500 border border-zinc-700/50 cursor-not-allowed opacity-70'
                 : 'bg-emerald-500 hover:bg-emerald-400 text-black cursor-pointer'
             }`}
-            title={isSaveDisabled ? saveDisabledReason || 'Save disabled' : 'Save token to directory'}
+            title={isSaveDisabled ? 'Save disabled' : 'Save token to list / directory'}
           >
             {isSaving ? (
               <>

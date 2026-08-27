@@ -46,7 +46,6 @@ import { HowItWorksModal } from './components/HowItWorksModal';
 import { RewardWalletModal } from './components/RewardWalletModal';
 import { WalletConnectModal } from './components/WalletConnectModal';
 import { DashboardOverview } from './components/DashboardOverview';
-import { TransferTokensModal } from './components/TransferTokensModal';
 import { ExploreView } from './components/ExploreView';
 import { SettingsView } from './components/SettingsView';
 import { DesktopSettingsView } from './components/DesktopSettingsView';
@@ -54,7 +53,12 @@ import { WithdrawalView } from './components/WithdrawalView';
 import { DesktopWithdrawalView } from './components/DesktopWithdrawalView';
 import { MySavedTokensView } from './components/MySavedTokensView';
 import { FloatingSavedTokensBadge } from './components/FloatingSavedTokensBadge';
-import { getLocalSavedTokens } from './services/tokenBatchVerificationService';
+import {
+  getLocalSavedTokens,
+  addLocalSavedToken,
+  submittedTokenToSavedItem,
+  MAX_SAVED_TOKENS,
+} from './services/tokenBatchVerificationService';
 import { NotificationCenterView } from './components/NotificationCenterView';
 import { DesktopNotificationPopover } from './components/DesktopNotificationPopover';
 import { MfaManagementView } from './components/MfaManagementView';
@@ -189,7 +193,6 @@ export default function App() {
   const [isRewardModalOpen, setIsRewardModalOpen] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [isApiConsoleOpen, setIsApiConsoleOpen] = useState(false);
-  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
 
   // Form State
   const [currentStep, setCurrentStep] = useState(1);
@@ -1223,6 +1226,13 @@ export default function App() {
 
       const userId = currentUser?.id || wallet.walletAddress || 'anonymous_user';
 
+      // 1. Always save to user's local Saved Tokens List (up to 20 tokens)
+      const savedItem = submittedTokenToSavedItem(fetchedToken, selectedChain);
+      const localRes = addLocalSavedToken(savedItem, currentUser?.id);
+      if (localRes.success) {
+        setSavedTokensCount(localRes.list.length);
+      }
+
       // Submit token array directly to Vercel backend /api/save-token matching strict payload structure
       const payloadTokens = [
         {
@@ -1249,9 +1259,14 @@ export default function App() {
           const rejectReason =
             saveResponse.rejected?.[0]?.reason ||
             saveResponse.message ||
-            'This token already exists in TokenCare.';
-          setErrorMessage(rejectReason);
+            'This token already exists in TokenCare directory.';
+          // Token is still saved in local saved list
+          setSaveSuccessMessage(`"${savedItem.symbol}" saved to your list (${localRes.list.length}/${MAX_SAVED_TOKENS})! (Already registered in directory)`);
+          setCurrentStep(4);
           setIsSavingToken(false);
+          setTimeout(() => {
+            setSaveSuccessMessage(null);
+          }, 5000);
           return;
         }
 
@@ -1291,17 +1306,26 @@ export default function App() {
         const successMsg =
           saveResponse.message ||
           (saveResponse.reward?.amount
-            ? `Token has been successfully saved! You received ${saveResponse.reward.amount} ${saveResponse.reward.symbol || 'TC'}.`
-            : 'Token has been successfully saved to TokenCare.');
+            ? `Token "${savedItem.symbol}" saved to your list (${localRes.list.length}/${MAX_SAVED_TOKENS})! You received ${saveResponse.reward.amount} ${saveResponse.reward.symbol || 'TC'}.`
+            : `Token "${savedItem.symbol}" saved to your list (${localRes.list.length}/${MAX_SAVED_TOKENS})!`);
         setSaveSuccessMessage(successMsg);
 
         setTimeout(() => {
           setSaveSuccessMessage(null);
         }, 5000);
       } else {
-        setErrorMessage(
-          saveResponse.message || saveResponse.error || 'Failed to save token. Please try again.'
-        );
+        // Even if backend reports an error, if locally saved, inform user
+        if (localRes.success) {
+          setCurrentStep(4);
+          setSaveSuccessMessage(`"${savedItem.symbol}" saved to your local list (${localRes.list.length}/${MAX_SAVED_TOKENS})!`);
+          setTimeout(() => {
+            setSaveSuccessMessage(null);
+          }, 5000);
+        } else {
+          setErrorMessage(
+            localRes.error || saveResponse.message || saveResponse.error || 'Failed to save token. Please try again.'
+          );
+        }
       }
     } catch (err: any) {
       console.error('[App] Save error:', err);
@@ -1411,7 +1435,6 @@ export default function App() {
           onOpenHowItWorks={() => setIsHowItWorksOpen(true)}
           onOpenRewardModal={() => setIsRewardModalOpen(true)}
           onOpenWalletModal={() => setIsWalletModalOpen(true)}
-          onOpenTransferModal={() => setIsTransferModalOpen(true)}
           unreadCount={unreadNotificationCount}
           onUnreadCountChange={(count) => setUnreadNotificationCount(count)}
           isVerifying={isVerifying}
@@ -1438,16 +1461,6 @@ export default function App() {
           wallet={wallet}
           onUpdateWallet={setWallet}
           userId={currentUser?.id}
-        />
-
-        <TransferTokensModal
-          isOpen={isTransferModalOpen}
-          onClose={() => setIsTransferModalOpen(false)}
-          currentUser={currentUser}
-          tokens={tokens}
-          onTransferComplete={(transferredTokens) => {
-            setTokens(transferredTokens);
-          }}
         />
 
         <ApiConsoleModal
@@ -1698,7 +1711,6 @@ export default function App() {
               tokens={tokens}
               wallet={wallet}
               onNavigateAddToken={() => setActiveTab('add-token')}
-              onOpenTransferModal={() => setIsTransferModalOpen(true)}
               onSelectToken={(tok) => {
                 setFetchedToken(tok);
                 setSelectedChain(tok.chainId);
@@ -1877,16 +1889,6 @@ export default function App() {
         wallet={wallet}
         onUpdateWallet={setWallet}
         userId={currentUser?.id}
-      />
-
-      <TransferTokensModal
-        isOpen={isTransferModalOpen}
-        onClose={() => setIsTransferModalOpen(false)}
-        currentUser={currentUser}
-        tokens={tokens}
-        onTransferComplete={(transferredTokens) => {
-          setTokens(transferredTokens);
-        }}
       />
 
       <ApiConsoleModal

@@ -37,7 +37,6 @@ interface MyTokensViewProps {
   onSelectToken?: (token: SubmittedToken) => void;
   onOpenHowItWorks?: () => void;
   onOpenRewardModal?: () => void;
-  onOpenTransferModal?: () => void;
 }
 
 const FILTER_NETWORKS: { id: string; label: string }[] = [
@@ -169,7 +168,6 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
   tokens,
   onNavigateAddToken,
   onSelectToken,
-  onOpenTransferModal,
 }) => {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
@@ -491,20 +489,6 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
                 </div>
               );
             })}
-          </div>
-        )}
-
-        {/* Transfer Your Tokens Modal Action Button */}
-        {onOpenTransferModal && (
-          <div className="pt-3">
-            <button
-              type="button"
-              onClick={onOpenTransferModal}
-              className="w-full py-2.5 px-3 bg-zinc-900/90 hover:bg-zinc-800 border border-emerald-500/40 hover:border-emerald-500/70 text-emerald-400 font-extrabold text-xs rounded-xl flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-sm active:scale-[0.99]"
-            >
-              <Zap className="w-3.5 h-3.5 text-[#22C55E]" />
-              <span>Transfer your tokens now</span>
-            </button>
           </div>
         )}
       </div>

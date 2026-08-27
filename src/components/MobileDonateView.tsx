@@ -341,18 +341,45 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
         {/* Save Status Alert / Toast */}
         {saveStatusMessage && (
           <div
-            className={`p-2.5 rounded-xl border flex items-center space-x-2 text-xs animate-in fade-in duration-200 ${
+            className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs animate-in fade-in duration-200 shadow-md ${
               saveStatusMessage.type === 'success'
-                ? 'bg-emerald-950/50 border-emerald-500/40 text-emerald-300'
-                : 'bg-rose-950/50 border-rose-500/40 text-rose-300'
+                ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                : 'bg-rose-950/60 border-rose-500/40 text-rose-300'
             }`}
           >
-            {saveStatusMessage.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <div className="flex items-center space-x-2">
+              {saveStatusMessage.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              )}
+              <span className="font-semibold text-[11.5px] leading-tight">{saveStatusMessage.text}</span>
+            </div>
+
+            {saveStatusMessage.type === 'success' && (
+              <div className="flex items-center space-x-2 shrink-0 pt-1 sm:pt-0">
+                {onOpenSavedTokens && (
+                  <button
+                    type="button"
+                    onClick={onOpenSavedTokens}
+                    className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                  >
+                    View List ({savedTokensCount}/{MAX_SAVED_TOKENS})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddressInput('');
+                    setFetchedToken(null);
+                    setSaveStatusMessage(null);
+                  }}
+                  className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                >
+                  + Add Next Token
+                </button>
+              </div>
             )}
-            <span className="font-medium text-[11px] leading-tight">{saveStatusMessage.text}</span>
           </div>
         )}
 

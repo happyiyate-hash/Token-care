@@ -23,7 +23,7 @@ function numericConsensus(results: ProviderResult[], getter: (d: any) => unknown
 }
 
 export async function aggregateTokenProviders(input: TokenScanInput): Promise<AggregatedTokenData> {
-  let results = await Promise.all([
+  let results: ProviderResult[] = await Promise.all([
     fetchDexScreener(input), fetchGeckoTerminal(input), fetchCoinGecko(input),
     fetchCoinMarketCap(input), fetchBirdeye(input), fetchDexTools(input),
   ]);
