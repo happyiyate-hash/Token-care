@@ -19,6 +19,7 @@ import {
   Bell,
   Code2,
   Terminal,
+  X,
 } from 'lucide-react';
 
 import { ChainId, UserRewardWallet } from '../types';
@@ -136,6 +137,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="flex items-center space-x-3 min-w-0">
               <TokenCareLogo size="md" showText={!isCollapsed} />
             </div>
+            {/* Close Button for mobile overlay drawer */}
+            <button
+              type="button"
+              onClick={onCloseMobile}
+              className="md:hidden p-1.5 text-zinc-400 hover:text-white bg-zinc-900 rounded-lg border border-zinc-800 cursor-pointer"
+              title="Close Navigation"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Navigation Links */}

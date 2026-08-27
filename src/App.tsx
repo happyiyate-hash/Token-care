@@ -53,6 +53,8 @@ import { DesktopSettingsView } from './components/DesktopSettingsView';
 import { WithdrawalView } from './components/WithdrawalView';
 import { DesktopWithdrawalView } from './components/DesktopWithdrawalView';
 import { MySavedTokensView } from './components/MySavedTokensView';
+import { FloatingSavedTokensBadge } from './components/FloatingSavedTokensBadge';
+import { getLocalSavedTokens } from './services/tokenBatchVerificationService';
 import { NotificationCenterView } from './components/NotificationCenterView';
 import { DesktopNotificationPopover } from './components/DesktopNotificationPopover';
 import { MfaManagementView } from './components/MfaManagementView';
@@ -211,6 +213,24 @@ export default function App() {
   // Notification state
   const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(0);
   const [isDesktopNotificationOpen, setIsDesktopNotificationOpen] = useState<boolean>(false);
+
+  // Saved tokens count for floating badge in desktop view
+  const [savedTokensCount, setSavedTokensCount] = useState<number>(() => getLocalSavedTokens(currentUser?.id).length);
+
+  useEffect(() => {
+    const updateSavedCount = () => {
+      setSavedTokensCount(getLocalSavedTokens(currentUser?.id).length);
+    };
+
+    updateSavedCount();
+    window.addEventListener('tokencare_saved_tokens_updated', updateSavedCount);
+    window.addEventListener('storage', updateSavedCount);
+
+    return () => {
+      window.removeEventListener('tokencare_saved_tokens_updated', updateSavedCount);
+      window.removeEventListener('storage', updateSavedCount);
+    };
+  }, [currentUser?.id]);
 
   // Load user unread notification count
   const loadUnreadCount = async (userId: string) => {
@@ -1712,8 +1732,9 @@ export default function App() {
             />
           ) : activeTab === 'saved-tokens' || activeTab === 'my-saved-tokens' || activeTab === 'my-saved-list' ? (
             <MySavedTokensView
-              currentUser={currentUser}
+              userId={currentUser?.id}
               onBackToDonate={() => setActiveTab('add-token')}
+              onNavigateAddToken={() => setActiveTab('add-token')}
             />
           ) : (
             <div className="space-y-3">
@@ -1884,6 +1905,14 @@ export default function App() {
         }}
         onUnreadCountChange={(count) => setUnreadNotificationCount(count)}
       />
+
+      {/* Floating Draggable Saved Tokens Circle Badge in Desktop / Tablet view */}
+      {!isMobile && activeTab !== 'saved-tokens' && activeTab !== 'my-saved-tokens' && activeTab !== 'my-saved-list' && savedTokensCount > 0 && (
+        <FloatingSavedTokensBadge
+          count={savedTokensCount}
+          onClick={() => setActiveTab('saved-tokens')}
+        />
+      )}
 
       <PWAInstallBanner />
     </div>

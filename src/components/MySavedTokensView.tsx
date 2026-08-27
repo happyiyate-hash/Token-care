@@ -240,7 +240,7 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
   return (
     <div className="w-full h-full flex flex-col min-h-0 overflow-hidden text-white font-sans animate-in fade-in duration-200 bg-[#06080E]">
       {/* 1. DEDICATED HEADER: "My Saved Tokens" */}
-      <header className="shrink-0 z-40 bg-[#090C12] backdrop-blur-xl border-b border-emerald-500/30 rounded-b-2xl p-3 sm:p-4 pt-safe-nav shadow-[0_4px_25px_rgba(0,0,0,0.7)] max-w-md lg:max-w-6xl mx-auto w-full transition-all flex items-center justify-between">
+      <header className="shrink-0 z-40 bg-[#090C12] backdrop-blur-xl border-b border-emerald-500/30 rounded-b-2xl p-3 sm:p-4 pt-safe-nav shadow-[0_4px_25px_rgba(0,0,0,0.7)] max-w-md md:max-w-5xl lg:max-w-7xl mx-auto w-full transition-all flex items-center justify-between">
         <div className="flex items-center space-x-2.5">
           <button
             type="button"
@@ -275,7 +275,7 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
       </header>
 
       {/* 2. SCROLLABLE BODY CONTENT */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 space-y-4 pb-32 max-w-md lg:max-w-6xl mx-auto w-full">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 space-y-4 pb-32 max-w-md md:max-w-5xl lg:max-w-7xl mx-auto w-full">
         {/* Info Banner / Verification Results Overview */}
         {savedTokens.length > 0 && (
           <div className="bg-gradient-to-r from-[#0C151F] via-[#0E1B2B] to-[#0A131C] border border-emerald-500/20 rounded-2xl p-4 shadow-md space-y-2">
@@ -461,7 +461,7 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
       {/* 4. FIXED BOTTOM ACTION BAR: [ VERIFY ALL TOKENS ] -> [ SAVE X AVAILABLE TOKENS ] */}
       {savedTokens.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#090C12]/95 backdrop-blur-xl border-t border-emerald-500/30 p-3 sm:p-4 pb-safe-nav shadow-[0_-8px_30px_rgba(0,0,0,0.8)]">
-          <div className="max-w-md lg:max-w-6xl mx-auto">
+          <div className="max-w-md md:max-w-5xl lg:max-w-7xl mx-auto">
             {!hasVerifiedBatch ? (
               /* State 1: Before verification -> [ VERIFY ALL TOKENS ] */
               <button
