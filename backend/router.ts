@@ -1,10 +1,11 @@
 /**
  * Express Router for Token Backend
- * Mounts the tokenHandler to /api/token, /api/save-token, and /api routes.
+ * Mounts the token handler and the lightweight mixed-asset price handler.
  */
 
 import { Router, Request, Response } from 'express';
 import { handleTokenRequest } from './tokenHandler';
+import { handlePriceRequest } from './priceHandler';
 
 export const tokenBackendRouter = Router();
 
@@ -17,7 +18,11 @@ tokenBackendRouter.get(['/', '/health'], async (_req: Request, res: Response) =>
 // POST /api/token or POST /api/token/ -> Main Token Action Gateway
 tokenBackendRouter.post(['/', '/token'], async (req: Request, res: Response) => {
   try {
-    const response = await handleTokenRequest(req.body || {});
+    const body = req.body || {};
+    const action = String(body.action || body.key || '').trim();
+    const response = action === 'price'
+      ? await handlePriceRequest(body)
+      : await handleTokenRequest(body);
     const statusCode = response.success === false && response.error && !response.saved ? 400 : 200;
     return res.status(statusCode).json(response);
   } catch (error: any) {
