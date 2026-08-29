@@ -1,6 +1,6 @@
 /**
  * Unified Token Backend Handler
- * Handles token directory actions plus the provider-backed scan/verify gateway.
+ * Handles token directory actions plus provider-backed scan/verify and lightweight price requests.
  */
 
 import { BACKEND_CONFIG } from './config';
@@ -9,6 +9,8 @@ import { handleTokenScanAction, handleTokenVerifyAction } from './token/scan/gat
 
 export interface TokenBackendRequest {
   action?: string;
+  service?: string;
+  key?: string;
   userId?: string;
   tokens?: any[];
   token?: any;
@@ -31,8 +33,163 @@ export interface TokenBackendResponse {
   rejected?: any[];
   reward?: { amount: number; symbol: string; credited: boolean };
   notification?: { id: string; title: string; message: string; type: string; timestamp: string };
-  source?: 'local_store' | 'upstream_vercel' | 'upstream_cloudflare';
+  source?: 'local_store' | 'upstream_vercel' | 'upstream_cloudflare' | 'dexscreener';
   [key: string]: any;
+}
+
+type PriceRequestToken = {
+  contractAddress: string;
+  blockchain?: string;
+};
+
+const PRICE_BATCH_MAX_TOKENS = 30;
+const PRICE_BATCH_CREDIT_COST = 1;
+
+function normalizePriceToken(value: any): PriceRequestToken | null {
+  const contractAddress = String(
+    value?.contractAddress ?? value?.contract_address ?? value?.address ?? value?.tokenAddress ?? '',
+  ).trim();
+
+  if (!contractAddress) return null;
+
+  const blockchain = String(
+    value?.blockchain ?? value?.chain ?? value?.chainId ?? '',
+  ).trim().toLowerCase() || undefined;
+
+  return { contractAddress, blockchain };
+}
+
+function normalizeChain(chain: unknown): string | undefined {
+  const value = String(chain ?? '').trim().toLowerCase();
+  if (!value) return undefined;
+
+  const aliases: Record<string, string> = {
+    eth: 'ethereum',
+    ethereum: 'ethereum',
+    polygon: 'polygon',
+    matic: 'polygon',
+    bsc: 'bsc',
+    binance: 'bsc',
+    sol: 'solana',
+    solana: 'solana',
+    arbitrum: 'arbitrum',
+    base: 'base',
+    optimism: 'optimism',
+    avalanche: 'avalanche',
+    avax: 'avalanche',
+  };
+
+  return aliases[value] || value;
+}
+
+function pickBestPair(pairs: any[], token: PriceRequestToken) {
+  const address = token.contractAddress.toLowerCase();
+  const chain = normalizeChain(token.blockchain);
+
+  const matching = pairs.filter((pair) => {
+    const pairChain = normalizeChain(pair?.chainId);
+    const baseAddress = String(pair?.baseToken?.address || '').toLowerCase();
+    const quoteAddress = String(pair?.quoteToken?.address || '').toLowerCase();
+    const addressMatches = baseAddress === address || quoteAddress === address;
+    return addressMatches && (!chain || pairChain === chain);
+  });
+
+  return matching.sort((a, b) => {
+    const aLiquidity = Number(a?.liquidity?.usd || 0);
+    const bLiquidity = Number(b?.liquidity?.usd || 0);
+    return bLiquidity - aLiquidity;
+  })[0] || null;
+}
+
+async function getSimpleTokenPrices(input: PriceRequestToken[]) {
+  const unique = new Map<string, PriceRequestToken>();
+
+  for (const token of input) {
+    const normalized = normalizePriceToken(token);
+    if (!normalized) continue;
+    const key = `${normalizeChain(normalized.blockchain) || ''}:${normalized.contractAddress.toLowerCase()}`;
+    unique.set(key, normalized);
+  }
+
+  const tokens = [...unique.values()];
+  if (!tokens.length) {
+    return { success: false, error: 'TOKENS_REQUIRED', message: 'Provide at least one token address.' };
+  }
+
+  if (tokens.length > PRICE_BATCH_MAX_TOKENS) {
+    return {
+      success: false,
+      error: 'BATCH_LIMIT_EXCEEDED',
+      message: `A price request supports at most ${PRICE_BATCH_MAX_TOKENS} tokens at once.`,
+    };
+  }
+
+  const addresses = tokens.map((token) => token.contractAddress).join(',');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.min(BACKEND_CONFIG.requestTimeoutMs, 10000));
+
+  try {
+    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(addresses)}`, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: 'PRICE_PROVIDER_FAILED',
+        message: `Price provider returned HTTP ${response.status}.`,
+      };
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    const pairs = Array.isArray(payload?.pairs) ? payload.pairs : [];
+
+    const results = tokens.map((token) => {
+      const pair = pickBestPair(pairs, token);
+      if (!pair) {
+        return {
+          contract_address: token.contractAddress,
+          blockchain: normalizeChain(token.blockchain) || null,
+          found: false,
+          price_usd: null,
+          price_change_24h_pct: null,
+        };
+      }
+
+      return {
+        contract_address: token.contractAddress,
+        blockchain: normalizeChain(pair.chainId) || normalizeChain(token.blockchain) || null,
+        found: true,
+        name: pair.baseToken?.name || null,
+        symbol: pair.baseToken?.symbol || null,
+        price_usd: pair.priceUsd == null ? null : Number(pair.priceUsd),
+        price_change_24h_pct: pair.priceChange?.h24 == null ? null : Number(pair.priceChange.h24),
+      };
+    });
+
+    return {
+      success: true,
+      service: 'token',
+      action: 'price',
+      credit_cost: PRICE_BATCH_CREDIT_COST,
+      data: {
+        type: tokens.length === 1 ? 'token' : 'batch',
+        count: results.length,
+        tokens: results,
+      },
+      source: 'dexscreener',
+    };
+  } catch (error: any) {
+    const timedOut = error?.name === 'AbortError';
+    return {
+      success: false,
+      error: timedOut ? 'PRICE_PROVIDER_TIMEOUT' : 'PRICE_PROVIDER_FAILED',
+      message: timedOut ? 'Price provider request timed out.' : 'Unable to fetch token prices.',
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function tryForwardUpstream(payload: TokenBackendRequest): Promise<any | null> {
@@ -56,12 +213,25 @@ async function tryForwardUpstream(payload: TokenBackendRequest): Promise<any | n
 }
 
 export async function handleTokenRequest(body: TokenBackendRequest): Promise<TokenBackendResponse> {
-  const action = body.action || 'getAllTokens';
+  const action = String(body.action || body.key || 'getAllTokens');
 
   // Provider-backed token intelligence. These actions intentionally return only
   // the normalized TokenCare result; provider availability/aggregation stays internal.
   if (action === 'scan') return await handleTokenScanAction(body) as any;
   if (action === 'verify') return await handleTokenVerifyAction(body) as any;
+
+  // Lightweight price endpoint. This intentionally does not return charts,
+  // supply, liquidity or other expensive market details. It supports one token
+  // or a batch and is suitable for token lists and overview screens.
+  if (action === 'price' || action === 'getTokenPrice' || action === 'getTokenPrices' || action === 'batchPrice') {
+    const inputTokens = Array.isArray(body.tokens)
+      ? body.tokens
+      : body.contractAddress || body.contract_address || body.address
+        ? [body]
+        : [];
+
+    return await getSimpleTokenPrices(inputTokens) as any;
+  }
 
   if (action === 'health') {
     return {
