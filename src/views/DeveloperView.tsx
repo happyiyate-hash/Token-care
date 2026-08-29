@@ -48,7 +48,7 @@ import { ToastNotification } from '../components/ToastNotification';
 import { DeveloperLogsSection } from '../components/DeveloperLogsSection';
 import { TickerNumber } from '../components/TickerNumber';
 import DeveloperPlansView from './DeveloperPlansView';
-import { formatCompactNumber } from '../utils/numberFormatting';
+import { formatCompactNumber, formatDeveloperCredits } from '../utils/numberFormatting';
 import { getSupabase } from '../lib/supabase';
 import { getCachedDeveloperView, setCachedDeveloperView, clearCachedDeveloperView } from '../services/developerCache';
 import {
@@ -1102,7 +1102,7 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
 
     // 3. Project and Subscriptions channel for project updates / deletions
     const projectChannel = client
-      .channel(`developer_project_${currentProjectId}`)
+      .channel(`developer_project_${currentProjectId}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`)
       .on(
         'postgres_changes',
         {
@@ -2101,7 +2101,7 @@ print("TokenCare RPC Response:", data)`;
                 </div>
                 <div className="text-xs font-bold text-white truncate">{project.project_name}</div>
                 <div className="text-[10px] text-emerald-400 font-mono font-bold flex items-center gap-1">
-                  <TickerNumber value={formatCompactNumber(credits)} durationMs={600} />
+                  <TickerNumber value={formatDeveloperCredits(credits)} durationMs={600} />
                   <span>credits available</span>
                 </div>
               </div>
@@ -2307,7 +2307,7 @@ print("TokenCare RPC Response:", data)`;
                           <div className="space-y-1">
                             <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Credits</span>
                             <div className="text-xl sm:text-2xl font-bold font-mono text-white flex items-baseline gap-1">
-                              <TickerNumber value={formatCompactNumber(credits)} durationMs={600} />
+                              <TickerNumber value={formatDeveloperCredits(credits)} durationMs={600} />
                               <span className="text-[11px] font-sans font-normal text-zinc-500">available</span>
                             </div>
                           </div>

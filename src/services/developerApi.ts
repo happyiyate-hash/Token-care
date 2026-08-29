@@ -171,7 +171,7 @@ export function subscribeToDeveloperLogs(
   onUpdate: (log: DeveloperRequestLog) => void
 ) {
   const channel = supabaseClient
-    .channel(`developer-logs-${projectId}`)
+    .channel(`developer-logs-${projectId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`)
     .on(
       'postgres_changes',
       {
@@ -218,7 +218,7 @@ export function subscribeToDeveloperDailyUsage(
   onUpdate: (usage: DeveloperDailyUsage) => void
 ) {
   const channel = supabaseClient
-    .channel(`developer-usage-${projectId}`)
+    .channel(`developer-usage-${projectId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`)
     .on(
       'postgres_changes',
       {
@@ -657,10 +657,18 @@ export async function getDeveloperUsage(days = 30): Promise<DeveloperDailyUsage[
 export async function getDeveloperCredits(projectId?: string): Promise<number> {
   try {
     const { data, error } = await supabase().rpc('get_my_developer_credit_balance');
-    if (!error && typeof data === 'number') return data;
-    if (!error && data && typeof (data as any).balance === 'number') return (data as any).balance;
+    if (error) {
+      console.error('Credit balance error:', error);
+    } else if (data !== null && data !== undefined) {
+      const val = typeof data === 'object' && 'balance' in data ? (data as any).balance : data;
+      const balance = Number(val);
+      if (!isNaN(balance)) {
+        console.log('Credit balance:', balance);
+        return balance;
+      }
+    }
   } catch (e) {
-    // fallback to table
+    console.warn('[DeveloperAPI] get_my_developer_credit_balance error:', e);
   }
 
   try {
@@ -676,8 +684,9 @@ export async function getDeveloperCredits(projectId?: string): Promise<number> {
         .eq('project_id', pId)
         .maybeSingle();
 
-      if (!error && data && typeof data.balance === 'number') {
-        return data.balance;
+      if (!error && data && data.balance != null) {
+        const val = Number(data.balance);
+        if (!isNaN(val)) return val;
       }
     }
   } catch (e2) {
@@ -794,7 +803,7 @@ export function subscribeToDeveloperCredits(
   onBalanceChange: (balance: number) => void
 ) {
   const channel = supabaseClient
-    .channel(`developer-credits-${projectId}`)
+    .channel(`developer-credits-${projectId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`)
     .on(
       'postgres_changes',
       {
@@ -804,8 +813,11 @@ export function subscribeToDeveloperCredits(
         filter: `project_id=eq.${projectId}`,
       },
       (payload: any) => {
-        if (payload?.new && typeof payload.new.balance === 'number') {
-          onBalanceChange(payload.new.balance);
+        if (payload?.new && payload.new.balance != null) {
+          const num = Number(payload.new.balance);
+          if (!isNaN(num)) {
+            onBalanceChange(num);
+          }
         }
       }
     )

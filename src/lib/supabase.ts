@@ -1466,7 +1466,7 @@ export function subscribeToDatabaseChanges(
 
   try {
     const channel = supabase
-      .channel('db_changes_realtime')
+      .channel(`db_changes_realtime_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'tokens' },

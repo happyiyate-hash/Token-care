@@ -23,7 +23,8 @@ tokenBackendRouter.post(['/', '/token'], async (req: Request, res: Response) => 
     const response = action === 'price'
       ? await handlePriceRequest(body)
       : await handleTokenRequest(body);
-    const statusCode = response.success === false && response.error && !response.saved ? 400 : 200;
+    const resAny = response as any;
+    const statusCode = response.success === false && resAny.error && !resAny.saved ? 400 : 200;
     return res.status(statusCode).json(response);
   } catch (error: any) {
     console.error('[Token Backend Router] Error:', error);
