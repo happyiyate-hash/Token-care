@@ -63,6 +63,7 @@ import { DesktopNotificationPopover } from './components/DesktopNotificationPopo
 import { MfaManagementView } from './components/MfaManagementView';
 import { ApiConsoleModal } from './components/ApiConsoleModal';
 import DeveloperView from './views/DeveloperView';
+import DeveloperPlansView from './views/DeveloperPlansView';
 import { HelpCenterView } from './components/HelpCenterView';
 import { ContactSupportView } from './components/ContactSupportView';
 import { SupportLiveChatView } from './components/SupportLiveChatView';
@@ -1501,14 +1502,18 @@ export default function App() {
           isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'
         }`}
       >
-        {/* Top Fixed Header (Hidden on standalone views like MFA, Explore, Help Center, Contact Support, Terms & Privacy, Preferences) */}
+        {/* Top Fixed Header (Hidden on standalone views like MFA, Explore, Help Center, Contact Support, Terms & Privacy, Preferences, Developer, Plans) */}
         {activeTab !== 'mfa' &&
           activeTab !== 'directory' &&
           activeTab !== 'help-center' &&
           activeTab !== 'contact-support' &&
           activeTab !== 'terms-privacy' &&
           activeTab !== 'privacy-policy' &&
-          activeTab !== 'preferences' && (
+          activeTab !== 'preferences' &&
+          activeTab !== 'developer' &&
+          activeTab !== 'api-console' &&
+          activeTab !== 'developer-plans' &&
+          activeTab !== 'plans' && (
           <header className="shrink-0 bg-[#090C13]/90 backdrop-blur-md border-b border-zinc-800/80 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3 z-30">
             <div className="flex items-center space-x-2.5 min-w-0">
               {/* Mobile Sidebar Hamburger Toggle */}
@@ -1683,6 +1688,12 @@ export default function App() {
               onBack={() => setActiveTab('settings')}
               onNavigateContactSupport={() => setActiveTab('contact-support')}
               initialTab="preferences"
+            />
+          </div>
+        ) : activeTab === 'developer-plans' || activeTab === 'plans' ? (
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden w-full h-full">
+            <DeveloperPlansView
+              onBack={() => setActiveTab('developer')}
             />
           </div>
         ) : activeTab === 'developer' || activeTab === 'api-console' ? (

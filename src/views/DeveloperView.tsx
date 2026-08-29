@@ -47,6 +47,8 @@ import {
 import { ToastNotification } from '../components/ToastNotification';
 import { DeveloperLogsSection } from '../components/DeveloperLogsSection';
 import { TickerNumber } from '../components/TickerNumber';
+import DeveloperPlansView from './DeveloperPlansView';
+import { formatCompactNumber } from '../utils/numberFormatting';
 import { getSupabase } from '../lib/supabase';
 import { getCachedDeveloperView, setCachedDeveloperView, clearCachedDeveloperView } from '../services/developerCache';
 import {
@@ -60,6 +62,7 @@ import {
   getDeveloperCredits,
   getDeveloperCreditTransactions,
   getDeveloperDailyCalls,
+  getDeveloperDailyUsage,
   subscribeToDeveloperCredits,
   getDeveloperQuota,
   getDeveloperPlans,
@@ -96,7 +99,7 @@ interface DeveloperViewProps {
   currentUser?: any;
 }
 
-type SubTab = 'overview' | 'keys' | 'endpoints' | 'logs' | 'settings';
+type SubTab = 'overview' | 'keys' | 'endpoints' | 'logs' | 'settings' | 'plans';
 
 export interface EndpointDefinition {
   id: 'get-all-tokens' | 'get-blockchain-tokens' | 'get-token-by-address';
@@ -883,9 +886,9 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       setShowCreateModal(false);
       setEditProjectName(proj.project_name || '');
 
-      const [creditsData, dailyCallsData, quotaData, plansData, usageData, logData, subsData] = await Promise.all([
+      const [creditsData, dailyUsageData, quotaData, plansData, usageData, logData, subsData] = await Promise.all([
         getDeveloperCredits(proj.id).catch(() => 0),
-        getDeveloperDailyCalls(proj.id).catch(() => ({ total24h: 0, successful: 0, failed: 0, blocked: 0 })),
+        getDeveloperDailyUsage(proj.id).catch(() => ({ calls: 0, successfulCalls: 0, failedCalls: 0, blockedCalls: 0, lastCalledAt: null })),
         getDeveloperQuota().catch(() => null),
         getDeveloperPlans().catch(() => DEFAULT_DEVELOPER_PLANS),
         getDeveloperUsage(30).catch(() => []),
@@ -894,7 +897,12 @@ export default function DeveloperView({ onBack, currentUser }: DeveloperViewProp
       ]);
 
       const finalCredits = typeof creditsData === 'number' ? creditsData : 0;
-      const finalDailyCalls = dailyCallsData || { total24h: 0, successful: 0, failed: 0, blocked: 0 };
+      const finalDailyCalls: DeveloperDailyCallsStats = {
+        total24h: dailyUsageData.calls,
+        successful: dailyUsageData.successfulCalls,
+        failed: dailyUsageData.failedCalls,
+        blocked: dailyUsageData.blockedCalls,
+      };
       const finalPlans = Array.isArray(plansData) && plansData.length ? plansData : DEFAULT_DEVELOPER_PLANS;
       const finalUsage = Array.isArray(usageData) ? usageData : [];
       const finalLogs = Array.isArray(logData) ? logData : [];
@@ -1969,6 +1977,24 @@ print("TokenCare RPC Response:", data)`;
     );
   }
 
+  // 2.5 STANDALONE MY PLANS VIEW (Dedicated full-screen layout without nested sidebar/navbars)
+  if (activeTab === 'plans') {
+    return (
+      <div className="flex-1 w-full h-full min-h-0 flex flex-col bg-[#030710] text-white overflow-hidden select-text relative">
+        <ToastNotification
+          message={toastMessage}
+          type={toastType}
+          onClose={() => setToastMessage(null)}
+        />
+        <DeveloperPlansView
+          onBack={() => setActiveTab('settings')}
+          currentProject={project}
+          availablePlans={plans}
+        />
+      </div>
+    );
+  }
+
   // 3. ACTIVE DEVELOPER DASHBOARD
   return (
     <div className="flex-1 w-full h-full min-h-0 flex flex-col bg-[#030710] text-white overflow-hidden select-text relative">
@@ -2075,7 +2101,7 @@ print("TokenCare RPC Response:", data)`;
                 </div>
                 <div className="text-xs font-bold text-white truncate">{project.project_name}</div>
                 <div className="text-[10px] text-emerald-400 font-mono font-bold flex items-center gap-1">
-                  <TickerNumber value={credits.toLocaleString()} durationMs={600} />
+                  <TickerNumber value={formatCompactNumber(credits)} durationMs={600} />
                   <span>credits available</span>
                 </div>
               </div>
@@ -2230,120 +2256,169 @@ print("TokenCare RPC Response:", data)`;
 
             {/* TAB 1: OVERVIEW & ANALYTICS */}
             {activeTab === 'overview' && (
-              <div className="space-y-3 sm:space-y-5 animate-in fade-in duration-200">
+              <div className="space-y-3 sm:space-y-4 animate-in fade-in duration-200">
                 {/* 1. Project Credits & Edge Infrastructure Status Surfaces */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
-                  {/* Main Command Surface: Project Credits Balance & Inline Activity Telemetry */}
-                  <div className="lg:col-span-2 p-5 sm:p-7 rounded-[22px] border border-zinc-800/60 bg-gradient-to-b from-zinc-900/50 via-zinc-950/75 to-zinc-950/90 backdrop-blur-md flex flex-col justify-between shadow-2xl relative overflow-hidden">
-                    {/* Top Row: Eyebrow + Status Pill */}
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-widest text-zinc-400">
-                        PROJECT CREDITS
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <div
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
-                            project.is_active !== false
-                              ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
-                              : 'bg-zinc-800/60 border-zinc-700/60 text-zinc-400'
-                          }`}
-                        >
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full ${
-                              project.is_active !== false ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'
-                            }`}
-                          />
-                          <span>{project.is_active !== false ? 'ACTIVE' : 'PAUSED'}</span>
-                          {project.project_name && (
-                            <>
-                              <span className="text-zinc-600 font-normal">·</span>
-                              <span className="text-zinc-300 truncate max-w-[130px] sm:max-w-[220px]">
-                                {project.project_name}
+                  {/* Main Command Surface: Compact Developer Overview & Usage Quota */}
+                  {(() => {
+                    const dailyLimit = project.daily_limit || quota?.daily_limit || 1000;
+                    const callsToday = dailyCallsDisplay.total24h;
+                    const remainingCalls = Math.max(0, dailyLimit - callsToday);
+                    const usagePercent = dailyLimit > 0 ? Math.min(100, Math.round((callsToday / dailyLimit) * 100)) : 0;
+                    const currentPlanName = project.plan_code
+                      ? project.plan_code.charAt(0).toUpperCase() + project.plan_code.slice(1)
+                      : 'Free';
+
+                    return (
+                      <div className="lg:col-span-2 p-4 sm:p-5 rounded-2xl border border-zinc-800/80 bg-gradient-to-b from-zinc-900/60 via-zinc-950/80 to-zinc-950/95 backdrop-blur-md flex flex-col justify-between shadow-xl relative overflow-hidden">
+                        {/* Top Row: Eyebrow + Status Pill */}
+                        <div className="flex items-center justify-between gap-2 mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-widest text-zinc-400">
+                              DEVELOPER USAGE & QUOTA
+                            </span>
+                            {project.project_name && (
+                              <span className="text-[11px] text-zinc-500 font-medium truncate max-w-[130px] sm:max-w-[200px]">
+                                · {project.project_name}
                               </span>
-                            </>
-                          )}
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
+                                project.is_active !== false
+                                  ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+                                  : 'bg-zinc-800/60 border-zinc-700/60 text-zinc-400'
+                              }`}
+                            >
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  project.is_active !== false ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'
+                                }`}
+                              />
+                              <span>{project.is_active !== false ? 'ACTIVE' : 'PAUSED'}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Structured Compact 2x2 Grid */}
+                        <div className="grid grid-cols-2 gap-3 sm:gap-4 py-2.5 border-y border-zinc-800/60">
+                          {/* 1. Credits */}
+                          <div className="space-y-1">
+                            <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Credits</span>
+                            <div className="text-xl sm:text-2xl font-bold font-mono text-white flex items-baseline gap-1">
+                              <TickerNumber value={formatCompactNumber(credits)} durationMs={600} />
+                              <span className="text-[11px] font-sans font-normal text-zinc-500">available</span>
+                            </div>
+                          </div>
+
+                          {/* 2. Calls Today vs Limit */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Calls Today</span>
+                              <span className="text-[10px] font-mono text-zinc-400">
+                                {usagePercent}%
+                              </span>
+                            </div>
+                            <div className="text-xl sm:text-2xl font-bold font-mono text-white flex items-baseline gap-1">
+                              <span>{formatCompactNumber(callsToday)}</span>
+                              <span className="text-zinc-500 font-normal text-sm sm:text-base">/</span>
+                              <span className="text-zinc-300 text-sm sm:text-base">{formatCompactNumber(dailyLimit)}</span>
+                              <span className="text-[11px] font-sans font-normal text-zinc-500">calls</span>
+                            </div>
+                            {/* Thin compact progress indicator */}
+                            <div className="w-full bg-zinc-800/80 rounded-full h-1 overflow-hidden mt-1.5">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${
+                                  usagePercent > 90 ? 'bg-rose-500' : usagePercent > 75 ? 'bg-amber-400' : 'bg-emerald-400'
+                                }`}
+                                style={{ width: `${Math.max(2, Math.min(100, usagePercent))}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* 3. Current Plan */}
+                          <div className="space-y-1">
+                            <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Current Plan</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-base sm:text-lg font-bold text-white capitalize">{currentPlanName}</span>
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab('plans')}
+                                className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 hover:underline cursor-pointer"
+                              >
+                                My Plans →
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 4. Remaining Calls */}
+                          <div className="space-y-1">
+                            <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Remaining Calls</span>
+                            <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-400 flex items-baseline gap-1">
+                              <TickerNumber value={formatCompactNumber(remainingCalls)} durationMs={600} />
+                              <span className="text-[11px] font-sans font-normal text-zinc-500">left today</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Single Horizontal Telemetry Activity Strip */}
+                        <div className="flex flex-wrap items-center justify-between gap-y-2 sm:gap-y-0 text-xs py-2.5">
+                          {/* Successful */}
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
+                            <span className="text-emerald-400 font-mono font-bold">
+                              <TickerNumber value={formatCompactNumber(dailyCallsDisplay.successful)} durationMs={600} />
+                            </span>
+                            <span className="text-zinc-400 text-[11px]">successful</span>
+                          </div>
+
+                          <div className="hidden sm:block h-3 w-px bg-zinc-800/80" />
+
+                          {/* Failed */}
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-400 inline-block" />
+                            <span className="text-rose-400 font-mono font-bold">
+                              <TickerNumber value={formatCompactNumber(dailyCallsDisplay.failed)} durationMs={600} />
+                            </span>
+                            <span className="text-zinc-400 text-[11px]">failed</span>
+                          </div>
+
+                          <div className="hidden sm:block h-3 w-px bg-zinc-800/80" />
+
+                          {/* Blocked */}
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+                            <span className="text-amber-400 font-mono font-bold">
+                              <TickerNumber value={formatCompactNumber(dailyCallsDisplay.blocked)} durationMs={600} />
+                            </span>
+                            <span className="text-zinc-400 text-[11px]">blocked</span>
+                          </div>
+                        </div>
+
+                        {/* Bottom Row: API Key & Manage Keys action */}
+                        <div className="flex items-center justify-between text-xs text-zinc-400 pt-2 border-t border-zinc-800/60">
+                          <div className="flex items-center gap-2">
+                            <Lock className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                            <span className="truncate">
+                              Live key: <code className="text-zinc-300 font-mono text-[11px]">tc_live_••••••••</code>
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => setActiveTab('keys')}
+                            className="text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1 transition-colors group cursor-pointer"
+                          >
+                            Manage Keys <ChevronRight className="w-3.5 h-3.5 text-zinc-500 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
+                          </button>
                         </div>
                       </div>
-                    </div>
-
-                    {/* Prominent Centerpiece: Big 56-64px Balance */}
-                    <div className="my-5 sm:my-6">
-                      <div className="text-5xl sm:text-6xl md:text-7xl font-black font-mono tracking-tight text-white leading-none flex items-center">
-                        <TickerNumber value={credits.toLocaleString()} durationMs={700} />
-                      </div>
-                      <div className="text-xs sm:text-sm text-zinc-400 font-medium mt-2">
-                        credits remaining
-                      </div>
-                    </div>
-
-                    {/* Subtle Horizontal Divider */}
-                    <div className="h-px w-full bg-zinc-800/60 my-2" />
-
-                    {/* Single Horizontal Activity Strip (No rectangular boxes) */}
-                    <div className="flex flex-wrap items-center justify-between gap-y-3 sm:gap-y-0 text-xs sm:text-sm py-2">
-                      {/* 1. Daily Calls */}
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-white font-mono font-bold text-sm sm:text-base">
-                          <TickerNumber value={dailyCallsDisplay.total24h.toLocaleString()} durationMs={600} />
-                        </span>
-                        <span className="text-zinc-400 text-xs sm:text-[13px]">calls today</span>
-                      </div>
-
-                      <div className="hidden sm:block h-3.5 w-px bg-zinc-800/80" />
-
-                      {/* 2. Successful */}
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-emerald-400 font-mono font-bold text-sm sm:text-base">
-                          <TickerNumber value={dailyCallsDisplay.successful.toLocaleString()} durationMs={600} />
-                        </span>
-                        <span className="text-zinc-400 text-xs sm:text-[13px]">successful</span>
-                      </div>
-
-                      <div className="hidden sm:block h-3.5 w-px bg-zinc-800/80" />
-
-                      {/* 3. Failed */}
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-rose-400 font-mono font-bold text-sm sm:text-base">
-                          <TickerNumber value={dailyCallsDisplay.failed.toLocaleString()} durationMs={600} />
-                        </span>
-                        <span className="text-zinc-400 text-xs sm:text-[13px]">failed</span>
-                      </div>
-
-                      <div className="hidden sm:block h-3.5 w-px bg-zinc-800/80" />
-
-                      {/* 4. Blocked */}
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-amber-400 font-mono font-bold text-sm sm:text-base">
-                          <TickerNumber value={dailyCallsDisplay.blocked.toLocaleString()} durationMs={600} />
-                        </span>
-                        <span className="text-zinc-400 text-xs sm:text-[13px]">blocked</span>
-                      </div>
-                    </div>
-
-                    {/* Subtle Horizontal Divider */}
-                    <div className="h-px w-full bg-zinc-800/60 my-2" />
-
-                    {/* Bottom Row: Quiet API Key & Manage Action */}
-                    <div className="flex items-center justify-between text-xs text-zinc-400 pt-1">
-                      <div className="flex items-center gap-2">
-                        <Lock className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                        <span className="truncate">
-                          Live key: <code className="text-zinc-300 font-mono text-[11px] sm:text-xs">tc_live_••••••••</code>
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => setActiveTab('keys')}
-                        className="text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1 transition-colors group"
-                      >
-                        Manage Keys <ChevronRight className="w-3.5 h-3.5 text-zinc-500 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
-                      </button>
-                    </div>
-                  </div>
+                    );
+                  })()}
 
                   {/* Unified SaaS Service Health / Edge Infrastructure Surface */}
-                  <div className="p-5 sm:p-7 rounded-[22px] border border-zinc-800/60 bg-gradient-to-b from-zinc-900/50 via-zinc-950/75 to-zinc-950/90 backdrop-blur-md flex flex-col justify-between shadow-2xl relative overflow-hidden">
+                  <div className="p-4 sm:p-5 rounded-2xl border border-zinc-800/80 bg-gradient-to-b from-zinc-900/60 via-zinc-950/80 to-zinc-950/95 backdrop-blur-md flex flex-col justify-between shadow-xl relative overflow-hidden">
                     {/* Top Row: Eyebrow + Operational Beacon */}
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-2 mb-3">
                       <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-widest text-zinc-400">
                         EDGE INFRASTRUCTURE
                       </span>
@@ -2354,20 +2429,17 @@ print("TokenCare RPC Response:", data)`;
                     </div>
 
                     {/* Centerpiece: Big Availability Metric */}
-                    <div className="my-5 sm:my-6">
-                      <div className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white leading-none">
+                    <div className="my-2 sm:my-3">
+                      <div className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-white leading-none">
                         99.98%
                       </div>
-                      <div className="text-xs sm:text-sm text-zinc-400 font-medium mt-2">
+                      <div className="text-xs text-zinc-400 font-medium mt-1.5">
                         global edge availability
                       </div>
                     </div>
 
-                    {/* Subtle Horizontal Divider */}
-                    <div className="h-px w-full bg-zinc-800/60 my-2" />
-
                     {/* Infrastructure Telemetry Stats */}
-                    <div className="space-y-2.5 text-xs sm:text-[13px] py-1">
+                    <div className="space-y-2 text-xs py-2 border-y border-zinc-800/60">
                       <div className="flex items-center justify-between text-zinc-400">
                         <span>Gateway Latency</span>
                         <span className="text-emerald-400 font-mono font-bold">~42ms avg</span>
@@ -2382,13 +2454,10 @@ print("TokenCare RPC Response:", data)`;
                       </div>
                     </div>
 
-                    {/* Subtle Horizontal Divider */}
-                    <div className="h-px w-full bg-zinc-800/60 my-2" />
-
                     {/* Action Button */}
                     <button
                       onClick={() => setActiveTab('endpoints')}
-                      className="w-full py-2 px-3 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition-all flex items-center justify-center gap-1.5 group mt-1"
+                      className="w-full py-2 px-3 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition-all flex items-center justify-center gap-1.5 group mt-2 cursor-pointer"
                     >
                       <Zap className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
                       Test RPC Endpoints
@@ -2972,43 +3041,36 @@ print("TokenCare RPC Response:", data)`;
                   </div>
                 </div>
 
-                {/* Plan Selection from database */}
-                <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/40 bg-zinc-950/40 backdrop-blur-sm space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs sm:text-sm font-bold text-white">Tier & Quota Plan</h4>
-                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                      {(project.plan_code || 'free').toUpperCase()}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {plans.map((p) => {
-                      const isCurrent = (project.plan_code || 'free').toLowerCase() === p.code.toLowerCase();
-                      const priceLabel = p.monthly_price_usd === 0 ? '$0/mo' : `$${p.monthly_price_usd}/mo`;
-                      return (
-                        <div
-                          key={p.code}
-                          className={`p-2.5 sm:p-3 rounded-xl border transition-all ${
-                            isCurrent
-                              ? 'border-[#00E575] bg-[#00E575]/10'
-                              : 'border-zinc-800 bg-zinc-950/40 hover:border-zinc-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <h5 className="text-xs font-bold text-white">{p.name}</h5>
-                            <span className="text-xs font-extrabold text-emerald-400">{priceLabel}</span>
-                          </div>
-                          <p className="text-[10px] text-zinc-400 mt-0.5 font-mono">{p.daily_limit.toLocaleString()} calls/day</p>
-                          {isCurrent ? (
-                            <span className="inline-block text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded mt-1 border border-emerald-500/20">
-                              Active Plan
-                            </span>
-                          ) : (
-                            <p className="text-[9px] text-zinc-500 mt-1">Managed via billing</p>
-                          )}
+                {/* My Plans Navigation Entry */}
+                <div className="p-3.5 sm:p-4 rounded-xl sm:rounded-2xl border border-zinc-800/60 bg-zinc-950/40 backdrop-blur-sm">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('plans')}
+                    className="w-full flex items-center justify-between group text-left cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0 group-hover:bg-emerald-500/20 group-hover:border-emerald-500/40 transition-colors">
+                        <Sparkles className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs sm:text-sm font-bold text-white group-hover:text-emerald-400 transition-colors">
+                            My Plans
+                          </h4>
+                          <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                            {(project.plan_code || 'free').toUpperCase()}
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
+                        <p className="text-[11px] text-zinc-400 mt-0.5">
+                          View available plans and your current subscription
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-zinc-400 group-hover:text-white transition-colors shrink-0">
+                      <span className="text-xs font-semibold hidden sm:inline">View Plans</span>
+                      <ChevronRight className="w-4 h-4 text-zinc-500 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
+                    </div>
+                  </button>
                 </div>
 
                 {/* Subscriptions History if available */}

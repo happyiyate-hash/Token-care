@@ -32,6 +32,11 @@ export interface DeveloperPlan {
   name: string;
   monthly_price_usd: number;
   daily_limit: number;
+  included_credits?: number;
+  duration_days?: number | null;
+  description?: string | null;
+  features?: string[] | string | null;
+  benefits?: string[] | string | null;
   is_active: boolean;
   created_at?: string;
 }
@@ -330,12 +335,12 @@ export interface DeveloperApiKey {
 }
 
 export const DEFAULT_DEVELOPER_PLANS: DeveloperPlan[] = [
-  { code: 'free', name: 'Free', monthly_price_usd: 0, daily_limit: 100, is_active: true },
-  { code: 'starter', name: 'Starter', monthly_price_usd: 5, daily_limit: 1000, is_active: true },
-  { code: 'growth', name: 'Growth', monthly_price_usd: 10, daily_limit: 5000, is_active: true },
-  { code: 'pro', name: 'Pro', monthly_price_usd: 20, daily_limit: 25000, is_active: true },
-  { code: 'business', name: 'Business', monthly_price_usd: 50, daily_limit: 100000, is_active: true },
-  { code: 'scale', name: 'Scale', monthly_price_usd: 100, daily_limit: 500000, is_active: true },
+  { code: 'free', name: 'Free', monthly_price_usd: 0, daily_limit: 100, included_credits: 20, is_active: true },
+  { code: 'starter', name: 'Starter', monthly_price_usd: 5, daily_limit: 1000, included_credits: 200, is_active: true },
+  { code: 'growth', name: 'Growth', monthly_price_usd: 10, daily_limit: 5000, included_credits: 1000, is_active: true },
+  { code: 'pro', name: 'Pro', monthly_price_usd: 20, daily_limit: 25000, included_credits: 5000, is_active: true },
+  { code: 'business', name: 'Business', monthly_price_usd: 50, daily_limit: 100000, included_credits: 20000, is_active: true },
+  { code: 'scale', name: 'Scale', monthly_price_usd: 100, daily_limit: 500000, included_credits: 100000, is_active: true },
 ];
 
 const supabase = () => getSupabase();
@@ -482,8 +487,27 @@ export async function getDeveloperQuota(): Promise<DeveloperQuota> {
 
 export async function getDeveloperPlans(): Promise<DeveloperPlan[]> {
   try {
-    const { data, error } = await supabase().from('developer_plans').select('code, name, monthly_price_usd, daily_limit, is_active, created_at').eq('is_active', true).order('monthly_price_usd', { ascending: true });
-    if (!error && Array.isArray(data) && data.length) return data as DeveloperPlan[];
+    const { data, error } = await supabase()
+      .from('developer_plans')
+      .select('*')
+      .eq('is_active', true)
+      .order('monthly_price_usd', { ascending: true });
+
+    if (!error && Array.isArray(data) && data.length) {
+      return data.map((row: any) => ({
+        code: String(row.code || '').toLowerCase(),
+        name: row.name || row.code,
+        monthly_price_usd: Number(row.monthly_price_usd ?? 0),
+        daily_limit: Number(row.daily_limit ?? 0),
+        included_credits: Number(row.included_credits ?? 0),
+        duration_days: row.duration_days != null ? Number(row.duration_days) : null,
+        description: row.description || null,
+        features: row.features || row.benefits || null,
+        benefits: row.benefits || row.features || null,
+        is_active: row.is_active !== false,
+        created_at: row.created_at,
+      }));
+    }
   } catch (e) {
     console.warn('[DeveloperAPI] developer_plans:', e);
   }
@@ -696,6 +720,52 @@ export async function getDeveloperCreditTransactions(projectId?: string, limit =
   return [];
 }
 
+export interface DeveloperTodayUsage {
+  calls: number;
+  successfulCalls: number;
+  failedCalls: number;
+  blockedCalls: number;
+  lastCalledAt: string | null;
+}
+
+export async function getDeveloperDailyUsage(projectId: string): Promise<DeveloperTodayUsage> {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { data, error } = await supabase()
+    .from('developer_daily_usage')
+    .select(`
+      calls,
+      successful_calls,
+      blocked_calls,
+      last_called_at,
+      usage_date
+    `)
+    .eq('project_id', projectId)
+    .eq('usage_date', today)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  const calls = Number(data?.calls ?? 0);
+  const successfulCalls = Number(data?.successful_calls ?? 0);
+  const blockedCalls = Number(data?.blocked_calls ?? 0);
+
+  const failedCalls = Math.max(
+    0,
+    calls - successfulCalls - blockedCalls
+  );
+
+  return {
+    calls,
+    successfulCalls,
+    failedCalls,
+    blockedCalls,
+    lastCalledAt: data?.last_called_at ?? null,
+  };
+}
+
 export async function getDeveloperDailyCalls(projectId?: string): Promise<DeveloperDailyCallsStats> {
   try {
     let pId = projectId;
@@ -704,33 +774,13 @@ export async function getDeveloperDailyCalls(projectId?: string): Promise<Develo
       pId = proj?.id;
     }
     if (pId) {
-      const todayUtc = new Date().toISOString().slice(0, 10);
-      const d = new Date();
-      const todayLocal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-      // Query public.developer_daily_usage directly for today's aggregate row
-      const { data: rows, error } = await supabase()
-        .from('developer_daily_usage')
-        .select('project_id, usage_date, calls, successful_calls, blocked_calls')
-        .eq('project_id', pId)
-        .or(`usage_date.eq.${todayUtc},usage_date.eq.${todayLocal}`)
-        .order('usage_date', { ascending: false })
-        .limit(1);
-
-      if (!error && Array.isArray(rows) && rows.length > 0) {
-        const row: any = rows[0];
-        const calls = Number(row?.calls ?? 0);
-        const successful = Number(row?.successful_calls ?? 0);
-        const blocked = Number(row?.blocked_calls ?? 0);
-        const failed = Math.max(0, calls - successful - blocked);
-
-        return {
-          total24h: calls,
-          successful,
-          failed,
-          blocked,
-        };
-      }
+      const usage = await getDeveloperDailyUsage(pId);
+      return {
+        total24h: usage.calls,
+        successful: usage.successfulCalls,
+        failed: usage.failedCalls,
+        blocked: usage.blockedCalls,
+      };
     }
   } catch (e) {
     console.warn('[DeveloperAPI] getDeveloperDailyCalls error:', e);
