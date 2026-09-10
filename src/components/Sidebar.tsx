@@ -17,7 +17,6 @@ import {
   ExternalLink,
   ArrowUpRight,
   Bell,
-  Code2,
   Terminal,
   X,
 } from 'lucide-react';
@@ -40,7 +39,6 @@ interface SidebarProps {
   wallet: UserRewardWallet;
   onOpenWalletModal: () => void;
   onOpenRewardModal: () => void;
-  onOpenApiConsole?: () => void;
   unreadCount?: number;
   sessionStatus?: string;
   isOnline?: boolean;
@@ -60,7 +58,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   wallet,
   onOpenWalletModal,
   onOpenRewardModal,
-  onOpenApiConsole,
   unreadCount = 0,
 }) => {
   const { t } = useTranslation();
@@ -88,12 +85,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: t('nav.dashboard'),
       icon: LayoutDashboard,
       description: t('sidebar.dashboardDesc'),
-    },
-    {
-      id: 'api-console',
-      label: t('nav.developerApi', 'Developer API'),
-      icon: Code2,
-      description: t('sidebar.developerApiDesc', 'API keys, endpoints & test console'),
     },
     {
       id: 'payouts',
@@ -157,11 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <button
                   key={item.id}
                   onClick={() => {
-                    if (item.id === 'api-console' && onOpenApiConsole) {
-                      onOpenApiConsole();
-                    } else {
-                      onSelectTab(item.id);
-                    }
+                    onSelectTab(item.id);
                     onCloseMobile();
                   }}
                   className={`w-full text-left p-2.5 rounded-xl transition-all flex items-center space-x-3 cursor-pointer ${

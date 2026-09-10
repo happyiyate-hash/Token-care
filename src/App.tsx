@@ -61,9 +61,6 @@ import {
 import { NotificationCenterView } from './components/NotificationCenterView';
 import { DesktopNotificationPopover } from './components/DesktopNotificationPopover';
 import { MfaManagementView } from './components/MfaManagementView';
-import { ApiConsoleModal } from './components/ApiConsoleModal';
-import DeveloperView from './views/DeveloperView';
-import DeveloperPlansView from './views/DeveloperPlansView';
 import { HelpCenterView } from './components/HelpCenterView';
 import { ContactSupportView } from './components/ContactSupportView';
 import { SupportLiveChatView } from './components/SupportLiveChatView';
@@ -191,7 +188,6 @@ export default function App() {
   // Modals
   const [isHowItWorksOpen, setIsHowItWorksOpen] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
-  const [isApiConsoleOpen, setIsApiConsoleOpen] = useState(false);
 
   // Form State
   const [currentStep, setCurrentStep] = useState(1);
@@ -722,11 +718,6 @@ export default function App() {
         triggerHaptic.light();
         return true;
       }
-      if (isApiConsoleOpen) {
-        setIsApiConsoleOpen(false);
-        triggerHaptic.light();
-        return true;
-      }
       if (isSidebarOpenMobile) {
         setIsSidebarOpenMobile(false);
         triggerHaptic.light();
@@ -751,7 +742,6 @@ export default function App() {
     authChecking,
     isHowItWorksOpen,
     isWalletModalOpen,
-    isApiConsoleOpen,
     isSidebarOpenMobile,
     activeTab,
   ]);
@@ -1451,13 +1441,6 @@ export default function App() {
           onUpdateWallet={setWallet}
           userId={currentUser?.id}
         />
-
-        <ApiConsoleModal
-          isOpen={isApiConsoleOpen}
-          onClose={() => setIsApiConsoleOpen(false)}
-          apiKeys={apiKeys}
-          onSaveApiKeys={setApiKeys}
-        />
       </>
     );
   }
@@ -1492,7 +1475,6 @@ export default function App() {
         wallet={wallet}
         onOpenWalletModal={() => setIsWalletModalOpen(true)}
         onOpenRewardModal={() => setActiveTab('payouts')}
-        onOpenApiConsole={() => setIsApiConsoleOpen(true)}
         unreadCount={unreadNotificationCount}
       />
 
@@ -1502,18 +1484,14 @@ export default function App() {
           isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'
         }`}
       >
-        {/* Top Fixed Header (Hidden on standalone views like MFA, Explore, Help Center, Contact Support, Terms & Privacy, Preferences, Developer, Plans) */}
+        {/* Top Fixed Header (Hidden on standalone views like MFA, Explore, Help Center, Contact Support, Terms & Privacy, Preferences) */}
         {activeTab !== 'mfa' &&
           activeTab !== 'directory' &&
           activeTab !== 'help-center' &&
           activeTab !== 'contact-support' &&
           activeTab !== 'terms-privacy' &&
           activeTab !== 'privacy-policy' &&
-          activeTab !== 'preferences' &&
-          activeTab !== 'developer' &&
-          activeTab !== 'api-console' &&
-          activeTab !== 'developer-plans' &&
-          activeTab !== 'plans' && (
+          activeTab !== 'preferences' && (
           <header className="shrink-0 bg-[#090C13]/90 backdrop-blur-md border-b border-zinc-800/80 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3 z-30">
             <div className="flex items-center space-x-2.5 min-w-0">
               {/* Mobile Sidebar Hamburger Toggle */}
@@ -1690,19 +1668,6 @@ export default function App() {
               initialTab="preferences"
             />
           </div>
-        ) : activeTab === 'developer-plans' || activeTab === 'plans' ? (
-          <div className="flex-1 flex flex-col min-h-0 overflow-hidden w-full h-full">
-            <DeveloperPlansView
-              onBack={() => setActiveTab('developer')}
-            />
-          </div>
-        ) : activeTab === 'developer' || activeTab === 'api-console' ? (
-          <div className="flex-1 flex flex-col min-h-0 overflow-hidden w-full h-full">
-            <DeveloperView
-              onBack={() => setActiveTab('settings')}
-              currentUser={currentUser}
-            />
-          </div>
         ) : (
           <main className="flex-1 min-h-0 p-3 sm:p-5 space-y-4 max-w-7xl w-full mx-auto overflow-y-auto">
             {activeTab === 'dashboard' ? (
@@ -1739,7 +1704,6 @@ export default function App() {
               onUpdateProfile={(updated) => setUserProfile(updated)}
               onSignOut={handleSignOut}
               onNavigateTab={(tab) => setActiveTab(tab)}
-              onOpenApiConsole={() => setIsApiConsoleOpen(true)}
             />
           ) : activeTab === 'saved-tokens' || activeTab === 'my-saved-tokens' || activeTab === 'my-saved-list' ? (
             <MySavedTokensView
@@ -1880,11 +1844,6 @@ export default function App() {
         wallet={wallet}
         onUpdateWallet={setWallet}
         userId={currentUser?.id}
-      />
-
-      <ApiConsoleModal
-        isOpen={isApiConsoleOpen}
-        onClose={() => setIsApiConsoleOpen(false)}
       />
 
       {/* Floating Desktop Notification Popover Card */}

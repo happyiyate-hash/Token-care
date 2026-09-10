@@ -48,7 +48,6 @@ import { TermsAndPrivacyView } from './TermsAndPrivacyView';
 import { LogoVerificationReport } from '../services/logoVerificationEngine';
 import { MfaManagementView } from './MfaManagementView';
 import { MySavedTokensView } from './MySavedTokensView';
-import DeveloperView from '../views/DeveloperView';
 import { TokenCareLogo } from './TokenCareLogo';
 import { NotificationBell } from './NotificationBell';
 import { CompactBalanceCard } from './CompactBalanceCard';
@@ -144,7 +143,7 @@ export const MobileView: React.FC<MobileViewProps> = ({
 
   // Mobile navigation tabs
   const [mobileTab, setMobileTab] = useState<
-    'overview' | 'explore' | 'donate' | 'tokens' | 'saved-tokens' | 'my-saved-list' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences' | 'developer' | 'api-console'
+    'overview' | 'explore' | 'donate' | 'tokens' | 'saved-tokens' | 'my-saved-list' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences'
   >('overview');
   const [showBalance, setShowBalance] = useState<boolean>(true);
   const [dbWithdrawals, setDbWithdrawals] = useState<WithdrawalRequest[]>([]);
@@ -167,7 +166,7 @@ export const MobileView: React.FC<MobileViewProps> = ({
 
   // Sync mobile tab selection
   const handleTabChange = (
-    tab: 'overview' | 'explore' | 'donate' | 'tokens' | 'saved-tokens' | 'my-saved-list' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences' | 'developer' | 'api-console'
+    tab: 'overview' | 'explore' | 'donate' | 'tokens' | 'saved-tokens' | 'my-saved-list' | 'profile' | 'withdrawals' | 'notifications' | 'mfa' | 'help-center' | 'contact-support' | 'terms-privacy' | 'privacy-policy' | 'preferences'
   ) => {
     setMobileTab(tab);
     if (tab === 'overview') setActiveTab('dashboard');
@@ -183,7 +182,6 @@ export const MobileView: React.FC<MobileViewProps> = ({
     else if (tab === 'contact-support') setActiveTab('contact-support');
     else if (tab === 'terms-privacy' || tab === 'privacy-policy') setActiveTab('terms-privacy');
     else if (tab === 'preferences') setActiveTab('preferences');
-    else if (tab === 'developer' || tab === 'api-console') setActiveTab('developer');
   };
 
   // Sync from parent activeTab if changed externally
@@ -198,7 +196,6 @@ export const MobileView: React.FC<MobileViewProps> = ({
     else if (activeTab === 'contact-support' && mobileTab !== 'contact-support') setMobileTab('contact-support');
     else if ((activeTab === 'terms-privacy' || activeTab === 'privacy-policy') && mobileTab !== 'terms-privacy') setMobileTab('terms-privacy');
     else if (activeTab === 'preferences' && mobileTab !== 'preferences') setMobileTab('preferences');
-    else if ((activeTab === 'developer' || activeTab === 'api-console') && mobileTab !== 'developer') setMobileTab('developer');
     else if (activeTab === 'dashboard' && mobileTab !== 'overview' && mobileTab !== 'tokens') {
       setMobileTab('overview');
     }
@@ -325,9 +322,7 @@ export const MobileView: React.FC<MobileViewProps> = ({
         mobileTab !== 'live-chat' &&
         mobileTab !== 'terms-privacy' &&
         mobileTab !== 'privacy-policy' &&
-        mobileTab !== 'preferences' &&
-        mobileTab !== 'developer' &&
-        mobileTab !== 'api-console' && (
+        mobileTab !== 'preferences' && (
           <header className="shrink-0 z-40 bg-[#090C12] backdrop-blur-xl border-b border-emerald-500/30 rounded-b-2xl p-2.5 pt-safe-nav shadow-[0_4px_25px_rgba(0,0,0,0.7)] max-w-md mx-auto w-full transition-all flex items-center justify-between">
             {/* Left: TokenCare Logo (~42px) */}
             <div className="flex items-center space-x-2">
@@ -578,17 +573,6 @@ export const MobileView: React.FC<MobileViewProps> = ({
               onSignOut={handleSignOut}
               handleSignOut={handleSignOut}
               onNavigateTab={(tab) => handleTabChange(tab as any)}
-              onOpenApiConsole={() => handleTabChange('developer')}
-            />
-          </div>
-        )}
-
-        {/* DEVELOPER API TAB */}
-        {(mobileTab === 'developer' || mobileTab === 'api-console') && (
-          <div className="flex-1 min-h-0 w-full h-full flex flex-col overflow-hidden animate-in fade-in duration-200">
-            <DeveloperView
-              currentUser={currentUser}
-              onBack={() => handleTabChange('profile')}
             />
           </div>
         )}
@@ -671,7 +655,7 @@ export const MobileView: React.FC<MobileViewProps> = ({
         )}
       </main>
 
-      {/* Fixed Bottom Navigation Bar (Hidden when on standalone sub-pages / Support pages / Developer page / Saved Tokens page) */}
+      {/* Fixed Bottom Navigation Bar (Hidden when on standalone sub-pages / Support pages / Saved Tokens page) */}
       {mobileTab !== 'withdrawals' &&
         mobileTab !== 'notifications' &&
         mobileTab !== 'saved-tokens' &&
@@ -683,9 +667,7 @@ export const MobileView: React.FC<MobileViewProps> = ({
         mobileTab !== 'live-chat' &&
         mobileTab !== 'terms-privacy' &&
         mobileTab !== 'privacy-policy' &&
-        mobileTab !== 'preferences' &&
-        mobileTab !== 'developer' &&
-        mobileTab !== 'api-console' && (
+        mobileTab !== 'preferences' && (
         <nav className="shrink-0 z-50 bg-[#090C12] backdrop-blur-xl border-t border-zinc-800/80 rounded-t-3xl px-3 pt-2.5 pb-safe-nav shadow-[0_-8px_30px_rgba(0,0,0,0.6)]">
           <div className="max-w-md mx-auto grid grid-cols-5 items-center justify-items-center relative">
             {/* 1. Overview */}

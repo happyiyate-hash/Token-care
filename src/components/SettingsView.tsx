@@ -18,7 +18,6 @@ import {
   Wallet,
   Lock,
   Key,
-  Code2,
   Bell,
   Coins,
   TrendingUp,
@@ -71,7 +70,6 @@ interface SettingsViewProps {
   apiKeys?: any;
   setApiKeys?: any;
   onNavigateTab?: (tab: string) => void;
-  onOpenApiConsole?: () => void;
   initialSubView?: 'main' | 'help-center' | 'contact-support' | 'privacy-policy' | 'terms' | 'cookies' | 'preferences';
 }
 
@@ -82,7 +80,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSignOut,
   handleSignOut,
   onNavigateTab,
-  onOpenApiConsole,
   initialSubView = 'main',
 }) => {
   const signOutHandler = onSignOut || handleSignOut;
@@ -777,38 +774,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
               <ChevronRight className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-300 shrink-0" />
             </div>
-          </div>
-
-          {/* Developer API & Console Settings */}
-          <div
-            id="settings-developer-api-btn"
-            onClick={() => {
-              if (onNavigateTab) {
-                onNavigateTab('developer');
-              } else if (onOpenApiConsole) {
-                onOpenApiConsole();
-              }
-            }}
-            className="p-2.5 flex items-center justify-between hover:bg-zinc-800/30 transition-colors cursor-pointer group"
-          >
-            <div className="flex items-center space-x-2.5">
-              <div className="w-7 h-7 rounded-full bg-[#00E575]/15 border border-[#00E575]/30 flex items-center justify-center text-[#00E575] shrink-0">
-                <Code2 className="w-3.5 h-3.5 text-[#00E575]" />
-              </div>
-              <div>
-                <div className="text-[11.5px] font-bold text-white group-hover:text-[#00E575] transition-colors flex items-center gap-1.5">
-                  {t('settings.developerApi', 'Developer API')}
-                  <span className="text-[8.5px] bg-[#00E575]/20 text-[#00E575] border border-[#00E575]/40 px-1.5 py-0.2 rounded font-mono font-bold">
-                    {t('settings.apiConsole', 'API Console')}
-                  </span>
-                </div>
-                <div className="text-[9.5px] text-zinc-400 font-normal">
-                  {t('settings.developerApiDesc', 'Manage API keys, rate limits, docs & interactive testing console')}
-                </div>
-              </div>
-            </div>
-
-            <ChevronRight className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-300 shrink-0" />
           </div>
         </div>
       </div>

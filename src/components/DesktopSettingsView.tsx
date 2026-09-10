@@ -8,7 +8,6 @@ import {
   Globe,
   Wallet,
   Database,
-  Code2,
   HelpCircle,
   AlertTriangle,
   CheckCircle2,
@@ -61,7 +60,6 @@ interface DesktopSettingsViewProps {
   onUpdateProfile?: (profile: SupabaseUserProfile) => void;
   onSignOut?: () => void;
   onNavigateTab?: (tab: string) => void;
-  onOpenApiConsole?: () => void;
 }
 
 type DesktopSettingsTab =
@@ -79,7 +77,6 @@ export const DesktopSettingsView: React.FC<DesktopSettingsViewProps> = ({
   onUpdateProfile,
   onSignOut,
   onNavigateTab,
-  onOpenApiConsole,
 }) => {
   const { t, language, setLanguage, supportedLanguages } = useTranslation();
   const { currency, setCurrency, supportedCurrencies, activeCurrency } = useCurrency();
@@ -896,7 +893,7 @@ export const DesktopSettingsView: React.FC<DesktopSettingsViewProps> = ({
             <div className="space-y-5 animate-in fade-in">
               <div>
                 <h2 className="text-base font-extrabold text-white">Support & Legal Documents</h2>
-                <p className="text-xs text-zinc-400">Get assistance, read developer FAQs, or review our privacy policies and terms.</p>
+                <p className="text-xs text-zinc-400">Get assistance, read FAQs, or review our privacy policies and terms.</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

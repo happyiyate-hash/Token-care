@@ -4,7 +4,7 @@ export { formatCurrencyService as formatCurrency };
 export type { FormatCurrencyOptions };
 
 /**
- * Universal Compact Number Formatter for Developer metrics:
+ * Universal Compact Number Formatter:
  * - 684 -> "684"
  * - 1,000 -> "1K"
  * - 1,500 -> "1.5K"
@@ -36,20 +36,6 @@ export function formatCompactNumber(value: number | string | undefined | null): 
   const rounded = Math.round(n * 10) / 10;
   const formatted = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
   return `${isNegative ? '-' : ''}${formatted}${units[unit]}`;
-}
-
-/**
- * Developer Credit Display Formatter:
- * - 20 -> "20"
- * - 19.92 -> "19.92"
- * - 0.08 -> "0.08"
- */
-export function formatDeveloperCredits(value: number | string | undefined | null): string {
-  const num = parseCleanNumber(value);
-  if (num % 1 === 0) {
-    return num.toLocaleString();
-  }
-  return num.toFixed(2);
 }
 
 /**

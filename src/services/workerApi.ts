@@ -1,4 +1,3 @@
-import { getActiveDeveloperApiKey } from './developerCache';
 import {
   fetchExploreTokensFromBackend,
   saveTokensToBackend,
@@ -7,10 +6,7 @@ import {
 } from './vercelTokenBackend';
 
 function getRequestHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const activeKey = getActiveDeveloperApiKey();
-  if (activeKey) headers['x-api-key'] = activeKey;
-  return headers;
+  return { 'Content-Type': 'application/json' };
 }
 
 /** All token operations are routed through the token gateway. */

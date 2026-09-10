@@ -270,8 +270,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <ShieldCheck className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">Supabase Developer Auth</h3>
-              <p className="text-xs text-zinc-400">Cloud database user session</p>
+              <h3 className="text-base font-bold text-white">Cloud Authentication</h3>
+              <p className="text-xs text-zinc-400">Database user session</p>
             </div>
           </div>
           <button

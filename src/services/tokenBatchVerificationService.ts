@@ -342,7 +342,6 @@ export async function verifyTokensBatch(
     SUPABASE_EDGE_FUNCTION_URL,
     '/api/token',
     '/api/save-token',
-    '/api/developer',
   ];
 
   for (const endpoint of tryEndpoints) {
