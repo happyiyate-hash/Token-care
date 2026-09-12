@@ -28,6 +28,7 @@ import { ChainSelectorModal, getChainLogoUrl } from './ChainSelectorModal';
 import { TokenHuntCard } from './TokenHuntCard';
 import { LogoStatus } from '../types';
 import { useTranslation } from '../context/I18nContext';
+import { detectTokenBlockchain, chainIdToSelectorId, DetectedChain } from '../services/chainDetection';
 import {
   addLocalSavedToken,
   getLocalSavedTokens,
@@ -89,6 +90,22 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
   const [imgError, setImgError] = useState(false);
   const [savedTokensCount, setSavedTokensCount] = useState<number>(() => getLocalSavedTokens(userId).length);
   const [saveStatusMessage, setSaveStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [detectedChain, setDetectedChain] = useState<DetectedChain | null>(null);
+  const [detectionNotice, setDetectionNotice] = useState<string | null>(null);
+  const [, setLogoTick] = useState(0);
+
+  useEffect(() => {
+    const handleLogoTick = () => {
+      setImgError(false);
+      setLogoTick((prev) => prev + 1);
+    };
+    window.addEventListener('tokencare_chain_logo_updated', handleLogoTick);
+    window.addEventListener('tokencare_dynamic_chains_updated', handleLogoTick);
+    return () => {
+      window.removeEventListener('tokencare_chain_logo_updated', handleLogoTick);
+      window.removeEventListener('tokencare_dynamic_chains_updated', handleLogoTick);
+    };
+  }, []);
 
   // Refresh saved tokens count
   const refreshSavedCount = () => {
@@ -156,6 +173,29 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
   const currentRawDef = RAW_EVM_CHAINS[normalizedKey] || RAW_EVM_CHAINS['137'];
   const currentLogoUrl = getChainLogoUrl(selectedChain);
 
+  // Process token address verification with proactive chain detection
+  const handleProcessToken = async (addrToProcess?: string) => {
+    const raw = (addrToProcess || addressInput).trim();
+    if (!raw) return;
+
+    // Detect blockchain
+    const detected = await detectTokenBlockchain(raw);
+    if (!detected || detected.isUnknown || detected.chainId === 'unknown') {
+      setDetectedChain(null);
+      setDetectionNotice('Could not get blockchain. Please select the blockchain for this token.');
+      setIsChainModalOpen(true);
+      return;
+    }
+
+    setDetectedChain(detected);
+    const selectorId = chainIdToSelectorId(detected.chainId) as ChainId;
+    if (String(selectorId) !== String(selectedChain)) {
+      setSelectedChain(selectorId);
+    }
+    setDetectionNotice(`${detected.name} detected via ${detected.source === 'dexscreener' ? 'DEX Screener' : detected.source === 'geckoterminal' ? 'GeckoTerminal' : 'address format'}.`);
+    onFetchToken(raw);
+  };
+
   // Smart Auto-Paste Executor (Runs completely silently)
   const triggerAutoPaste = async () => {
     await processClipboardAutoPaste(
@@ -164,7 +204,7 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
       setAddressInput,
       (newAddr) => {
         lastProcessedRef.current = newAddr.toLowerCase();
-        onFetchToken(newAddr);
+        void handleProcessToken(newAddr);
       }
     );
   };
@@ -199,7 +239,7 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
       setAddressInput,
       (newAddr) => {
         lastProcessedRef.current = newAddr.toLowerCase();
-        onFetchToken(newAddr);
+        void handleProcessToken(newAddr);
       }
     );
 
@@ -214,7 +254,7 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
           } else {
             setAddressInput(valid);
             lastProcessedRef.current = norm;
-            onFetchToken(valid);
+            void handleProcessToken(valid);
           }
         } else {
           // Non-address rich text entered -> automatically clean it without saying anything!
@@ -278,7 +318,7 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
               className="w-full bg-transparent text-white font-mono text-[11px] focus:outline-none placeholder:text-zinc-600 truncate"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  onFetchToken();
+                  void handleProcessToken();
                 }
               }}
             />
@@ -298,7 +338,7 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
           {/* Right: Verify Action Button */}
           <button
             type="button"
-            onClick={() => onFetchToken()}
+            onClick={() => void handleProcessToken()}
             disabled={isLoading || !addressInput.trim()}
             className="px-3 py-1.5 bg-[#22C55E] hover:bg-[#16A34A] disabled:opacity-40 text-black font-black text-xs rounded-xl shadow-[0_2px_12px_rgba(34,197,94,0.4)] transition-all cursor-pointer disabled:cursor-not-allowed flex items-center space-x-1 shrink-0 h-10"
           >
@@ -337,6 +377,39 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
             </span>
           </div>
         </div>
+
+        {/* Auto Switch Network Notice */}
+        {autoSwitchNotice && (
+          <div className="bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 rounded-xl px-3 py-2 text-xs flex items-center gap-2 shadow-sm animate-in fade-in">
+            <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-semibold text-[11px] leading-tight">{autoSwitchNotice}</span>
+          </div>
+        )}
+
+        {/* Chain Detection Notice / Alert */}
+        {detectionNotice && (
+          <div className="bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 rounded-xl px-3 py-2 text-xs flex items-center justify-between gap-2 shadow-sm animate-in fade-in">
+            <div className="flex items-center space-x-2">
+              <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-semibold text-[11px] leading-tight">{detectionNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDetectionNotice(null)}
+              className="p-0.5 text-zinc-400 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Error Message Notice */}
+        {errorMessage && (
+          <div className="bg-rose-950/60 border border-rose-500/40 text-rose-300 rounded-xl px-3 py-2 text-xs flex items-center gap-2 shadow-sm animate-in fade-in">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span className="font-semibold text-[11px] leading-tight">{errorMessage}</span>
+          </div>
+        )}
 
         {/* Save Status Alert / Toast */}
         {saveStatusMessage && (
@@ -491,6 +564,7 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
         isOpen={isChainModalOpen}
         onClose={() => setIsChainModalOpen(false)}
         selectedChain={selectedChain}
+        detectedChain={detectedChain}
         onSelectChain={(chain) => {
           setSelectedChain(chain);
           setIsChainModalOpen(false);

@@ -55,12 +55,10 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
     if (onSelectChain && (forceDetection || String(selectedChain) === '137')) {
       const detected = await detectTokenBlockchain(clean);
 
-      if (!detected) {
-        // Detection is a convenience, never a hard validation gate. The
-        // verification engine performs a second chain-agnostic resolution pass.
+      if (!detected || detected.isUnknown || detected.chainId === 'unknown') {
         setDetectedChain(null);
-        setDetectionToast('Blockchain not resolved by the first detector. Continuing with provider-based discovery...');
-        onFetchToken(clean);
+        setDetectionToast('Could not get blockchain. Please select the blockchain for this token.');
+        setIsChainModalOpen(true);
         return;
       }
 

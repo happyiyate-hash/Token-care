@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, X, Check, Lock, Globe2 } from 'lucide-react';
+import { Search, X, Check, Globe2 } from 'lucide-react';
 import { ChainId } from '../types';
 import { getTokenChainsForSelector, getTokenChain } from '../constants/tokenChains';
 import { RAW_EVM_CHAINS, normalizeChainKey, getChainInfo } from '../constants/chains';
 import { getTrustWalletChainLogoUrl } from '../constants/trustWalletChainLogos';
+import { getCachedChainLogo, scanAndFetchMissingChainLogos } from '../services/chainLogoService';
 import type { DetectedChain } from '../services/chainDetection';
 
 interface ChainSelectorModalProps {
@@ -30,6 +31,8 @@ export function getChainLogoUrl(chain: string | {
   dexScreenerChain?: string;
 }): string | undefined {
   if (typeof chain === 'string') {
+    const cached = getCachedChainLogo(chain);
+    if (cached) return cached;
     const tokenChain = getTokenChain(chain);
     const chainInfo = getChainInfo(chain);
     return getTrustWalletChainLogoUrl({
@@ -41,6 +44,9 @@ export function getChainLogoUrl(chain: string | {
       logoUrl: tokenChain?.logoUrl,
     });
   }
+  const idStr = chain.id !== undefined ? String(chain.id) : '';
+  const cached = idStr ? getCachedChainLogo(idStr) : null;
+  if (cached) return cached;
   return getTrustWalletChainLogoUrl(chain);
 }
 
@@ -53,6 +59,27 @@ export const ChainSelectorModal: React.FC<ChainSelectorModalProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [imgErrors, setImgErrors] = useState<Record<string, boolean>>({});
+  const [, setLogoUpdateTick] = useState(0);
+
+  // Re-render when logos or dynamic chains are cached in the background
+  useEffect(() => {
+    const handleLogoUpdate = () => {
+      setLogoUpdateTick((prev) => prev + 1);
+    };
+    window.addEventListener('tokencare_chain_logo_updated', handleLogoUpdate);
+    window.addEventListener('tokencare_dynamic_chains_updated', handleLogoUpdate);
+    return () => {
+      window.removeEventListener('tokencare_chain_logo_updated', handleLogoUpdate);
+      window.removeEventListener('tokencare_dynamic_chains_updated', handleLogoUpdate);
+    };
+  }, []);
+
+  // When modal is opened, trigger background logo fetch for all chains that lack a logo
+  useEffect(() => {
+    if (!isOpen) return;
+    const chains = getTokenChainsForSelector();
+    scanAndFetchMissingChainLogos(chains);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -62,13 +89,14 @@ export const ChainSelectorModal: React.FC<ChainSelectorModalProps> = ({
   // The selector is a UI registry, not the source of truth for blockchain identity.
   // If discovery found a network that is not hardcoded, inject it into the selector
   // so the user can still select/save the exact chain identity returned by discovery.
-  const dynamicDetected = detectedChain && detectedChain.chainId
+  const dynamicDetected = detectedChain && detectedChain.chainId && !detectedChain.isUnknown && detectedChain.chainId !== 'unknown'
     ? [{
         id: detectedChain.chainId as ChainId,
         chainId: detectedChain.chainId,
         name: detectedChain.name,
-        symbol: detectedChain.blockchain.toUpperCase().slice(0, 8),
-        icon: '',
+        symbol: detectedChain.symbol || detectedChain.blockchain.toUpperCase().slice(0, 8),
+        icon: detectedChain.logoUrl || '',
+        logoUrl: detectedChain.logoUrl || '',
         rpcUrl: '',
         explorerUrl: '',
         coingeckoPlatform: '',
@@ -123,20 +151,65 @@ export const ChainSelectorModal: React.FC<ChainSelectorModalProps> = ({
               const logoUrl = getChainLogoUrl(chain);
               const hasError = imgErrors[uniqueKey];
               const isDynamic = Boolean((chain as any).dynamic);
-              const isSupported = isDynamic || chain.supported !== false;
 
-              return <button key={uniqueKey} type="button" disabled={!isSupported} onClick={() => { if (!isSupported) return; onSelectChain(chain.id); onClose(); }} className={`text-left px-3 py-2 rounded-xl border transition-all flex items-center justify-between group ${!isSupported ? 'bg-[#090B11] border-zinc-900/80 opacity-55 cursor-not-allowed' : isSelected ? 'bg-emerald-500/15 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30 cursor-pointer' : 'bg-[#0B0E17] border-zinc-800/80 hover:bg-zinc-900 hover:border-zinc-700 cursor-pointer'}`}>
-                <div className="flex items-center space-x-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 p-0.5 flex items-center justify-center shrink-0 overflow-hidden">
-                    {logoUrl && !hasError ? <img src={logoUrl} alt={chain.name} className="w-full h-full object-cover rounded-full" onError={() => handleImageError(uniqueKey)} /> : <div className="w-full h-full rounded-full flex items-center justify-center font-mono text-[9px] font-bold text-white bg-zinc-700">{String(chain.symbol || chain.name).slice(0, 3)}</div>}
+              return (
+                <button
+                  key={uniqueKey}
+                  type="button"
+                  onClick={() => {
+                    onSelectChain(chain.id);
+                    onClose();
+                  }}
+                  className={`text-left px-3 py-2 rounded-xl border transition-all flex items-center justify-between group cursor-pointer ${
+                    isSelected
+                      ? 'bg-emerald-500/15 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/30'
+                      : 'bg-[#0B0E17] border-zinc-800/80 hover:bg-zinc-900 hover:border-zinc-700'
+                  }`}
+                >
+                  <div className="flex items-center space-x-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 p-0.5 flex items-center justify-center shrink-0 overflow-hidden">
+                      {logoUrl && !hasError ? (
+                        <img
+                          src={logoUrl}
+                          alt={chain.name}
+                          className="w-full h-full object-cover rounded-full"
+                          onError={() => handleImageError(uniqueKey)}
+                        />
+                      ) : (
+                        <div className="w-full h-full rounded-full flex items-center justify-center font-mono text-[9px] font-bold text-white bg-zinc-700">
+                          {String(chain.symbol || chain.name).slice(0, 3)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center space-x-1">
+                        <span className="text-xs font-bold text-white truncate group-hover:text-emerald-400 transition-colors">
+                          {chain.name}
+                        </span>
+                        <span className="text-[10px] text-zinc-400 font-mono">({chain.symbol})</span>
+                        {isDynamic && (
+                          <span className="text-[8px] text-emerald-400 font-semibold flex items-center gap-0.5">
+                            <Globe2 className="w-2.5 h-2.5" />
+                            Detected
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-zinc-500 font-mono truncate">
+                        {chain.chainId ? `Chain ID: ${chain.chainId}` : chain.tokenStandard}
+                      </div>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center space-x-1"><span className="text-xs font-bold text-white truncate group-hover:text-emerald-400 transition-colors">{chain.name}</span><span className="text-[10px] text-zinc-400 font-mono">({chain.symbol})</span>{isDynamic && <span className="text-[8px] text-emerald-400 font-semibold flex items-center gap-0.5"><Globe2 className="w-2.5 h-2.5" />Detected</span>}</div>
-                    <div className="text-[10px] text-zinc-500 font-mono truncate">{chain.chainId ? `Chain ID: ${chain.chainId}` : chain.tokenStandard}</div>
+                  <div className="shrink-0 ml-2">
+                    {isSelected ? (
+                      <div className="w-5 h-5 rounded-full bg-emerald-500 text-black flex items-center justify-center shadow-sm">
+                        <Check className="w-3 h-3 stroke-[3]" />
+                      </div>
+                    ) : (
+                      <div className="w-5 h-5 rounded-full border border-zinc-800 group-hover:border-zinc-700" />
+                    )}
                   </div>
-                </div>
-                <div className="shrink-0 ml-2">{!isSupported ? <div className="flex items-center gap-1 text-[9px] text-zinc-600 font-mono"><Lock className="w-3 h-3" />Soon</div> : isSelected ? <div className="w-5 h-5 rounded-full bg-emerald-500 text-black flex items-center justify-center shadow-sm"><Check className="w-3 h-3 stroke-[3]" /></div> : <div className="w-5 h-5 rounded-full border border-zinc-800 group-hover:border-zinc-700" />}</div>
-              </button>;
+                </button>
+              );
             })}
           </div>}
         </div>

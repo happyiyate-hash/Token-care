@@ -11,7 +11,13 @@ import {
   isCosmosAddress,
   isNearAddress,
   isAptosOrSuiAddress,
+  registerDynamicChain,
 } from '../constants/chains';
+import {
+  storeDynamicChain,
+  fetchChainLogoInBackground,
+  getCachedChainLogo,
+} from './chainLogoService';
 
 /**
  * Resolves canonical network metadata from provider's chain identifier or address structure
@@ -1186,6 +1192,34 @@ export async function lookupBlockchainForToken(
       const topPair = sorted[0];
       const rawChainId = (topPair.chainId || '').toLowerCase().trim();
       const resolved = resolveNetworkFromProviderChainId(rawChainId, address, preferredChainId);
+      
+      const chainLogoCandidate = topPair.info?.imageUrl || topPair.baseToken?.imageUrl;
+      const cachedLogo = getCachedChainLogo(resolved.chainId) || chainLogoCandidate;
+
+      // Register discovered chain dynamically
+      registerDynamicChain(resolved.chainId, {
+        name: resolved.blockchainName,
+        symbol: topPair.baseToken?.symbol || resolved.chainId.toUpperCase(),
+        type: resolved.blockchainType === 'evm' ? 'evm' : 'other',
+        themeColor: '#10B981',
+        dexScreenerChain: rawChainId,
+      });
+
+      storeDynamicChain({
+        id: resolved.chainId,
+        name: resolved.blockchainName,
+        symbol: topPair.baseToken?.symbol || resolved.chainId.toUpperCase(),
+        tokenStandard: resolved.tokenStandard,
+        logoUrl: cachedLogo,
+        dexScreenerChain: rawChainId,
+        type: resolved.blockchainType === 'evm' ? 'evm' : 'other',
+      });
+
+      // Background logo fetch
+      if (!cachedLogo) {
+        void fetchChainLogoInBackground(resolved.chainId, resolved.blockchainName, topPair.baseToken?.symbol);
+      }
+
       return {
         blockchain: resolved.blockchainName,
         chainId: resolved.chainId,

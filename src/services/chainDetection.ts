@@ -4,9 +4,15 @@ import {
   isTonAddress,
   isXrplAddress,
   isPolkadotAddress,
+  registerDynamicChain,
 } from '../constants/chains';
+import {
+  storeDynamicChain,
+  fetchChainLogoInBackground,
+  getCachedChainLogo,
+} from './chainLogoService';
 
-export type ChainDetectionSource = 'address-format' | 'dexscreener' | 'geckoterminal';
+export type ChainDetectionSource = 'address-format' | 'dexscreener' | 'geckoterminal' | 'manual' | 'unknown';
 
 export interface DetectedChain {
   blockchain: string;
@@ -14,8 +20,11 @@ export interface DetectedChain {
   name: string;
   tokenStandard: string;
   source: ChainDetectionSource;
-  confidence: 'high' | 'medium';
+  confidence: 'high' | 'medium' | 'low';
   supportedByTokenCare?: boolean;
+  symbol?: string;
+  logoUrl?: string;
+  isUnknown?: boolean;
 }
 
 const EVM_CHAIN_MAP: Record<string, DetectedChain> = {
@@ -68,16 +77,46 @@ function humanizeChainId(chainId: string): string {
   return chainId.split('-').map(part => part ? part[0].toUpperCase() + part.slice(1) : part).join(' ');
 }
 
-function dynamicChain(chainId: string, source: ChainDetectionSource): DetectedChain {
+function dynamicChain(chainId: string, source: ChainDetectionSource, symbol?: string, logoUrl?: string): DetectedChain {
   const isLikelyEvm = /^0x|^(ethereum|polygon|base|arbitrum|optimism|bsc|avalanche|fantom|celo|linea|scroll|zksync|mantle|blast|zora|sonic|monad|plasma)/i.test(chainId);
+  const name = humanizeChainId(chainId);
+  const sym = symbol || (chainId.length <= 6 ? chainId.toUpperCase() : 'TOKEN');
+  const cachedLogo = getCachedChainLogo(chainId) || logoUrl;
+
+  // Register in runtime chains list and localStorage dynamic chains
+  registerDynamicChain(chainId, {
+    name,
+    symbol: sym,
+    type: isLikelyEvm ? 'evm' : 'other',
+    themeColor: '#10B981',
+    dexScreenerChain: chainId,
+  });
+
+  storeDynamicChain({
+    id: chainId,
+    name,
+    symbol: sym,
+    tokenStandard: isLikelyEvm ? 'ERC-20 compatible' : 'Dynamic Token',
+    logoUrl: cachedLogo,
+    dexScreenerChain: chainId,
+    type: isLikelyEvm ? 'evm' : 'other',
+  });
+
+  // Background fetch logo if not already cached
+  if (!cachedLogo) {
+    void fetchChainLogoInBackground(chainId, name, sym);
+  }
+
   return {
     blockchain: chainId,
     chainId,
-    name: humanizeChainId(chainId),
-    tokenStandard: isLikelyEvm ? 'ERC-20 compatible' : 'Unknown',
+    name,
+    tokenStandard: isLikelyEvm ? 'ERC-20 compatible' : 'Dynamic Token',
     source,
     confidence: 'high',
-    supportedByTokenCare: false,
+    supportedByTokenCare: true,
+    symbol: sym,
+    logoUrl: cachedLogo,
   };
 }
 
@@ -92,11 +131,22 @@ export function detectChainFromAddressFormat(address: string): DetectedChain | n
   return null;
 }
 
-function resolveKnownChain(chainId: string, source: ChainDetectionSource): DetectedChain {
+function resolveKnownChain(
+  chainId: string,
+  source: ChainDetectionSource,
+  symbolCandidate?: string,
+  logoCandidate?: string
+): DetectedChain {
   const normalized = normalizeProviderChain(chainId);
   const known = STATIC_ALIASES[normalized];
-  if (known) return { ...known, source };
-  return dynamicChain(normalized, source);
+  if (known) {
+    const cached = getCachedChainLogo(normalized) || known.logoUrl || logoCandidate;
+    if (!cached) {
+      void fetchChainLogoInBackground(normalized, known.name, known.symbol);
+    }
+    return { ...known, source, logoUrl: cached, supportedByTokenCare: true };
+  }
+  return dynamicChain(normalized, source, symbolCandidate, logoCandidate);
 }
 
 async function detectWithDexScreener(address: string): Promise<DetectedChain | null> {
@@ -118,7 +168,9 @@ async function detectWithDexScreener(address: string): Promise<DetectedChain | n
       if (!candidates.length) continue;
       const pair = [...candidates].sort((a, b) => Number(b?.liquidity?.usd || 0) - Number(a?.liquidity?.usd || 0))[0];
       const chainId = String(pair?.chainId || '').trim();
-      if (chainId) return resolveKnownChain(chainId, 'dexscreener');
+      const tokenSym = pair?.baseToken?.symbol;
+      const pairLogo = pair?.info?.imageUrl || pair?.baseToken?.imageUrl;
+      if (chainId) return resolveKnownChain(chainId, 'dexscreener', tokenSym, pairLogo);
     }
   } catch {
     // Fall through to the independent discovery provider.
@@ -146,13 +198,25 @@ async function detectWithGeckoTerminal(address: string): Promise<DetectedChain |
 }
 
 /**
- * ONLY identifies the blockchain. Verification is deliberately a separate function.
- * The hardcoded selector is not the detection source of truth. Unknown networks are
- * returned as detected-but-unsupported so they can still be saved accurately later.
+ * ONLY identifies the blockchain.
+ * Returns DetectedChain if found. If completely unknown/unresolved, returns
+ * an 'unknown' state object with isUnknown: true so the consumer UI can present
+ * 'could not get blockchain' and prompt bottom-sheet chain selection.
  */
-export async function detectTokenBlockchain(address: string): Promise<DetectedChain | null> {
+export async function detectTokenBlockchain(address: string): Promise<DetectedChain> {
   const clean = address.trim();
-  if (!clean) return null;
+  if (!clean) {
+    return {
+      blockchain: 'unknown',
+      chainId: 'unknown',
+      name: 'Unknown Blockchain',
+      tokenStandard: 'Unknown',
+      source: 'unknown',
+      confidence: 'low',
+      supportedByTokenCare: false,
+      isUnknown: true,
+    };
+  }
 
   const byFormat = detectChainFromAddressFormat(clean);
   if (byFormat) return byFormat;
@@ -169,7 +233,17 @@ export async function detectTokenBlockchain(address: string): Promise<DetectedCh
   const gecko = await detectWithGeckoTerminal(clean);
   if (gecko) return gecko;
 
-  return null;
+  // If no detector could resolve the blockchain, return structured unknown state
+  return {
+    blockchain: 'unknown',
+    chainId: 'unknown',
+    name: 'Could not get blockchain',
+    tokenStandard: 'Unknown',
+    source: 'unknown',
+    confidence: 'low',
+    supportedByTokenCare: false,
+    isUnknown: true,
+  };
 }
 
 export function chainIdToSelectorId(chainId: string): string {
