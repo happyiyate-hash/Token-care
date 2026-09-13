@@ -28,16 +28,20 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
   const [isChainModalOpen, setIsChainModalOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [pasteNotice, setPasteNotice] = useState<string | null>(null);
-  const [detectionToast, setDetectionToast] = useState<string | null>(null);
   const [detectedChain, setDetectedChain] = useState<DetectedChain | null>(null);
   const lastProcessedRef = useRef<string | null>(extractContractAddress(addressInput) ? addressInput.toLowerCase() : null);
 
   useEffect(() => setImgError(false), [selectedChain]);
+
+  // Keep lastProcessedRef synchronized with addressInput
   useEffect(() => {
-    if (!detectionToast) return;
-    const timer = window.setTimeout(() => setDetectionToast(null), 4200);
-    return () => window.clearTimeout(timer);
-  }, [detectionToast]);
+    if (addressInput && addressInput.trim()) {
+      const valid = extractContractAddress(addressInput.trim());
+      if (valid) {
+        lastProcessedRef.current = valid.toLowerCase();
+      }
+    }
+  }, [addressInput]);
 
   const currentChainInfo = detectedChain && String(detectedChain.chainId) === String(selectedChain)
     ? { name: detectedChain.name }
@@ -45,41 +49,35 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
   const normalizedKey = normalizeChainKey(selectedChain);
   const currentRawDef = RAW_EVM_CHAINS[normalizedKey];
   const currentLogoUrl = detectedChain && String(detectedChain.chainId) === String(selectedChain)
-    ? getChainLogoUrl({ id: detectedChain.chainId, name: detectedChain.name, dexScreenerChain: detectedChain.blockchain })
+    ? getChainLogoUrl(String(detectedChain.chainId || detectedChain.blockchain || selectedChain))
     : getChainLogoUrl(selectedChain);
 
   const prepareFetch = async (addr: string, forceDetection = false) => {
     const clean = addr.trim();
     if (!clean || clean.length < 1) return;
 
-    if (onSelectChain && (forceDetection || String(selectedChain) === '137')) {
-      const detected = await detectTokenBlockchain(clean);
-
-      if (!detected || detected.isUnknown || detected.chainId === 'unknown') {
-        setDetectedChain(null);
-        setDetectionToast('Could not get blockchain. Please select the blockchain for this token.');
-        setIsChainModalOpen(true);
-        return;
+    if (onSelectChain) {
+      try {
+        const detected = await detectTokenBlockchain(clean);
+        if (detected && !detected.isUnknown && detected.chainId && detected.chainId !== 'unknown') {
+          setDetectedChain(detected);
+          const selectorId = chainIdToSelectorId(detected.chainId) as ChainId;
+          if (String(selectorId) !== String(selectedChain)) {
+            // Silently switch chain without showing any message
+            onSelectChain(selectorId);
+          }
+        }
+      } catch (err) {
+        console.warn('Chain auto-detection skipped:', err);
       }
-
-      // A detected network may be outside TokenCare's static chain registry.
-      // Keep its exact identity instead of forcing it into Polygon/EVM.
-      setDetectedChain(detected);
-      const selectorId = chainIdToSelectorId(detected.chainId) as ChainId;
-      if (String(selectorId) !== String(selectedChain)) onSelectChain(selectorId);
-      setDetectionToast(
-        `${detected.name} detected${detected.supportedByTokenCare ? '' : ' (external network)'} via ${
-          detected.source === 'dexscreener' ? 'DEX Screener' : detected.source === 'geckoterminal' ? 'GeckoTerminal' : 'address format'
-        }.`
-      );
     }
 
-    // Always continue. Unknown/unsupported chain adapters must not block
-    // metadata discovery or saving the original asset identifier.
+    // Always continue to fetch token metadata directly without blocking
     onFetchToken(clean);
   };
 
   const triggerAutoPaste = async () => {
+    if (isLoading || isVerifying) return;
     await processClipboardAutoPaste(addressInput, lastProcessedRef.current, setAddressInput, (newAddr) => {
       lastProcessedRef.current = newAddr.toLowerCase();
       void prepareFetch(newAddr, false);
@@ -123,8 +121,6 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
 
   return (
     <div className="relative bg-[#0B0E17]/90 border border-zinc-800/90 rounded-lg p-2 shadow-md backdrop-blur-sm space-y-1.5">
-      {detectionToast && <div className="fixed left-1/2 -translate-x-1/2 top-5 z-[10001] max-w-[calc(100vw-32px)] bg-[#11151F] border border-amber-500/40 text-amber-200 rounded-xl px-4 py-2.5 shadow-2xl flex items-center gap-2 text-[11px] font-semibold animate-in fade-in slide-in-from-top-2"><X className="w-3.5 h-3.5 shrink-0" /><span>{detectionToast}</span></div>}
-
       <div className="flex items-center space-x-1.5 w-full">
         {onSelectChain && <button type="button" onClick={() => setIsChainModalOpen(true)} className="px-2 py-1 bg-[#06080F] hover:bg-zinc-900 border border-zinc-800 rounded-lg flex items-center space-x-1 shrink-0 h-9 transition-all cursor-pointer group" title={`Network: ${currentChainInfo.name}`}>
           <div className="w-5 h-5 rounded-full bg-zinc-900 border border-zinc-800 p-0.5 flex items-center justify-center shrink-0 overflow-hidden">

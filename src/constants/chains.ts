@@ -664,10 +664,19 @@ const NAME_ALIAS_MAP: Record<string, string> = {
  */
 export function registerDynamicChain(
   chainIdKey: string,
-  chainName?: string,
-  symbol?: string,
-  logoUrl?: string,
-  explorer?: string
+  chainNameOrConfig?: string | {
+    name?: string;
+    symbol?: string;
+    type?: string;
+    themeColor?: string;
+    dexScreenerChain?: string;
+    logoUrl?: string;
+    explorer?: string;
+    [key: string]: any;
+  },
+  symbolArg?: string,
+  logoUrlArg?: string,
+  explorerArg?: string
 ): ChainInfo {
   if (!chainIdKey) return getChainInfo("137");
 
@@ -677,6 +686,15 @@ export function registerDynamicChain(
   if (RAW_EVM_CHAINS[existingKey]) {
     return getChainInfo(existingKey);
   }
+
+  const isConfigObj = typeof chainNameOrConfig === 'object' && chainNameOrConfig !== null;
+  const config = isConfigObj ? chainNameOrConfig : {};
+  const chainName = isConfigObj ? config.name : (typeof chainNameOrConfig === 'string' ? chainNameOrConfig : undefined);
+  const symbol = isConfigObj ? config.symbol : symbolArg;
+  const explorer = isConfigObj ? config.explorer : explorerArg;
+  const themeColor = (isConfigObj && config.themeColor) ? config.themeColor : '#333333';
+  const chainType = (isConfigObj && config.type) ? config.type : 'evm';
+  const dexScreenerChain = (isConfigObj && config.dexScreenerChain) ? config.dexScreenerChain : cleanKey;
 
   let formattedName = chainName;
   if (!formattedName) {
@@ -699,10 +717,10 @@ export function registerDynamicChain(
     chainId: Number(cleanKey) || 9999,
     rpcUrl: `https://rpc.ankr.com/${cleanKey}`,
     coingeckoId: cleanKey,
-    themeColor: '#333333',
+    themeColor,
     type: 'evm',
     provider: 'infura',
-    dexScreenerChain: cleanKey,
+    dexScreenerChain,
     coingeckoPlatform: cleanKey,
     explorer: explorer || `https://etherscan.io`,
   };
