@@ -1,16 +1,18 @@
-/** Central Vercel Token Backend gateway. The app never calls the Cloudflare Worker directly. */
+/** Token data gateway. Reads go directly from the Cloudflare Worker. */
 
 import { getChainInfo } from '../constants/chains';
 import { resolveChainLogo } from './chainLogos';
-import { notifyBackendError, extractBackendErrorMessage } from './toastManager';
 
-export const VERCEL_TOKEN_GATEWAY_URL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_VERCEL_TOKEN_BACKEND_URL) || '';
-export const LOCAL_TOKEN_GATEWAY_URL = '/api/token';
+export const CLOUDFLARE_TOKEN_WORKER_URL =
+  'https://rough-meadow-6435.happyiyate.workers.dev/';
 
-export const VERCEL_SAVE_TOKEN_URL = VERCEL_TOKEN_GATEWAY_URL || LOCAL_TOKEN_GATEWAY_URL;
-export const LOCAL_PROXY_GATEWAY_URL = LOCAL_TOKEN_GATEWAY_URL;
-export const LOCAL_PROXY_SAVE_URL = '/api/save-token';
+// Kept as aliases so existing imports continue to compile while the app
+// transitions away from the old Vercel/local token gateway naming.
+export const VERCEL_TOKEN_GATEWAY_URL = CLOUDFLARE_TOKEN_WORKER_URL;
+export const VERCEL_SAVE_TOKEN_URL = CLOUDFLARE_TOKEN_WORKER_URL;
+export const LOCAL_TOKEN_GATEWAY_URL = CLOUDFLARE_TOKEN_WORKER_URL;
+export const LOCAL_PROXY_GATEWAY_URL = CLOUDFLARE_TOKEN_WORKER_URL;
+export const LOCAL_PROXY_SAVE_URL = CLOUDFLARE_TOKEN_WORKER_URL;
 
 export interface BackendTokenItem {
   blockchain: string;
@@ -55,113 +57,78 @@ export function formatTokenForBackend(token: any, fallbackChainId?: string | num
   return { blockchain, blockchainSymbol, chainId: numericChainId, contractAddress, tokenName, tokenSymbol, logoUrl };
 }
 
-async function postTokenApi(payload: any, timeoutMs = 8000): Promise<{ status: number; ok: boolean; json: any }> {
-  const tryPost = async (url: string) => {
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller?.signal,
-      });
-      const json = await res.json().catch(() => null);
-      return { status: res.status, ok: res.ok, json };
-    } catch {
-      return null;
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
-  };
-
-  const candidateEndpoints: string[] = [
-    LOCAL_TOKEN_GATEWAY_URL,
-    '/api/save-token',
-    '/api/token-backend-save',
-    '/backend',
-  ];
-
-  if (
-    VERCEL_TOKEN_GATEWAY_URL &&
-    !VERCEL_TOKEN_GATEWAY_URL.includes('happyiyate-hashs-projects.vercel.app')
-  ) {
-    candidateEndpoints.push(VERCEL_TOKEN_GATEWAY_URL);
-  }
-
-  let lastFailureResult: { status: number; ok: boolean; json: any } | null = null;
-
-  for (const endpoint of candidateEndpoints) {
-    const result = await tryPost(endpoint);
-    if (!result) continue;
-
-    // Successful response
-    if (result.ok && result.json && result.json.success !== false) {
-      return result;
-    }
-
-    // Business validation response (e.g. 400 Bad Request with rejected tokens)
-    if (result.status === 400 && result.json) {
-      return result;
-    }
-
-    lastFailureResult = result;
-  }
-
-  return (
-    lastFailureResult || {
+async function postCloudflare(payload: any, timeoutMs = 8000): Promise<{ status: number; ok: boolean; json: any }> {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const res = await fetch(CLOUDFLARE_TOKEN_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller?.signal,
+    });
+    const json = await res.json().catch(() => null);
+    return { status: res.status, ok: res.ok, json };
+  } catch {
+    return {
       status: 0,
       ok: false,
-      json: { success: false, error: 'OFFLINE_MODE', message: 'Token service offline or unreachable.' },
-    }
-  );
+      json: { success: false, error: 'OFFLINE_MODE', message: 'Cloudflare token service unreachable.' },
+    };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
-import {
-  getAllTokensLocal,
-  getTokensByUserLocal,
-  batchSaveTokensLocal,
-} from './localTokenStore';
-
 export async function fetchExploreTokensFromBackend(): Promise<any[]> {
-  try {
-    const list = getAllTokensLocal();
-    if (list && list.length > 0) return list;
-  } catch {}
-  return [];
+  const result = await postCloudflare({ action: 'getAllTokens' });
+  if (!result.ok) return [];
+  return Array.isArray(result.json?.tokens) ? result.json.tokens : [];
 }
 
 export async function fetchTokensByUserFromBackend(userId: string): Promise<any[]> {
-  if (!userId?.trim()) return [];
-  try {
-    const list = getTokensByUserLocal(userId.trim());
-    if (list && list.length > 0) return list;
-  } catch {}
-  return [];
+  const normalizedUserId = userId?.trim();
+  if (!normalizedUserId) return [];
+
+  const result = await postCloudflare({
+    action: 'getTokensByUser',
+    userId: normalizedUserId,
+  });
+  if (!result.ok) return [];
+  return Array.isArray(result.json?.tokens) ? result.json.tokens : [];
 }
 
 export async function saveTokensToBackend(userId: string, tokens: any[]): Promise<SaveTokenBackendResponse> {
   if (!tokens?.length) return { success: false, message: 'No tokens provided to save.' };
+
   const formattedTokens = tokens.map((t) => formatTokenForBackend(t));
-  
-  // Save directly on device in localTokenStore
-  const localRes = batchSaveTokensLocal(
+  const result = await postCloudflare({
+    action: 'batchSaveTokens',
     userId,
-    formattedTokens.map((t) => ({
+    tokens: formattedTokens.map((t) => ({
       name: t.tokenName,
       symbol: t.tokenSymbol,
       contractAddress: t.contractAddress,
       blockchain: t.blockchain,
       chainId: t.chainId,
       logoUrl: t.logoUrl,
-    }))
-  );
+    })),
+  });
+
+  if (!result.ok || result.json?.success === false) {
+    return {
+      success: false,
+      message: result.json?.message || 'Cloudflare token service failed.',
+      error: result.json?.error,
+      ...result.json,
+    };
+  }
 
   return {
     success: true,
-    message: localRes.message || 'Token saved directly on device.',
-    saved: localRes.saved,
-    rejected: localRes.rejected,
-    reward: { amount: 15, symbol: 'TC', credited: true },
+    message: result.json?.message || 'Tokens saved to Cloudflare.',
+    saved: result.json?.saved,
+    rejected: result.json?.rejected,
+    ...result.json,
   };
 }
