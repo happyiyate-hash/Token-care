@@ -4,13 +4,8 @@ import {
   isTonAddress,
   isXrplAddress,
   isPolkadotAddress,
-  registerDynamicChain,
 } from '../constants/chains';
-import {
-  storeDynamicChain,
-  fetchChainLogoInBackground,
-  getCachedChainLogo,
-} from './chainLogoService';
+import { getCachedChainLogo, fetchChainLogoInBackground } from './chainLogoService';
 
 export type ChainDetectionSource = 'address-format' | 'dexscreener' | 'geckoterminal' | 'manual' | 'unknown';
 
@@ -73,51 +68,20 @@ function normalizeProviderChain(value: unknown): string {
   return String(value ?? '').trim().toLowerCase().replace(/[\s_]+/g, '-');
 }
 
-function humanizeChainId(chainId: string): string {
-  return chainId.split('-').map(part => part ? part[0].toUpperCase() + part.slice(1) : part).join(' ');
+function unknownChain(): DetectedChain {
+  return {
+    blockchain: 'unknown', chainId: 'unknown', name: 'Unknown Blockchain', tokenStandard: 'Unknown',
+    source: 'unknown', confidence: 'low', supportedByTokenCare: false, isUnknown: true,
+  };
 }
 
-function dynamicChain(chainId: string, source: ChainDetectionSource, symbol?: string, logoUrl?: string): DetectedChain {
-  const isLikelyEvm = /^0x|^(ethereum|polygon|base|arbitrum|optimism|bsc|avalanche|fantom|celo|linea|scroll|zksync|mantle|blast|zora|sonic|monad|plasma)/i.test(chainId);
-  const name = humanizeChainId(chainId);
-  const sym = symbol || (chainId.length <= 6 ? chainId.toUpperCase() : 'TOKEN');
-  const cachedLogo = getCachedChainLogo(chainId) || logoUrl;
-
-  // Register in runtime chains list and localStorage dynamic chains
-  registerDynamicChain(chainId, {
-    name,
-    symbol: sym,
-    type: isLikelyEvm ? 'evm' : 'other',
-    themeColor: '#10B981',
-    dexScreenerChain: chainId,
-  });
-
-  storeDynamicChain({
-    id: chainId,
-    name,
-    symbol: sym,
-    tokenStandard: isLikelyEvm ? 'ERC-20 compatible' : 'Dynamic Token',
-    logoUrl: cachedLogo,
-    dexScreenerChain: chainId,
-    type: isLikelyEvm ? 'evm' : 'other',
-  });
-
-  // Background fetch logo if not already cached
-  if (!cachedLogo) {
-    void fetchChainLogoInBackground(chainId, name, sym);
-  }
-
-  return {
-    blockchain: chainId,
-    chainId,
-    name,
-    tokenStandard: isLikelyEvm ? 'ERC-20 compatible' : 'Dynamic Token',
-    source,
-    confidence: 'high',
-    supportedByTokenCare: true,
-    symbol: sym,
-    logoUrl: cachedLogo,
-  };
+function resolveKnownChain(chainId: string, source: ChainDetectionSource, symbolCandidate?: string, logoCandidate?: string): DetectedChain {
+  const normalized = normalizeProviderChain(chainId);
+  const known = STATIC_ALIASES[normalized];
+  if (!known) return { ...unknownChain(), source };
+  const cached = getCachedChainLogo(normalized) || known.logoUrl || logoCandidate;
+  if (!cached) void fetchChainLogoInBackground(normalized, known.name, known.symbol);
+  return { ...known, source, logoUrl: cached, supportedByTokenCare: true, symbol: symbolCandidate || known.symbol };
 }
 
 export function detectChainFromAddressFormat(address: string): DetectedChain | null {
@@ -131,54 +95,34 @@ export function detectChainFromAddressFormat(address: string): DetectedChain | n
   return null;
 }
 
-function resolveKnownChain(
-  chainId: string,
-  source: ChainDetectionSource,
-  symbolCandidate?: string,
-  logoCandidate?: string
-): DetectedChain {
-  const normalized = normalizeProviderChain(chainId);
-  const known = STATIC_ALIASES[normalized];
-  if (known) {
-    const cached = getCachedChainLogo(normalized) || known.logoUrl || logoCandidate;
-    if (!cached) {
-      void fetchChainLogoInBackground(normalized, known.name, known.symbol);
-    }
-    return { ...known, source, logoUrl: cached, supportedByTokenCare: true };
-  }
-  return dynamicChain(normalized, source, symbolCandidate, logoCandidate);
-}
-
 async function detectWithDexScreener(address: string): Promise<DetectedChain | null> {
   try {
-    const urls = [
-      `https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(address)}`,
-      `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(address)}`,
-    ];
-    for (const url of urls) {
-      const response = await fetch(url);
-      if (!response.ok) continue;
-      const data = await response.json();
-      const pairs = Array.isArray(data?.pairs) ? data.pairs : [];
-      const exact = pairs.filter((pair: any) =>
-        String(pair?.baseToken?.address || '').toLowerCase() === address.toLowerCase() ||
-        String(pair?.quoteToken?.address || '').toLowerCase() === address.toLowerCase()
-      );
-      const candidates = exact.length ? exact : pairs;
-      if (!candidates.length) continue;
-      const pair = [...candidates].sort((a, b) => Number(b?.liquidity?.usd || 0) - Number(a?.liquidity?.usd || 0))[0];
-      const chainId = String(pair?.chainId || '').trim();
-      const tokenSym = pair?.baseToken?.symbol;
-      const pairLogo = pair?.info?.imageUrl || pair?.baseToken?.imageUrl;
-      if (chainId) return resolveKnownChain(chainId, 'dexscreener', tokenSym, pairLogo);
-    }
+    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(address)}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const pairs = Array.isArray(data?.pairs) ? data.pairs : [];
+    const exact = pairs.filter((pair: any) =>
+      String(pair?.baseToken?.address || '').toLowerCase() === address.toLowerCase() ||
+      String(pair?.quoteToken?.address || '').toLowerCase() === address.toLowerCase()
+    );
+    if (!exact.length) return null;
+    const chains = exact
+      .map((pair: any) => ({ pair, chainId: String(pair?.chainId || '').trim() }))
+      .filter((x: any) => x.chainId);
+    if (!chains.length) return null;
+    const supported = chains
+      .map((x: any) => ({ ...x, resolved: resolveKnownChain(x.chainId, 'dexscreener', x.pair?.baseToken?.symbol, x.pair?.info?.imageUrl) }))
+      .filter((x: any) => !x.resolved.isUnknown);
+    if (!supported.length) return null;
+    const uniqueChainIds = [...new Set(supported.map((x: any) => x.resolved.chainId))];
+    if (uniqueChainIds.length > 1) return null;
+    const best = supported.sort((a: any, b: any) => Number(b.pair?.liquidity?.usd || 0) - Number(a.pair?.liquidity?.usd || 0))[0];
+    return best.resolved;
   } catch {
-    // Fall through to the independent discovery provider.
+    return null;
   }
-  return null;
 }
 
-/** Independent global discovery fallback. GeckoTerminal indexes 200+ networks. */
 async function detectWithGeckoTerminal(address: string): Promise<DetectedChain | null> {
   try {
     const response = await fetch(`https://api.geckoterminal.com/api/v2/search/pools?query=${encodeURIComponent(address)}`, {
@@ -187,69 +131,46 @@ async function detectWithGeckoTerminal(address: string): Promise<DetectedChain |
     if (!response.ok) return null;
     const data = await response.json();
     const rows = Array.isArray(data?.data) ? data.data : [];
-    const exact = rows.filter((row: any) => JSON.stringify(row).toLowerCase().includes(address.toLowerCase()));
-    const row = (exact.length ? exact : rows)[0];
-    const networkId = String(row?.relationships?.network?.data?.id || '').trim();
-    if (!networkId) return null;
-    return resolveKnownChain(networkId, 'geckoterminal');
+    const needle = address.toLowerCase();
+    const exact = rows.filter((row: any) => {
+      const attrs = row?.attributes || {};
+      const rel = row?.relationships || {};
+      const poolAddress = String(attrs?.address || '').toLowerCase();
+      const baseAddress = String(rel?.base_token?.data?.id || '').toLowerCase();
+      const quoteAddress = String(rel?.quote_token?.data?.id || '').toLowerCase();
+      return poolAddress === needle || baseAddress.endsWith(`_${needle}`) || quoteAddress.endsWith(`_${needle}`) || baseAddress === needle || quoteAddress === needle;
+    });
+    if (!exact.length) return null;
+    const networks = exact
+      .map((row: any) => String(row?.relationships?.network?.data?.id || '').trim())
+      .filter(Boolean)
+      .map((id: string) => resolveKnownChain(id, 'geckoterminal'))
+      .filter((chain: DetectedChain) => !chain.isUnknown);
+    const unique = [...new Map(networks.map((c) => [c.chainId, c])).values()];
+    return unique.length === 1 ? unique[0] : null;
   } catch {
     return null;
   }
 }
 
-/**
- * ONLY identifies the blockchain.
- * Returns DetectedChain if found. If completely unknown/unresolved, returns
- * an 'unknown' state object with isUnknown: true so the consumer UI can present
- * 'could not get blockchain' and prompt bottom-sheet chain selection.
- */
 export async function detectTokenBlockchain(address: string): Promise<DetectedChain> {
   const clean = address.trim();
-  if (!clean) {
-    return {
-      blockchain: 'unknown',
-      chainId: 'unknown',
-      name: 'Unknown Blockchain',
-      tokenStandard: 'Unknown',
-      source: 'unknown',
-      confidence: 'low',
-      supportedByTokenCare: false,
-      isUnknown: true,
-    };
-  }
-
+  if (!clean) return unknownChain();
   const byFormat = detectChainFromAddressFormat(clean);
   if (byFormat) return byFormat;
-
-  // EVM network cannot be inferred from 0x alone, so query external indexes.
   if (/^0x[a-fA-F0-9]{40}$/.test(clean)) {
     const dex = await detectWithDexScreener(clean);
     if (dex) return dex;
     const gecko = await detectWithGeckoTerminal(clean);
     if (gecko) return gecko;
+    return unknownChain();
   }
-
-  // Also allow GeckoTerminal to discover indexed non-EVM addresses.
   const gecko = await detectWithGeckoTerminal(clean);
-  if (gecko) return gecko;
-
-  // If no detector could resolve the blockchain, return structured unknown state
-  return {
-    blockchain: 'unknown',
-    chainId: 'unknown',
-    name: 'Unknown Blockchain',
-    tokenStandard: 'Unknown',
-    source: 'unknown',
-    confidence: 'low',
-    supportedByTokenCare: false,
-    isUnknown: true,
-  };
+  return gecko || unknownChain();
 }
 
 export function chainIdToSelectorId(chainId: string): string {
   const clean = String(chainId || '').toLowerCase().trim();
-  if (['solana-mainnet', 'mainnet-beta', 'mainnet_beta', 'spl', 'sol', 'metadata'].includes(clean)) {
-    return 'solana';
-  }
+  if (['solana-mainnet', 'mainnet-beta', 'mainnet_beta', 'spl', 'sol', 'metadata'].includes(clean)) return 'solana';
   return chainId;
 }
