@@ -17,15 +17,18 @@ interface DonationSettingsCardProps {
   stage?: number;
 }
 
-export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({ metadata, logoStatus = 'checking', onSaveToken, onCancel, isSaving, isVerifying = false }) => {
+export const DonationSettingsCard: React.FC<DonationSettingsCardProps> = ({ metadata, logoReport, onSaveToken, onCancel, isSaving, isVerifying = false }) => {
   const [acceptDonations, setAcceptDonations] = useState(true);
   const [featured, setFeatured] = useState(true);
   const [minDonation, setMinDonation] = useState(1);
   const [category, setCategory] = useState('Ecosystem');
   const [customDescription, setCustomDescription] = useState(`${metadata.name} (${metadata.symbol}) verified token contract for community donations.`);
 
-  // A token MUST have a successfully verified logo before it can be saved.
-  const hasVerifiedLogo = logoStatus === 'valid' && Boolean(metadata.logoUrl?.trim());
+  // The audit card is the source of truth for logo verification. The old gate
+  // only checked metadata.logoUrl + logoStatus, which could disagree with the
+  // successfully rendered/verified logo shown immediately above this card.
+  const verifiedLogoUrl = String(logoReport?.logoUrl || metadata.logoUrl || '').trim();
+  const hasVerifiedLogo = Boolean(logoReport?.isValid && logoReport.hasLogo && verifiedLogoUrl);
   const isSaveDisabled = isSaving || !metadata.name || metadata.name === 'Loading token...' || !hasVerifiedLogo;
 
   const handleSubmit = (e: React.FormEvent) => {
