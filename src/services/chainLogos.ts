@@ -249,6 +249,51 @@ export const NETWORK_MAP: Record<string, ChainNetworkInfo> = {
     color: '#61DFFF',
     type: 'EVM',
   },
+  robinhood: {
+    id: '53935',
+    name: 'Robinhood Chain',
+    shortName: 'ROBINHOOD',
+    symbol: 'ETH',
+    logoUrl: 'https://raw.githubusercontent.com/happyiyate-hash/Logo/main/robinhood.png',
+    color: '#00C805',
+    type: 'EVM',
+  },
+  '53935': {
+    id: '53935',
+    name: 'Robinhood Chain',
+    shortName: 'ROBINHOOD',
+    symbol: 'ETH',
+    logoUrl: 'https://raw.githubusercontent.com/happyiyate-hash/Logo/main/robinhood.png',
+    color: '#00C805',
+    type: 'EVM',
+  },
+  dogecoin: {
+    id: 'dogecoin',
+    name: 'Dogecoin',
+    shortName: 'DOGE',
+    symbol: 'DOGE',
+    logoUrl: 'https://raw.githubusercontent.com/happyiyate-hash/Logo/main/dogecoin.png',
+    color: '#C2A633',
+    type: 'DOGECOIN',
+  },
+  bob: {
+    id: '60808',
+    name: 'BOB',
+    shortName: 'BOB',
+    symbol: 'ETH',
+    logoUrl: 'https://raw.githubusercontent.com/happyiyate-hash/Logo/main/bob.png',
+    color: '#F7931A',
+    type: 'EVM',
+  },
+  '60808': {
+    id: '60808',
+    name: 'BOB',
+    shortName: 'BOB',
+    symbol: 'ETH',
+    logoUrl: 'https://raw.githubusercontent.com/happyiyate-hash/Logo/main/bob.png',
+    color: '#F7931A',
+    type: 'EVM',
+  },
 };
 
 /**
@@ -283,6 +328,9 @@ export function resolveChainLogo(network?: string, chainId?: string): ChainNetwo
   if (combo.includes('56') || combo.includes('bsc') || combo.includes('binance') || combo.includes('bnb')) return NETWORK_MAP.bsc;
   if (combo.includes('43114') || combo.includes('avax') || combo.includes('aval')) return NETWORK_MAP.avalanche;
   if (combo.includes('59144') || combo.includes('linea')) return NETWORK_MAP.linea;
+  if (combo.includes('53935') || combo.includes('robinhood')) return NETWORK_MAP.robinhood;
+  if (combo.includes('dogecoin') || combo.includes('doge')) return NETWORK_MAP.dogecoin;
+  if (combo.includes('60808') || combo.includes('bob')) return NETWORK_MAP.bob;
   if (combo.includes('sol')) return NETWORK_MAP.solana;
   if (combo.includes('ton')) return NETWORK_MAP.ton;
   if (combo.includes('xrp') || combo.includes('ripple')) return NETWORK_MAP.xrpl;
