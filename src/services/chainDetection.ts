@@ -125,8 +125,8 @@ export function detectChainFromAddressFormat(address: string): DetectedChain | n
   if (!value) return null;
   if (isPolkadotAddress(value)) return STATIC_ALIASES.polkadot;
   if (isTonAddress(value)) return STATIC_ALIASES.ton;
-  if (isXrplAddress(value)) return STATIC_ALIASES.xrpl;
   if (isTronAddress(value)) return STATIC_ALIASES.tron;
+  if (isXrplAddress(value)) return STATIC_ALIASES.xrpl;
   if (isSolanaAddress(value)) return STATIC_ALIASES.solana;
   return null;
 }
@@ -237,7 +237,7 @@ export async function detectTokenBlockchain(address: string): Promise<DetectedCh
   return {
     blockchain: 'unknown',
     chainId: 'unknown',
-    name: 'Could not get blockchain',
+    name: 'Unknown Blockchain',
     tokenStandard: 'Unknown',
     source: 'unknown',
     confidence: 'low',

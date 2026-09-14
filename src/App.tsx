@@ -15,6 +15,7 @@ import {
   Search,
   Zap,
   Bell,
+  X,
 } from 'lucide-react';
 
 import { ChainId, SubmittedToken, UserRewardWallet, LogoStatus } from './types';
@@ -32,6 +33,7 @@ import {
   getRewardWallet,
   recordTokenSubmissionReward,
   INITIAL_WALLET,
+  deduplicateTokens,
 } from './services/storage';
 
 import { ApiKeyConfig, getStoredApiKeys } from './services/apiKeys';
@@ -269,7 +271,7 @@ export default function App() {
     // 1. Check local cache first for instantaneous offline render
     const localTokens = getSubmittedTokens(userId);
     if (localTokens && localTokens.length > 0) {
-      setTokens(localTokens);
+      setTokens(deduplicateTokens(localTokens));
     }
 
     // 2. Fetch user tokens from Vercel backend using action: getTokensByUser
@@ -292,17 +294,19 @@ export default function App() {
         }).filter((t) => Boolean(t.address));
 
         if (formattedTokens.length > 0) {
-          setTokens(formattedTokens);
-          saveSubmittedTokens(formattedTokens, userId);
+          const deduped = deduplicateTokens(formattedTokens);
+          setTokens(deduped);
+          saveSubmittedTokens(deduped, userId);
         } else if (localTokens && localTokens.length > 0) {
-          setTokens(localTokens);
+          setTokens(deduplicateTokens(localTokens));
         }
       } else {
         // If empty from backend, fallback to Supabase or keep local
         const supabaseTokens = await fetchTokensFromSupabase(userId).catch(() => []);
         if (supabaseTokens && supabaseTokens.length > 0) {
-          setTokens(supabaseTokens);
-          saveSubmittedTokens(supabaseTokens, userId);
+          const deduped = deduplicateTokens(supabaseTokens);
+          setTokens(deduped);
+          saveSubmittedTokens(deduped, userId);
         } else if (!localTokens || localTokens.length === 0) {
           setTokens([]);
         }
@@ -311,9 +315,9 @@ export default function App() {
       console.warn('[UserTokens] Vercel Backend getTokensByUser note, using local cache:', e);
       const supabaseTokens = await fetchTokensFromSupabase(userId).catch(() => []);
       if (supabaseTokens && supabaseTokens.length > 0) {
-        setTokens(supabaseTokens);
+        setTokens(deduplicateTokens(supabaseTokens));
       } else if (localTokens && localTokens.length > 0) {
-        setTokens(localTokens);
+        setTokens(deduplicateTokens(localTokens));
       }
     }
 
@@ -436,8 +440,9 @@ export default function App() {
           .filter((t) => Boolean(t.address));
 
         if (finalTokens.length > 0) {
-          setTokens(finalTokens);
-          saveSubmittedTokens(finalTokens, userId);
+          const deduped = deduplicateTokens(finalTokens);
+          setTokens(deduped);
+          saveSubmittedTokens(deduped, userId);
         }
       }
 
@@ -837,7 +842,10 @@ export default function App() {
   // Auto-detect network deployment when user pastes/types contract address in real time
   useEffect(() => {
     const cleanAddr = addressInput.trim();
-    if (!cleanAddr) return;
+    if (!cleanAddr) {
+      setAutoSwitchNotice(null);
+      return;
+    }
 
     const timer = setTimeout(async () => {
       try {
@@ -858,6 +866,15 @@ export default function App() {
 
     return () => clearTimeout(timer);
   }, [addressInput, selectedChain]);
+
+  // Auto-dismiss the network switch notice after 3.5 seconds
+  useEffect(() => {
+    if (!autoSwitchNotice) return;
+    const timer = setTimeout(() => {
+      setAutoSwitchNotice(null);
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [autoSwitchNotice]);
 
   // Handle Token Fetching with Network-Aware Discovery & Full Security Audit Pipeline
   const handleFetchToken = async (targetAddress?: string) => {
@@ -1254,10 +1271,10 @@ export default function App() {
         }
 
         // Update local tokens list
-        const updatedTokens = [
+        const updatedTokens = deduplicateTokens([
           fetchedToken,
           ...tokens.filter((t) => t.id !== fetchedToken.id && t.address.toLowerCase() !== fetchedToken.address.toLowerCase()),
-        ];
+        ]);
         setTokens(updatedTokens);
         saveSubmittedTokens(updatedTokens, currentUser?.id);
 
@@ -1731,9 +1748,19 @@ export default function App() {
 
               {/* Auto Network Switch Toast */}
               {autoSwitchNotice && (
-                <div className="bg-blue-500/15 border border-blue-500/40 rounded-xl p-2.5 text-blue-300 text-xs font-semibold flex items-center space-x-2 animate-in fade-in">
-                  <Zap className="w-4 h-4 text-blue-400 shrink-0 fill-blue-400/20" />
-                  <span>{autoSwitchNotice}</span>
+                <div className="bg-blue-500/15 border border-blue-500/40 rounded-xl p-2.5 text-blue-300 text-xs font-semibold flex items-center justify-between space-x-2 animate-in fade-in">
+                  <div className="flex items-center space-x-2">
+                    <Zap className="w-4 h-4 text-blue-400 shrink-0 fill-blue-400/20" />
+                    <span>{autoSwitchNotice}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAutoSwitchNotice(null)}
+                    className="p-0.5 text-blue-400 hover:text-white transition-colors cursor-pointer"
+                    title="Dismiss"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               )}
 

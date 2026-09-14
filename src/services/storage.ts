@@ -36,13 +36,45 @@ export function safeSetItem(key: string, value: string): boolean {
   }
 }
 
+export function deduplicateTokens(tokensList: SubmittedToken[]): SubmittedToken[] {
+  if (!Array.isArray(tokensList)) return [];
+  const seenKeys = new Set<string>();
+  const seenIds = new Set<string>();
+  const result: SubmittedToken[] = [];
+
+  for (let i = 0; i < tokensList.length; i++) {
+    const t = tokensList[i];
+    if (!t) continue;
+    const chain = String(t.chainId || '').trim().toLowerCase();
+    const addr = String(t.address || t.metadata?.address || '').trim().toLowerCase();
+    const symbol = String(t.metadata?.symbol || '').trim().toUpperCase();
+    const dedupeKey = addr ? `${chain}:${addr}` : `${chain}:${symbol}:${t.id || i}`;
+
+    if (seenKeys.has(dedupeKey)) continue;
+    seenKeys.add(dedupeKey);
+
+    let safeId = t.id || (addr ? `${chain}-${addr}` : `tok-${chain}-${symbol}-${i}`);
+    if (seenIds.has(safeId)) {
+      safeId = `${safeId}-${i}`;
+    }
+    seenIds.add(safeId);
+
+    result.push({
+      ...t,
+      id: safeId,
+    });
+  }
+
+  return result;
+}
+
 export function getSubmittedTokens(userId?: string): SubmittedToken[] {
   if (!userId) return [];
   try {
     const data = localStorage.getItem(`tokencare_user_tokens_${userId}`);
     if (!data) return [];
     const parsed = JSON.parse(data);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? deduplicateTokens(parsed) : [];
   } catch { return []; }
 }
 
@@ -50,12 +82,13 @@ export function getSubmittedTokens(userId?: string): SubmittedToken[] {
 export function saveSubmittedTokens(tokens: SubmittedToken[], userId?: string): void {
   if (!userId) return;
   try {
+    const deduped = deduplicateTokens(tokens || []);
     const key = `tokencare_user_tokens_${userId}`;
-    safeSetItem(key, JSON.stringify((tokens || []).slice(0, 80).map(sanitizeTokenForStorage)));
+    safeSetItem(key, JSON.stringify(deduped.slice(0, 80).map(sanitizeTokenForStorage)));
 
-    if (tokens?.length) {
+    if (deduped?.length) {
       import('./userTokenCacheWorker').then(({ saveUserTokensToWorker }) => {
-        const workerItems = tokens.map((t) => {
+        const workerItems = deduped.map((t) => {
           const metadata = t.metadata || ({} as any);
           const blockchainName = String(metadata.blockchainName || metadata.blockchain_name || metadata.chainName || '').trim();
           const blockchainSymbol = String(metadata.chainSymbol || '').trim();

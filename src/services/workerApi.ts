@@ -28,18 +28,26 @@ export async function executeWorkerGenericAction(payload: Record<string, any>): 
     }
   };
 
-  try {
-    const localResult = await tryPost(LOCAL_TOKEN_GATEWAY_URL);
-    if (localResult && (localResult.success || localResult.tokens || localResult.token || localResult.found)) {
-      return localResult;
-    }
-  } catch {}
+  const endpoints = [
+    LOCAL_TOKEN_GATEWAY_URL,
+    '/api/token',
+    '/api/get-token-by-address',
+  ];
 
-  try {
-    return await tryPost(VERCEL_TOKEN_GATEWAY_URL);
-  } catch (error: any) {
-    return { success: false, error: error?.message || 'Token backend service unavailable' };
+  if (VERCEL_TOKEN_GATEWAY_URL && !VERCEL_TOKEN_GATEWAY_URL.includes('happyiyate-hashs-projects.vercel.app')) {
+    endpoints.push(VERCEL_TOKEN_GATEWAY_URL);
   }
+
+  for (const url of endpoints) {
+    try {
+      const res = await tryPost(url);
+      if (res && (res.success || res.tokens || res.token || res.found)) {
+        return res;
+      }
+    } catch {}
+  }
+
+  return { success: false, error: 'Token backend service unavailable' };
 }
 
 export interface WorkerTokenPayload {

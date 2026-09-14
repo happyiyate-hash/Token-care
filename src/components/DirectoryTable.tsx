@@ -150,7 +150,7 @@ export const DirectoryTable: React.FC<DirectoryTableProps> = ({
                 </td>
               </tr>
             ) : (
-              sorted.map((t) => {
+              sorted.map((t, idx) => {
                 const chainInfo = SUPPORTED_CHAINS[t.chainId] || getChainInfo(t.chainId);
                 const chainDisplayName =
                   t.metadata?.blockchainName ||
@@ -164,7 +164,7 @@ export const DirectoryTable: React.FC<DirectoryTableProps> = ({
 
                 return (
                   <tr
-                    key={t.id}
+                    key={`${t.chainId || ''}:${t.address || t.id || 'tok'}:${idx}`}
                     onClick={() => onSelectToken(t)}
                     className="hover:bg-zinc-800/60 transition-colors cursor-pointer group"
                   >

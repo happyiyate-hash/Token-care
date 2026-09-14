@@ -664,19 +664,10 @@ const NAME_ALIAS_MAP: Record<string, string> = {
  */
 export function registerDynamicChain(
   chainIdKey: string,
-  chainNameOrConfig?: string | {
-    name?: string;
-    symbol?: string;
-    type?: string;
-    themeColor?: string;
-    dexScreenerChain?: string;
-    logoUrl?: string;
-    explorer?: string;
-    [key: string]: any;
-  },
-  symbolArg?: string,
-  logoUrlArg?: string,
-  explorerArg?: string
+  chainNameOrMeta?: string | { name?: string; symbol?: string; logoUrl?: string; explorer?: string; [key: string]: any },
+  symbol?: string,
+  logoUrl?: string,
+  explorer?: string
 ): ChainInfo {
   if (!chainIdKey) return getChainInfo("137");
 
@@ -687,16 +678,8 @@ export function registerDynamicChain(
     return getChainInfo(existingKey);
   }
 
-  const isConfigObj = typeof chainNameOrConfig === 'object' && chainNameOrConfig !== null;
-  const config = isConfigObj ? chainNameOrConfig : {};
-  const chainName = isConfigObj ? config.name : (typeof chainNameOrConfig === 'string' ? chainNameOrConfig : undefined);
-  const symbol = isConfigObj ? config.symbol : symbolArg;
-  const explorer = isConfigObj ? config.explorer : explorerArg;
-  const themeColor = (isConfigObj && config.themeColor) ? config.themeColor : '#333333';
-  const chainType = (isConfigObj && config.type) ? config.type : 'evm';
-  const dexScreenerChain = (isConfigObj && config.dexScreenerChain) ? config.dexScreenerChain : cleanKey;
-
-  let formattedName = chainName;
+  const metaObj = typeof chainNameOrMeta === 'object' && chainNameOrMeta !== null ? chainNameOrMeta : null;
+  let formattedName = metaObj ? metaObj.name : chainNameOrMeta as string | undefined;
   if (!formattedName) {
     if (cleanKey === 'bsc' || cleanKey === '56') formattedName = 'Binance Smart Chain';
     else if (cleanKey === 'fantom' || cleanKey === '250') formattedName = 'Fantom Opera';
@@ -709,7 +692,7 @@ export function registerDynamicChain(
     else formattedName = cleanKey.charAt(0).toUpperCase() + cleanKey.slice(1);
   }
 
-  const formattedSymbol = symbol || (cleanKey.includes('bsc') || cleanKey === '56' ? 'BNB' : cleanKey.toUpperCase().slice(0, 4));
+  const formattedSymbol = (metaObj?.symbol as string) || symbol || (cleanKey.includes('bsc') || cleanKey === '56' ? 'BNB' : cleanKey.toUpperCase().slice(0, 4));
 
   RAW_EVM_CHAINS[cleanKey] = {
     name: formattedName,
@@ -717,10 +700,10 @@ export function registerDynamicChain(
     chainId: Number(cleanKey) || 9999,
     rpcUrl: `https://rpc.ankr.com/${cleanKey}`,
     coingeckoId: cleanKey,
-    themeColor,
+    themeColor: '#333333',
     type: 'evm',
     provider: 'infura',
-    dexScreenerChain,
+    dexScreenerChain: cleanKey,
     coingeckoPlatform: cleanKey,
     explorer: explorer || `https://etherscan.io`,
   };
@@ -913,7 +896,13 @@ export function validateXrplAssetIdentifier(address: string): { isValid: boolean
 export function isSolanaAddress(address: string): boolean {
   if (!address) return false;
   const clean = address.trim();
-  return !clean.startsWith('0x') && !clean.startsWith('r') && !clean.startsWith('T') && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(clean);
+  if (clean.startsWith('0x')) return false;
+  // TRON addresses are base58, start with T, and are exactly 34 chars
+  if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(clean)) return false;
+  // XRPL account addresses start with r and are 25-35 chars
+  if (/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(clean)) return false;
+  // Solana addresses are 32 to 44 Base58 characters
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(clean);
 }
 
 /**

@@ -115,7 +115,7 @@ async function startServer() {
   app.use('/backend', tokenBackendRouter);
 
   // Direct endpoints for /api/save-token and /api/upload-token
-  app.post('/api/save-token', async (req, res) => {
+  app.post(['/api/save-token', '/api/token/save-token'], async (req, res) => {
     try {
       const payload = { action: 'saveToken', ...(req.body || {}) };
       const response = await handleTokenRequest(payload);
@@ -219,7 +219,6 @@ async function startServer() {
   app.post('/api/upload-token', handleTokenUpload);
   app.post('/api/tokens/upload', handleTokenUpload);
   app.get('/api/upload-token', handleTokenUpload);
-  app.post('/api/save-token', handleTokenUpload);
   app.get('/api/save-token', (req, res) => {
     return res.status(200).json({ success: true, service: 'TokenCare token-save backend', status: 'ok' });
   });

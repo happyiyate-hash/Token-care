@@ -635,10 +635,10 @@ export const DesktopWithdrawalView: React.FC<DesktopWithdrawalViewProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/60 font-mono">
-                    {filteredHistory.map((item) => {
+                    {filteredHistory.map((item, idx) => {
                       const amountUsd = item.amount * REWARD_RATE_USD;
                       return (
-                        <tr key={item.id} className="hover:bg-zinc-900/50 transition-colors">
+                        <tr key={`${item.id || 'wh'}-${idx}`} className="hover:bg-zinc-900/50 transition-colors">
                           <td className="px-4 py-3 text-zinc-300 font-sans text-xs">
                             {new Date(item.created_at).toLocaleDateString()}
                           </td>

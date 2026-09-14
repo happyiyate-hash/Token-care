@@ -91,7 +91,6 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
   const [savedTokensCount, setSavedTokensCount] = useState<number>(() => getLocalSavedTokens(userId).length);
   const [saveStatusMessage, setSaveStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [detectedChain, setDetectedChain] = useState<DetectedChain | null>(null);
-  const [detectionNotice, setDetectionNotice] = useState<string | null>(null);
   const [, setLogoTick] = useState(0);
 
   useEffect(() => {
@@ -178,21 +177,21 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
     const raw = (addrToProcess || addressInput).trim();
     if (!raw) return;
 
-    // Detect blockchain
-    const detected = await detectTokenBlockchain(raw);
-    if (!detected || detected.isUnknown || detected.chainId === 'unknown') {
-      setDetectedChain(null);
-      setDetectionNotice('Could not get blockchain. Please select the blockchain for this token.');
-      setIsChainModalOpen(true);
-      return;
+    try {
+      // Proactively detect blockchain if possible
+      const detected = await detectTokenBlockchain(raw);
+      if (detected && !detected.isUnknown && detected.chainId !== 'unknown') {
+        setDetectedChain(detected);
+        const selectorId = chainIdToSelectorId(detected.chainId) as ChainId;
+        if (String(selectorId) !== String(selectedChain)) {
+          setSelectedChain(selectorId);
+        }
+      }
+    } catch {
+      // Continue to onFetchToken
     }
 
-    setDetectedChain(detected);
-    const selectorId = chainIdToSelectorId(detected.chainId) as ChainId;
-    if (String(selectorId) !== String(selectedChain)) {
-      setSelectedChain(selectorId);
-    }
-    setDetectionNotice(`${detected.name} detected via ${detected.source === 'dexscreener' ? 'DEX Screener' : detected.source === 'geckoterminal' ? 'GeckoTerminal' : 'address format'}.`);
+    // Always fetch the token directly without throwing false error messages
     onFetchToken(raw);
   };
 
@@ -380,26 +379,11 @@ export const MobileDonateView: React.FC<MobileDonateViewProps> = ({
 
         {/* Auto Switch Network Notice */}
         {autoSwitchNotice && (
-          <div className="bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 rounded-xl px-3 py-2 text-xs flex items-center gap-2 shadow-sm animate-in fade-in">
-            <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="font-semibold text-[11px] leading-tight">{autoSwitchNotice}</span>
-          </div>
-        )}
-
-        {/* Chain Detection Notice / Alert */}
-        {detectionNotice && (
           <div className="bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 rounded-xl px-3 py-2 text-xs flex items-center justify-between gap-2 shadow-sm animate-in fade-in">
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span className="font-semibold text-[11px] leading-tight">{detectionNotice}</span>
+              <span className="font-semibold text-[11px] leading-tight">{autoSwitchNotice}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => setDetectionNotice(null)}
-              className="p-0.5 text-zinc-400 hover:text-white"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
           </div>
         )}
 

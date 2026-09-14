@@ -33,51 +33,39 @@ export const ContractAddressSection: React.FC<ContractAddressSectionProps> = ({
 
   useEffect(() => setImgError(false), [selectedChain]);
 
-  // Keep lastProcessedRef synchronized with addressInput
-  useEffect(() => {
-    if (addressInput && addressInput.trim()) {
-      const valid = extractContractAddress(addressInput.trim());
-      if (valid) {
-        lastProcessedRef.current = valid.toLowerCase();
-      }
-    }
-  }, [addressInput]);
-
   const currentChainInfo = detectedChain && String(detectedChain.chainId) === String(selectedChain)
     ? { name: detectedChain.name }
     : getChainInfo(selectedChain);
   const normalizedKey = normalizeChainKey(selectedChain);
   const currentRawDef = RAW_EVM_CHAINS[normalizedKey];
   const currentLogoUrl = detectedChain && String(detectedChain.chainId) === String(selectedChain)
-    ? getChainLogoUrl(String(detectedChain.chainId || detectedChain.blockchain || selectedChain))
+    ? getChainLogoUrl({ id: detectedChain.chainId, name: detectedChain.name, dexScreenerChain: detectedChain.blockchain })
     : getChainLogoUrl(selectedChain);
 
   const prepareFetch = async (addr: string, forceDetection = false) => {
     const clean = addr.trim();
     if (!clean || clean.length < 1) return;
 
-    if (onSelectChain) {
+    if (onSelectChain && (forceDetection || String(selectedChain) === '137')) {
       try {
         const detected = await detectTokenBlockchain(clean);
-        if (detected && !detected.isUnknown && detected.chainId && detected.chainId !== 'unknown') {
+        if (detected && !detected.isUnknown && detected.chainId !== 'unknown') {
           setDetectedChain(detected);
           const selectorId = chainIdToSelectorId(detected.chainId) as ChainId;
           if (String(selectorId) !== String(selectedChain)) {
-            // Silently switch chain without showing any message
             onSelectChain(selectorId);
           }
         }
-      } catch (err) {
-        console.warn('Chain auto-detection skipped:', err);
+      } catch {
+        // Continue to onFetchToken
       }
     }
 
-    // Always continue to fetch token metadata directly without blocking
+    // Always continue to fetch the token directly
     onFetchToken(clean);
   };
 
   const triggerAutoPaste = async () => {
-    if (isLoading || isVerifying) return;
     await processClipboardAutoPaste(addressInput, lastProcessedRef.current, setAddressInput, (newAddr) => {
       lastProcessedRef.current = newAddr.toLowerCase();
       void prepareFetch(newAddr, false);

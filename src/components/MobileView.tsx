@@ -442,9 +442,9 @@ export const MobileView: React.FC<MobileViewProps> = ({
                     {t('overview.noTokensSaved', 'No tokens saved yet. Submit a token address to verify.')}
                   </div>
                 ) : (
-                  tokens.slice(0, 4).map((token) => (
+                  tokens.slice(0, 4).map((token, idx) => (
                     <div
-                      key={token.id || token.address}
+                      key={`${token.chainId || ''}:${token.id || token.address || 'tok'}:${idx}`}
                       onClick={() => handleTabChange('tokens')}
                       className="flex items-center justify-between p-2 rounded-lg bg-[#06080E] border border-zinc-800/60 hover:border-emerald-500/30 transition-all cursor-pointer"
                     >

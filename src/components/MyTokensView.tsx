@@ -179,46 +179,65 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
 
   // Map real user tokens from database reading total_supply column properly
   const mappedRealTokens = useMemo(() => {
-    return tokens.map((t) => {
-      const rawSupply =
-        t.metadata?.totalSupply ||
-        (t.metadata as any)?.total_supply ||
-        (t as any)?.total_supply ||
-        (t.marketData as any)?.totalSupplyCG ||
-        (t.metadata as any)?.supply ||
-        '1000000000';
+    const seen = new Set<string>();
+    const seenIds = new Set<string>();
 
-      const supplyNum = parseCleanNumber(rawSupply);
-      const price = t.marketData?.priceUsd || 0;
-      const marketCap = t.marketData?.marketCapUsd || (supplyNum > 0 && price > 0 ? supplyNum * price : 0);
-      const usdValNumber = marketCap > 0 ? marketCap : (price > 0 ? price : 1250);
+    return tokens
+      .filter((t) => {
+        if (!t) return false;
+        const chain = String(t.chainId || '').trim().toLowerCase();
+        const addr = String(t.address || t.metadata?.address || t.id || '').trim().toLowerCase();
+        const composite = `${chain}:${addr}`;
+        if (seen.has(composite)) return false;
+        seen.add(composite);
+        return true;
+      })
+      .map((t, idx) => {
+        const rawSupply =
+          t.metadata?.totalSupply ||
+          (t.metadata as any)?.total_supply ||
+          (t as any)?.total_supply ||
+          (t.marketData as any)?.totalSupplyCG ||
+          (t.metadata as any)?.supply ||
+          '1000000000';
 
-      const chainName =
-        t.metadata.blockchainName ||
-        (t.metadata as any)?.blockchain_name ||
-        (t.metadata as any)?.blockchain ||
-        t.metadata.chainName ||
-        t.metadata.network ||
-        getChainInfo(t.metadata.chainId || t.chainId).name ||
-        t.chainId ||
-        'polygon';
+        const supplyNum = parseCleanNumber(rawSupply);
+        const price = t.marketData?.priceUsd || 0;
+        const marketCap = t.marketData?.marketCapUsd || (supplyNum > 0 && price > 0 ? supplyNum * price : 0);
+        const usdValNumber = marketCap > 0 ? marketCap : (price > 0 ? price : 1250);
 
-      return {
-        id: t.id || t.address,
-        name: t.metadata.name,
-        symbol: t.metadata.symbol,
-        chain: chainName,
-        chainId: t.metadata.chainId || t.chainId || '137',
-        logoUrl: t.metadata.logoUrl,
-        amountFormatted: formatTokenSupply(rawSupply, t.metadata.symbol),
-        usdValueFormatted: calculateTokenUsdValue(rawSupply, price, marketCap),
-        usdValNumber,
-        priceUsd: price || 1.25,
-        change24h: t.marketData?.change24h || 2.5,
-        verified: t.verified !== false,
-        rawToken: t,
-      };
-    });
+        const chainName =
+          t.metadata.blockchainName ||
+          (t.metadata as any)?.blockchain_name ||
+          (t.metadata as any)?.blockchain ||
+          t.metadata.chainName ||
+          t.metadata.network ||
+          getChainInfo(t.metadata.chainId || t.chainId).name ||
+          t.chainId ||
+          'polygon';
+
+        let safeId = t.id || t.address || `tok-${t.chainId}-${idx}`;
+        if (seenIds.has(safeId)) {
+          safeId = `${safeId}-${idx}`;
+        }
+        seenIds.add(safeId);
+
+        return {
+          id: safeId,
+          name: t.metadata.name,
+          symbol: t.metadata.symbol,
+          chain: chainName,
+          chainId: t.metadata.chainId || t.chainId || '137',
+          logoUrl: t.metadata.logoUrl,
+          amountFormatted: formatTokenSupply(rawSupply, t.metadata.symbol),
+          usdValueFormatted: calculateTokenUsdValue(rawSupply, price, marketCap),
+          usdValNumber,
+          priceUsd: price || 1.25,
+          change24h: t.marketData?.change24h || 2.5,
+          verified: t.verified !== false,
+          rawToken: t,
+        };
+      });
   }, [tokens]);
 
   const displayList = mappedRealTokens.length > 0 ? mappedRealTokens : DEFAULT_SAMPLE_TOKENS;
@@ -420,13 +439,13 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
         ) : (
           /* Responsive Layout: Sleek Rows on mobile, 2-to-3 columns on tablet/desktop */
           <div className="divide-y divide-zinc-800/40 md:divide-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3">
-            {filteredTokens.map((item) => {
+            {filteredTokens.map((item, idx) => {
               const chainInfo = resolveChainLogo(item.chain, item.chainId);
               const isPositive = (item.change24h || 0) >= 0;
 
               return (
                 <div
-                  key={item.id}
+                  key={`${item.chainId || ''}:${item.id || item.symbol || 'tok'}:${idx}`}
                   onClick={() => handleOpenDetail(item)}
                   className="py-2.5 px-2 md:p-3 hover:bg-white/[0.03] active:bg-white/[0.06] md:bg-[#0B0E17]/90 md:hover:bg-[#111422] md:border md:border-zinc-800/80 md:hover:border-emerald-500/40 md:rounded-2xl transition-all cursor-pointer group flex items-center justify-between gap-2.5 rounded-lg"
                 >

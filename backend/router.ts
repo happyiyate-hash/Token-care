@@ -16,7 +16,7 @@ tokenBackendRouter.get(['/', '/health'], async (_req: Request, res: Response) =>
 });
 
 // POST /api/token or POST /api/token/ -> Main Token Action Gateway
-tokenBackendRouter.post(['/', '/token'], async (req: Request, res: Response) => {
+tokenBackendRouter.post(['', '/', '/token'], async (req: Request, res: Response) => {
   try {
     const body = req.body || {};
     const action = String(body.action || body.key || '').trim();

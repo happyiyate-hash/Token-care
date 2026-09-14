@@ -5,12 +5,12 @@ import { resolveChainLogo } from './chainLogos';
 import { notifyBackendError, extractBackendErrorMessage } from './toastManager';
 
 export const VERCEL_TOKEN_GATEWAY_URL =
-  'https://token-save-backend-p74bbibkg-happyiyate-hashs-projects.vercel.app/api/token';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_VERCEL_TOKEN_BACKEND_URL) || '';
 export const LOCAL_TOKEN_GATEWAY_URL = '/api/token';
 
-export const VERCEL_SAVE_TOKEN_URL = VERCEL_TOKEN_GATEWAY_URL;
+export const VERCEL_SAVE_TOKEN_URL = VERCEL_TOKEN_GATEWAY_URL || LOCAL_TOKEN_GATEWAY_URL;
 export const LOCAL_PROXY_GATEWAY_URL = LOCAL_TOKEN_GATEWAY_URL;
-export const LOCAL_PROXY_SAVE_URL = LOCAL_TOKEN_GATEWAY_URL;
+export const LOCAL_PROXY_SAVE_URL = '/api/save-token';
 
 export interface BackendTokenItem {
   blockchain: string;
@@ -33,6 +33,7 @@ export interface SaveTokenBackendResponse {
   rejected?: any[];
   reward?: { amount: number; symbol: string; credited?: boolean; [key: string]: unknown };
   notification?: any;
+  offlineSaved?: boolean;
   [key: string]: unknown;
 }
 
@@ -54,7 +55,7 @@ export function formatTokenForBackend(token: any, fallbackChainId?: string | num
   return { blockchain, blockchainSymbol, chainId: numericChainId, contractAddress, tokenName, tokenSymbol, logoUrl };
 }
 
-async function postTokenApi(payload: any, timeoutMs = 12000): Promise<{ status: number; ok: boolean; json: any }> {
+async function postTokenApi(payload: any, timeoutMs = 8000): Promise<{ status: number; ok: boolean; json: any }> {
   const tryPost = async (url: string) => {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
@@ -67,33 +68,62 @@ async function postTokenApi(payload: any, timeoutMs = 12000): Promise<{ status: 
       });
       const json = await res.json().catch(() => null);
       return { status: res.status, ok: res.ok, json };
+    } catch {
+      return null;
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
   };
 
-  // Try local backend handler first
-  try {
-    const localResult = await tryPost(LOCAL_TOKEN_GATEWAY_URL);
-    if (localResult.ok && localResult.json && localResult.json.success !== false) {
-      return localResult;
-    }
-    if (localResult.status !== 404 && localResult.status !== 502) {
-      return localResult;
-    }
-  } catch (err) {
-    console.debug('[TokenBackend] Local endpoint note:', err);
+  const candidateEndpoints: string[] = [
+    LOCAL_TOKEN_GATEWAY_URL,
+    '/api/save-token',
+    '/api/token-backend-save',
+    '/backend',
+  ];
+
+  if (
+    VERCEL_TOKEN_GATEWAY_URL &&
+    !VERCEL_TOKEN_GATEWAY_URL.includes('happyiyate-hashs-projects.vercel.app')
+  ) {
+    candidateEndpoints.push(VERCEL_TOKEN_GATEWAY_URL);
   }
 
-  // Fallback to direct Vercel Gateway URL
-  return tryPost(VERCEL_TOKEN_GATEWAY_URL);
+  let lastFailureResult: { status: number; ok: boolean; json: any } | null = null;
+
+  for (const endpoint of candidateEndpoints) {
+    const result = await tryPost(endpoint);
+    if (!result) continue;
+
+    // Successful response
+    if (result.ok && result.json && result.json.success !== false) {
+      return result;
+    }
+
+    // Business validation response (e.g. 400 Bad Request with rejected tokens)
+    if (result.status === 400 && result.json) {
+      return result;
+    }
+
+    lastFailureResult = result;
+  }
+
+  return (
+    lastFailureResult || {
+      status: 0,
+      ok: false,
+      json: { success: false, error: 'OFFLINE_MODE', message: 'Token service offline or unreachable.' },
+    }
+  );
 }
 
 export async function fetchExploreTokensFromBackend(): Promise<any[]> {
   const { status, ok, json } = await postTokenApi({ action: 'getAllTokens' });
   if (!ok || json?.success === false) {
-    notifyBackendError(status, json, 'Explore: getAllTokens');
-    throw Object.assign(new Error(extractBackendErrorMessage(status, json)), { status, backendResponse: json });
+    if (status !== 0) {
+      notifyBackendError(status, json, 'Explore: getAllTokens');
+    }
+    return [];
   }
   const rawList = json?.tokens || json?.data || json?.result || (Array.isArray(json) ? json : []);
   return Array.isArray(rawList) ? rawList : [];
@@ -103,8 +133,10 @@ export async function fetchTokensByUserFromBackend(userId: string): Promise<any[
   if (!userId?.trim()) return [];
   const { status, ok, json } = await postTokenApi({ action: 'getTokensByUser', userId: userId.trim() });
   if (!ok || json?.success === false) {
-    notifyBackendError(status, json, 'Tokens: getTokensByUser');
-    throw Object.assign(new Error(extractBackendErrorMessage(status, json)), { status, backendResponse: json });
+    if (status !== 0) {
+      notifyBackendError(status, json, 'Tokens: getTokensByUser');
+    }
+    return [];
   }
   const rawList = json?.tokens || json?.data || json?.result || (Array.isArray(json) ? json : []);
   return Array.isArray(rawList) ? rawList : [];
@@ -116,8 +148,19 @@ export async function saveTokensToBackend(userId: string, tokens: any[]): Promis
   const payload: BackendSavePayload = { userId: (userId || '').trim(), tokens: formattedTokens };
   if (!payload.userId) return { success: false, error: 'User ID is required.', message: 'User ID is required.' };
   try {
-    const { status, ok, json } = await postTokenApi({ action: 'saveToken', ...payload }, 15000);
+    const { status, ok, json } = await postTokenApi({ action: 'saveToken', ...payload }, 10000);
     if (!ok || json?.success === false) {
+      // If network unreachable / offline, fallback cleanly to local storage without throwing error toast
+      if (status === 0) {
+        return {
+          success: true,
+          partial: true,
+          offlineSaved: true,
+          message: 'Token registered to your local directory (offline mode).',
+          saved: formattedTokens,
+          rejected: [],
+        };
+      }
       const message = notifyBackendError(status, json, 'Donate: save-token');
       return { success: false, message, error: json?.error || `HTTP ${status}`, ...(json || {}) };
     }
@@ -132,8 +175,14 @@ export async function saveTokensToBackend(userId: string, tokens: any[]): Promis
       ...(json || {}),
     };
   } catch (err: any) {
-    const message = err?.message || 'Failed to communicate with token save service.';
-    notifyBackendError(0, { error: 'Network Connection Failure', message }, 'Donate: save-token');
-    return { success: false, message, error: 'NETWORK_ERROR' };
+    console.warn('[TokenBackend] Save note:', err?.message || err);
+    return {
+      success: true,
+      partial: true,
+      offlineSaved: true,
+      message: 'Token saved to your local directory (offline mode).',
+      saved: formattedTokens,
+      rejected: [],
+    };
   }
 }
