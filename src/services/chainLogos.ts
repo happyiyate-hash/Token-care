@@ -218,7 +218,7 @@ export const NETWORK_MAP: Record<string, ChainNetworkInfo> = {
     name: 'BNB Smart Chain',
     shortName: 'BSC',
     symbol: 'BNB',
-    logoUrl: 'https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png',
+    logoUrl: 'https://raw.githubusercontent.com/happyiyate-hash/Logo/main/binance-smart-chain.png',
     color: '#F3BA2F',
     type: 'EVM',
   },
@@ -227,7 +227,7 @@ export const NETWORK_MAP: Record<string, ChainNetworkInfo> = {
     name: 'BNB Smart Chain',
     shortName: 'BSC',
     symbol: 'BNB',
-    logoUrl: 'https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png',
+    logoUrl: 'https://raw.githubusercontent.com/happyiyate-hash/Logo/main/binance-smart-chain.png',
     color: '#F3BA2F',
     type: 'EVM',
   },
@@ -313,4 +313,3 @@ export function resolveChainLogo(network?: string, chainId?: string): ChainNetwo
 export function getNetworkInfo(chainKey?: string): ChainNetworkInfo {
   return resolveChainLogo(chainKey, chainKey);
 }
-
