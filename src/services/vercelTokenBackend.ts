@@ -2,12 +2,12 @@
 
 import { getChainInfo } from '../constants/chains';
 import { resolveChainLogo } from './chainLogos';
+import { removeLocalSavedToken } from './tokenBatchVerificationService';
+import { saveTokenBatchThroughEdgeFunction } from './saveTokenBatchApi';
 
 export const CLOUDFLARE_TOKEN_WORKER_URL =
   'https://rough-meadow-6435.happyiyate.workers.dev/';
 
-// Kept as aliases so existing imports continue to compile while the app
-// transitions away from the old Vercel/local token gateway naming.
 export const VERCEL_TOKEN_GATEWAY_URL = CLOUDFLARE_TOKEN_WORKER_URL;
 export const VERCEL_SAVE_TOKEN_URL = CLOUDFLARE_TOKEN_WORKER_URL;
 export const LOCAL_TOKEN_GATEWAY_URL = CLOUDFLARE_TOKEN_WORKER_URL;
@@ -90,45 +90,69 @@ export async function fetchTokensByUserFromBackend(userId: string): Promise<any[
   const normalizedUserId = userId?.trim();
   if (!normalizedUserId) return [];
 
-  const result = await postCloudflare({
-    action: 'getTokensByUser',
-    userId: normalizedUserId,
-  });
+  const result = await postCloudflare({ action: 'getTokensByUser', userId: normalizedUserId });
   if (!result.ok) return [];
   return Array.isArray(result.json?.tokens) ? result.json.tokens : [];
 }
 
+/**
+ * Authoritative Donate save boundary.
+ * Cloudflare is written first by the Supabase Edge Function, then the database
+ * RPC records the newly accepted tokens and credits TC exactly once.
+ * This legacy function name is retained so existing callers migrate without
+ * changing their imports.
+ */
 export async function saveTokensToBackend(userId: string, tokens: any[]): Promise<SaveTokenBackendResponse> {
   if (!tokens?.length) return { success: false, message: 'No tokens provided to save.' };
 
   const formattedTokens = tokens.map((t) => formatTokenForBackend(t));
-  const result = await postCloudflare({
-    action: 'batchSaveTokens',
-    userId,
-    tokens: formattedTokens.map((t) => ({
-      name: t.tokenName,
-      symbol: t.tokenSymbol,
-      contractAddress: t.contractAddress,
-      blockchain: t.blockchain,
-      chainId: t.chainId,
-      logoUrl: t.logoUrl,
-    })),
-  });
 
-  if (!result.ok || result.json?.success === false) {
-    return {
-      success: false,
-      message: result.json?.message || 'Cloudflare token service failed.',
-      error: result.json?.error,
-      ...result.json,
-    };
+  // Saving requires a verified logo. Do not allow the legacy gateway to bypass
+  // the Donate page's logo gate.
+  const missingLogo = formattedTokens.find((t) => !t.logoUrl.trim());
+  if (missingLogo) {
+    return { success: false, error: 'VERIFIED_LOGO_REQUIRED', message: 'A verified token logo is required before saving.' };
   }
 
-  return {
-    success: true,
-    message: result.json?.message || 'Tokens saved to Cloudflare.',
-    saved: result.json?.saved,
-    rejected: result.json?.rejected,
-    ...result.json,
-  };
+  try {
+    const result = await saveTokenBatchThroughEdgeFunction(
+      formattedTokens.map((t) => ({
+        name: t.tokenName,
+        symbol: t.tokenSymbol,
+        contractAddress: t.contractAddress,
+        blockchain: t.blockchain,
+        chainId: t.chainId,
+        logoUrl: t.logoUrl,
+        verified: true,
+      }))
+    );
+
+    if (!result.success) {
+      // The App currently creates its optimistic local item before this call.
+      // Roll that item back so a failed authoritative save can never look saved.
+      for (const token of formattedTokens) {
+        removeLocalSavedToken(token.contractAddress, token.blockchain, userId);
+      }
+      throw new Error(result.message || result.error || 'Token save was not accepted by the server.');
+    }
+
+    const rewardAmount = Number(result.rewardEarned || 0);
+    return {
+      success: true,
+      message: result.message || (rewardAmount > 0 ? `Token saved. You received ${rewardAmount} TC.` : 'Token saved.'),
+      saved: result.saved,
+      rejected: result.duplicates,
+      reward: {
+        amount: rewardAmount,
+        symbol: 'TC',
+        credited: rewardAmount > 0,
+      },
+      ...result,
+    };
+  } catch (error: any) {
+    for (const token of formattedTokens) {
+      removeLocalSavedToken(token.contractAddress, token.blockchain, userId);
+    }
+    throw error;
+  }
 }
