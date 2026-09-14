@@ -106,6 +106,222 @@ export default {
       });
     }
 
+    // 2. Submit single token endpoint: POST /submit
+    if (pathname === '/submit' && request.method === 'POST') {
+      try {
+        const body: any = await request.json();
+        const userId = (body?.userId || body?.user_id || 'anonymous_user').trim();
+        const contractAddress = String(body?.contractAddress || body?.address || '').trim().toLowerCase();
+        const blockchain = String(body?.blockchain || 'ethereum').trim().toLowerCase();
+
+        if (!contractAddress) {
+          return errorResponse("Field 'contractAddress' is required.", 400);
+        }
+
+        const tokenObj = {
+          name: body.name || body.symbol || 'Unknown Token',
+          symbol: String(body.symbol || 'TOK').toUpperCase(),
+          contractAddress,
+          blockchain,
+          logoUrl: body.logoUrl || '',
+          submittedAt: new Date().toISOString(),
+          updatedAt: null,
+          verified: false,
+          userId,
+        };
+
+        // Save token to global registry key in KV
+        const regKey = `token:${blockchain}:${contractAddress}`;
+        await env.TOKEN_CACHE.put(regKey, JSON.stringify(tokenObj));
+
+        // Also append to user list
+        const userKvKey = `tokens:${userId}`;
+        const rawUserTokens = await env.TOKEN_CACHE.get(userKvKey, 'text');
+        let userList: any[] = [];
+        if (rawUserTokens) {
+          try {
+            const parsed = JSON.parse(rawUserTokens);
+            userList = Array.isArray(parsed.tokens) ? parsed.tokens : [];
+          } catch {}
+        }
+        // Deduplicate
+        userList = userList.filter(
+          (t) => !(t.blockchain?.toLowerCase() === blockchain && t.contractAddress?.toLowerCase() === contractAddress)
+        );
+        userList.push(tokenObj);
+        await env.TOKEN_CACHE.put(userKvKey, JSON.stringify({ user_id: userId, tokens: userList }));
+
+        return jsonResponse({
+          success: true,
+          token: {
+            name: tokenObj.name,
+            symbol: tokenObj.symbol,
+            contractAddress: tokenObj.contractAddress,
+            blockchain: tokenObj.blockchain,
+            logoUrl: tokenObj.logoUrl,
+            submittedAt: tokenObj.submittedAt,
+            updatedAt: tokenObj.updatedAt,
+            verified: tokenObj.verified,
+          },
+        });
+      } catch (err: any) {
+        return errorResponse(err?.message || 'Failed to submit token.', 400);
+      }
+    }
+
+    // 3. Action-based POST Gateway (handles verifyTokensBatch, batchSaveTokens, getAllTokens, getTokensByUser)
+    if (request.method === 'POST') {
+      try {
+        const clonedReq = request.clone();
+        const body: any = await clonedReq.json().catch(() => null);
+        const action = body?.action || body?.key;
+
+        // Function 1: verifyTokensBatch — Check Before Saving
+        if (action === 'verifyTokensBatch') {
+          const inputTokens: Array<{ blockchain: string; contractAddress: string }> = Array.isArray(body.tokens)
+            ? body.tokens
+            : body.contractAddress
+              ? [{ blockchain: body.blockchain || 'ethereum', contractAddress: body.contractAddress }]
+              : [];
+
+          const results = [];
+          for (const item of inputTokens) {
+            const chain = String(item.blockchain || 'ethereum').trim().toLowerCase();
+            const addr = String(item.contractAddress || '').trim().toLowerCase();
+            const regKey = `token:${chain}:${addr}`;
+            const existingRaw = await env.TOKEN_CACHE.get(regKey, 'text');
+            let existingObj: any = null;
+            if (existingRaw) {
+              try { existingObj = JSON.parse(existingRaw); } catch {}
+            }
+
+            const exists = !!existingObj;
+            results.push({
+              blockchain: item.blockchain || 'ethereum',
+              contractAddress: item.contractAddress,
+              exists,
+              ownedBy: exists ? (existingObj?.userId || 'registered_user') : null,
+              ...(exists ? { error: 'Token already exists' } : {}),
+            });
+          }
+
+          const existedCount = results.filter((r) => r.exists).length;
+          return jsonResponse({
+            success: true,
+            total: results.length,
+            existed: existedCount,
+            notExisted: results.length - existedCount,
+            results,
+          });
+        }
+
+        // Function 2: batchSaveTokens — Save Multiple Tokens at Once
+        if (action === 'batchSaveTokens') {
+          const userId = String(body.userId || body.user_id || 'anonymous_user').trim();
+          const tokens = Array.isArray(body.tokens) ? body.tokens : [];
+
+          if (tokens.length === 0) {
+            return errorResponse('No tokens provided to batch save.', 400);
+          }
+
+          const chainCounts: Record<string, { added: number; total: number }> = {};
+          const savedItems: any[] = [];
+
+          for (const t of tokens) {
+            const chain = String(t.blockchain || 'ethereum').trim().toLowerCase();
+            const addr = String(t.contractAddress || t.address || '').trim().toLowerCase();
+            if (!addr) continue;
+
+            const tokenObj = {
+              name: t.name || t.symbol || 'Unknown Token',
+              symbol: String(t.symbol || 'TOK').toUpperCase(),
+              contractAddress: addr,
+              blockchain: chain,
+              logoUrl: t.logoUrl || '',
+              submittedAt: new Date().toISOString(),
+              updatedAt: null,
+              verified: false,
+              userId,
+            };
+
+            const regKey = `token:${chain}:${addr}`;
+            await env.TOKEN_CACHE.put(regKey, JSON.stringify(tokenObj));
+            savedItems.push(tokenObj);
+
+            if (!chainCounts[chain]) chainCounts[chain] = { added: 0, total: 0 };
+            chainCounts[chain].added += 1;
+            chainCounts[chain].total += 1;
+          }
+
+          // Also save under user tokens
+          const userKvKey = `tokens:${userId}`;
+          const rawUser = await env.TOKEN_CACHE.get(userKvKey, 'text');
+          let existingUserTokens: any[] = [];
+          if (rawUser) {
+            try {
+              const p = JSON.parse(rawUser);
+              existingUserTokens = Array.isArray(p.tokens) ? p.tokens : [];
+            } catch {}
+          }
+          const merged = [...existingUserTokens, ...savedItems];
+          await env.TOKEN_CACHE.put(userKvKey, JSON.stringify({ user_id: userId, tokens: merged }));
+
+          const blockchains = Object.keys(chainCounts).map((chain) => ({
+            blockchain: chain,
+            added: chainCounts[chain].added,
+            total: chainCounts[chain].total,
+          }));
+
+          return jsonResponse({
+            success: true,
+            userId,
+            saved: savedItems.length,
+            blockchains,
+          });
+        }
+
+        // Function 4: getAllTokens — Get Every Token
+        if (action === 'getAllTokens') {
+          const listRes = await env.TOKEN_CACHE.list({ prefix: 'token:' });
+          const allTokens: any[] = [];
+          for (const key of listRes.keys) {
+            const raw = await env.TOKEN_CACHE.get(key.name, 'text');
+            if (raw) {
+              try {
+                allTokens.push(JSON.parse(raw));
+              } catch {}
+            }
+          }
+          return jsonResponse({
+            tokens: allTokens,
+          });
+        }
+
+        // Function 5: getTokensByUser — Get Tokens for One User
+        if (action === 'getTokensByUser') {
+          const targetUser = String(body.userId || body.user_id || '').trim();
+          if (!targetUser) {
+            return jsonResponse({ userId: '', count: 0, tokens: [] });
+          }
+          const rawUser = await env.TOKEN_CACHE.get(`tokens:${targetUser}`, 'text');
+          let tokens: any[] = [];
+          if (rawUser) {
+            try {
+              const parsed = JSON.parse(rawUser);
+              tokens = Array.isArray(parsed.tokens) ? parsed.tokens : [];
+            } catch {}
+          }
+          return jsonResponse({
+            userId: targetUser,
+            count: tokens.length,
+            tokens,
+          });
+        }
+      } catch (err: any) {
+        console.error('Worker POST action parsing error:', err);
+      }
+    }
+
     // Routing: /tokens
     if (pathname === '/tokens') {
       // ---------------------------------------------------------

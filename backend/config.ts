@@ -14,12 +14,12 @@ export const config = {
   cloudflareWorkerUrl:
     process.env.CLOUDFLARE_WORKER_URL ||
     process.env.GLOBAL_TOKEN_WORKER_URL ||
-    'https://rough-meadow-6435.happyiyate.workers.dev/',
+    'https://rough-meadow-6435.abc123.workers.dev/',
 
   globalWorkerUrl:
     process.env.GLOBAL_TOKEN_WORKER_URL ||
     process.env.CLOUDFLARE_WORKER_URL ||
-    'https://rough-meadow-6435.happyiyate.workers.dev/',
+    'https://rough-meadow-6435.abc123.workers.dev/',
 
   userWorkerUrl:
     process.env.USER_TOKEN_WORKER_URL ||

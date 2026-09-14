@@ -678,6 +678,33 @@ export default function App() {
     return () => window.removeEventListener('focus', handleFocus);
   }, [currentUser]);
 
+  // Real-time synchronization when batch saving credits tokens or adds notifications
+  useEffect(() => {
+    const handleRewardsUpdated = (e: any) => {
+      const walletData = e.detail?.wallet;
+      if (walletData) {
+        setWallet(walletData);
+      }
+      if (currentUser?.id) {
+        loadUserProfile(currentUser.id);
+      }
+    };
+
+    const handleNotificationsUpdated = () => {
+      if (currentUser?.id) {
+        fetchUnreadNotificationCount(currentUser.id).then((count) => setUnreadNotificationCount(count)).catch(() => {});
+      }
+    };
+
+    window.addEventListener('tokencare_rewards_updated', handleRewardsUpdated);
+    window.addEventListener('tokencare_notifications_updated', handleNotificationsUpdated);
+
+    return () => {
+      window.removeEventListener('tokencare_rewards_updated', handleRewardsUpdated);
+      window.removeEventListener('tokencare_notifications_updated', handleNotificationsUpdated);
+    };
+  }, [currentUser]);
+
   // Auto-detect screen size and switch between Mobile and Desktop views automatically
   useEffect(() => {
     const handleResize = () => {

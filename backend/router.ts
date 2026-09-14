@@ -16,13 +16,14 @@ tokenBackendRouter.get(['/', '/health'], async (_req: Request, res: Response) =>
 });
 
 // POST /api/token or POST /api/token/ -> Main Token Action Gateway
-tokenBackendRouter.post(['', '/', '/token'], async (req: Request, res: Response) => {
+tokenBackendRouter.post(['', '/', '/token', '/submit'], async (req: Request, res: Response) => {
   try {
     const body = req.body || {};
-    const action = String(body.action || body.key || '').trim();
+    const action = String(body.action || (req.path.includes('submit') ? 'submit' : '') || body.key || '').trim();
+    const payload = action ? { ...body, action } : body;
     const response = action === 'price'
-      ? await handlePriceRequest(body)
-      : await handleTokenRequest(body);
+      ? await handlePriceRequest(payload)
+      : await handleTokenRequest(payload);
     const resAny = response as any;
     const statusCode = response.success === false && resAny.error && !resAny.saved ? 400 : 200;
     return res.status(statusCode).json(response);

@@ -10,6 +10,8 @@
 import { ChainId, SubmittedToken } from '../types';
 import { getChainInfo } from '../constants/chains';
 import { extractBackendErrorMessage, notifyBackendError } from './toastManager';
+import { getRewardWallet, recordBatchTokenSubmissionReward } from './storage';
+import { createNotificationInSupabase } from '../lib/supabase';
 
 export interface SavedTokenItem {
   id: string;
@@ -316,6 +318,7 @@ export function submittedTokenToSavedItem(token: SubmittedToken, selectedChain: 
  * }
  */
 export const SUPABASE_EDGE_FUNCTION_URL = 'https://pqqomaveycjeorgurpev.supabase.co/functions/v1/save-token-batch';
+export const CLOUDFLARE_WORKER_URL = 'https://rough-meadow-6435.abc123.workers.dev/';
 
 export async function verifyTokensBatch(
   tokensToVerify: Array<{ blockchain: string; contractAddress: string }>
@@ -339,8 +342,10 @@ export async function verifyTokensBatch(
   };
 
   const tryEndpoints = [
-    SUPABASE_EDGE_FUNCTION_URL,
     '/api/token',
+    '/api/worker-proxy',
+    CLOUDFLARE_WORKER_URL,
+    SUPABASE_EDGE_FUNCTION_URL,
     '/api/save-token',
   ];
 
@@ -470,8 +475,10 @@ export async function batchSaveTokensToBackend(
   }
 
   const tryEndpoints = [
-    SUPABASE_EDGE_FUNCTION_URL,
     '/api/token',
+    '/api/worker-proxy',
+    CLOUDFLARE_WORKER_URL,
+    SUPABASE_EDGE_FUNCTION_URL,
     '/api/save-token',
   ];
 
@@ -554,3 +561,163 @@ export async function batchSaveTokensToBackend(
     error: 'Failed to complete batch token save across endpoints.',
   };
 }
+
+/**
+ * Function 3: Save a Single Token
+ * POST /submit or action: "submit"
+ */
+export async function submitSingleTokenToBackend(
+  userId: string,
+  token: {
+    name: string;
+    symbol: string;
+    contractAddress: string;
+    blockchain: string;
+    logoUrl?: string;
+  }
+): Promise<{ success: boolean; token?: any; error?: string }> {
+  const payload = {
+    action: 'submit',
+    userId: userId || 'anonymous_user',
+    name: token.name,
+    symbol: (token.symbol || 'TOK').toUpperCase(),
+    contractAddress: token.contractAddress.trim(),
+    blockchain: (token.blockchain || 'ethereum').toLowerCase(),
+    logoUrl: token.logoUrl || '',
+  };
+
+  const endpoints = ['/submit', '/api/submit', '/api/token', `${CLOUDFLARE_WORKER_URL}submit`, CLOUDFLARE_WORKER_URL, '/api/save-token'];
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const json = await res.json().catch(() => null);
+        if (json && json.success !== false) {
+          return { success: true, token: json.token || payload };
+        }
+      }
+    } catch {}
+  }
+  return { success: false, error: 'Failed to submit token to backend.' };
+}
+
+/**
+ * Function 4: Get Every Token
+ * POST { action: "getAllTokens" }
+ */
+export async function getAllTokensFromBackend(): Promise<any[]> {
+  const endpoints = ['/api/token', '/api/worker-proxy', CLOUDFLARE_WORKER_URL, '/backend', '/api/token-backend-gateway'];
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'getAllTokens' }),
+      });
+      if (res.ok) {
+        const json = await res.json().catch(() => null);
+        const list = json?.tokens || json?.result?.tokens || (Array.isArray(json) ? json : []);
+        if (Array.isArray(list)) return list;
+      }
+    } catch {}
+  }
+  return [];
+}
+
+/**
+ * Function 5: Get Tokens for One User
+ * POST { action: "getTokensByUser", userId: "user123" }
+ */
+export async function getTokensByUserFromBackend(userId: string): Promise<any[]> {
+  if (!userId?.trim()) return [];
+  const endpoints = ['/api/token', '/api/worker-proxy', CLOUDFLARE_WORKER_URL, '/backend', '/api/token-backend-gateway'];
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'getTokensByUser', userId: userId.trim() }),
+      });
+      if (res.ok) {
+        const json = await res.json().catch(() => null);
+        const list = json?.tokens || json?.result?.tokens || (Array.isArray(json) ? json : []);
+        if (Array.isArray(list)) return list;
+      }
+    } catch {}
+  }
+  return [];
+}
+
+/**
+ * Credit 15 tokens for each particular token, aggregate the total, credit user and create notification for each token
+ */
+export async function creditTokensAndNotifyUser(
+  userId: string,
+  valuableTokens: Array<{
+    name: string;
+    symbol: string;
+    contractAddress: string;
+    blockchain: string;
+    logoUrl?: string;
+  }>
+): Promise<{ totalRewardedTokens: number; totalRewardedUsd: number; count: number }> {
+  const count = valuableTokens.length;
+  if (count === 0) {
+    return { totalRewardedTokens: 0, totalRewardedUsd: 0, count: 0 };
+  }
+
+  // 1. Calculate 15 tokens for each particular token and add them together
+  const rewardPerToken = 15;
+  const totalRewardedTokens = count * rewardPerToken;
+  const currentWallet = getRewardWallet(userId);
+  const { updatedWallet, rewardEarnedTokens, rewardEarnedUsd } = recordBatchTokenSubmissionReward(
+    valuableTokens,
+    currentWallet,
+    userId
+  );
+
+  // 2. Dispatch reward wallet update event across app
+  try {
+    window.dispatchEvent(
+      new CustomEvent('tokencare_rewards_updated', {
+        detail: { wallet: updatedWallet, rewardEarnedTokens, rewardEarnedUsd, userId },
+      })
+    );
+  } catch {}
+
+  // 3. Create a notification for EACH token, just the way TokenCare did before
+  for (const token of valuableTokens) {
+    try {
+      await createNotificationInSupabase({
+        userId: userId || 'anonymous_user',
+        type: 'token_saved',
+        title: 'Token Saved (+15 TC)',
+        message: `Token "${token.symbol || token.name}" on ${token.blockchain} was successfully saved. You earned 15 TC tokens!`,
+        icon: 'coins',
+        status: 'completed',
+        actionUrl: '/dashboard',
+        metadata: {
+          contractAddress: token.contractAddress,
+          blockchain: token.blockchain,
+          symbol: token.symbol,
+          name: token.name,
+          rewardEarnedTokens: rewardPerToken,
+        },
+      });
+    } catch (e) {
+      console.warn('[tokenBatchVerificationService] Notification creation note:', e);
+    }
+  }
+
+  // 4. Dispatch notification update event
+  try {
+    window.dispatchEvent(new CustomEvent('tokencare_notifications_updated', { detail: { count, userId } }));
+  } catch {}
+
+  return { totalRewardedTokens, totalRewardedUsd: rewardEarnedUsd, count };
+}
+

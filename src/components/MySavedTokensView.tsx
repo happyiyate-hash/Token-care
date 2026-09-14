@@ -20,8 +20,10 @@ import {
   verifyTokensBatch,
   batchSaveTokensToBackend,
   saveLocalSavedTokens,
+  creditTokensAndNotifyUser,
   MAX_SAVED_TOKENS,
 } from '../services/tokenBatchVerificationService';
+import confetti from 'canvas-confetti';
 import { useTranslation } from '../context/I18nContext';
 
 interface MySavedTokensViewProps {
@@ -192,9 +194,25 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
       const res = await batchSaveTokensToBackend(userId || 'anonymous_user', tokensToSave);
 
       if (res.success) {
+        // Calculate 15 tokens for each particular valuable token, aggregate, credit user, and notify
+        const { totalRewardedTokens, totalRewardedUsd } = await creditTokensAndNotifyUser(
+          userId || 'anonymous_user',
+          tokensToSave
+        );
+
+        // Confetti celebration
+        try {
+          confetti({
+            particleCount: 110,
+            spread: 75,
+            origin: { y: 0.6 },
+            colors: ['#10B981', '#34D399', '#22C55E', '#F59E0B'],
+          });
+        } catch {}
+
         setBatchSaveResult({
           type: 'success',
-          message: res.message || `Successfully registered ${tokensToSave.length} available token(s) into TokenCare directory!`,
+          message: `Successfully saved ${tokensToSave.length} valuable token(s)! Credited +${totalRewardedTokens} TC ($${totalRewardedUsd.toFixed(4)}) to your balance and sent ${tokensToSave.length} confirmation notification(s).`,
         });
 
         // Mark saved available tokens as exists/registered or update local list
@@ -434,14 +452,21 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
                     <div className="pt-1 flex items-center justify-between border-t border-zinc-800/60 text-[10.5px]">
                       <span className="text-zinc-400">Status:</span>
                       {token.verificationStatus === 'exists' ? (
-                        <span className="flex items-center space-x-1 text-amber-400 font-bold bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Already Saved</span>
-                        </span>
+                        <div className="flex flex-col items-end">
+                          <span className="flex items-center space-x-1 text-amber-400 font-bold bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
+                            <span>Already Saved (Not Valuable)</span>
+                          </span>
+                          {token.verificationDetails?.ownedBy && (
+                            <span className="text-[9px] text-zinc-400 font-mono mt-0.5">
+                              Saved by: {token.verificationDetails.ownedBy.slice(0, 8)}...
+                            </span>
+                          )}
+                        </div>
                       ) : token.verificationStatus === 'available' ? (
-                        <span className="flex items-center space-x-1 text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                        <span className="flex items-center space-x-1 text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.2)]">
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>Available</span>
+                          <span>Valuable (+15 TC)</span>
                         </span>
                       ) : token.verificationStatus === 'error' ? (
                         <span className="flex items-center space-x-1 text-rose-400 font-bold bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-full">
@@ -458,7 +483,7 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
         )}
       </div>
 
-      {/* 4. FIXED BOTTOM ACTION BAR: [ VERIFY ALL TOKENS ] -> [ SAVE X AVAILABLE TOKENS ] */}
+      {/* 4. FIXED BOTTOM ACTION BAR: [ VERIFY ALL TOKENS ] -> [ SAVE X VALUABLE TOKENS ] */}
       {savedTokens.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#090C12]/95 backdrop-blur-xl border-t border-emerald-500/30 p-3 sm:p-4 pb-safe-nav shadow-[0_-8px_30px_rgba(0,0,0,0.8)]">
           <div className="max-w-md md:max-w-5xl lg:max-w-7xl mx-auto">
@@ -483,12 +508,12 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
                 )}
               </button>
             ) : (
-              /* State 2: After verification -> [ SAVE X AVAILABLE TOKENS ] or Summary */
+              /* State 2: After verification -> [ SAVE X VALUABLE TOKENS ] or Summary */
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs px-1">
                   <span className="text-zinc-400">
-                    <strong className="text-amber-400">{existingTokens.length}</strong> already saved •{' '}
-                    <strong className="text-emerald-400">{availableTokens.length}</strong> available to save
+                    <strong className="text-amber-400">{existingTokens.length}</strong> already saved (not valuable) •{' '}
+                    <strong className="text-emerald-400">{availableTokens.length}</strong> valuable (+{availableTokens.length * 15} TC)
                   </span>
                   <button
                     type="button"
@@ -511,13 +536,13 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
                     {isBatchSaving ? (
                       <>
                         <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                        <span>Saving {availableTokens.length} Available Tokens...</span>
+                        <span>Saving {availableTokens.length} Valuable Tokens...</span>
                       </>
                     ) : (
                       <>
                         <Send className="w-4 h-4" />
                         <span>
-                          Save {availableTokens.length} Available Token{availableTokens.length > 1 ? 's' : ''}
+                          Save {availableTokens.length} Valuable Token{availableTokens.length > 1 ? 's' : ''} (+{availableTokens.length * 15} TC)
                         </span>
                       </>
                     )}
@@ -529,7 +554,7 @@ export const MySavedTokensView: React.FC<MySavedTokensViewProps> = ({
                     className="w-full py-3.5 px-4 bg-zinc-900 border border-zinc-800 text-zinc-500 font-extrabold text-xs uppercase tracking-wider rounded-2xl flex items-center justify-center space-x-2 cursor-not-allowed opacity-80"
                   >
                     <CheckCircle2 className="w-4 h-4 text-zinc-600" />
-                    <span>All Tokens Already Saved</span>
+                    <span>All Tokens Already Saved (Not Valuable)</span>
                   </button>
                 )}
               </div>

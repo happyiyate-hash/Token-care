@@ -148,3 +148,39 @@ export function recordTokenSubmissionReward(token: SubmittedToken, wallet: UserR
   saveRewardWallet(updatedWallet, userId);
   return { updatedWallet, rewardEarnedTokens: rewardTokens, rewardEarnedUsd: rewardUsd };
 }
+
+export function recordBatchTokenSubmissionReward(
+  tokens: Array<{ contractAddress?: string; address?: string; symbol?: string; name?: string; blockchain?: string }>,
+  wallet: UserRewardWallet,
+  userId?: string
+): { updatedWallet: UserRewardWallet; rewardEarnedTokens: number; rewardEarnedUsd: number } {
+  const count = tokens.length;
+  const rewardPerToken = 15; // 15 tokens for each particular token
+  const rewardTokens = count * rewardPerToken;
+  const rewardUsd = rewardTokens * REWARD_RATE_USD;
+
+  const newTxs: RewardTransaction[] = tokens.map((t) => ({
+    id: `tx-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    type: 'SUBMISSION_BONUS',
+    amountTokens: rewardPerToken,
+    amountUsd: rewardPerToken * REWARD_RATE_USD,
+    tokenAddress: t.contractAddress || t.address || '',
+    tokenSymbol: (t.symbol || 'TOK').toUpperCase(),
+    timestamp: new Date().toISOString(),
+    status: 'COMPLETED',
+  }));
+
+  const updatedWallet: UserRewardWallet = {
+    ...wallet,
+    totalTokens: wallet.totalTokens + rewardTokens,
+    totalUsd: (wallet.totalTokens + rewardTokens) * REWARD_RATE_USD,
+    unclaimedTokens: wallet.unclaimedTokens + rewardTokens,
+    unclaimedUsd: (wallet.unclaimedTokens + rewardTokens) * REWARD_RATE_USD,
+    totalSubmissions: wallet.totalSubmissions + count,
+    transactions: [...newTxs, ...(wallet.transactions || [])],
+  };
+
+  saveRewardWallet(updatedWallet, userId);
+  return { updatedWallet, rewardEarnedTokens: rewardTokens, rewardEarnedUsd: rewardUsd };
+}
+

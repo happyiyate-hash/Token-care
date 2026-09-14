@@ -114,6 +114,18 @@ async function startServer() {
   app.use('/api/token', tokenBackendRouter);
   app.use('/backend', tokenBackendRouter);
 
+  // Direct endpoint for /submit (Function 3: Save a Single Token)
+  app.post(['/submit', '/api/submit'], async (req, res) => {
+    try {
+      const payload = { action: 'submit', ...(req.body || {}) };
+      const response = await handleTokenRequest(payload);
+      return res.status(response.success ? 200 : 400).json(response);
+    } catch (err: any) {
+      console.error('[Token Backend submit] Error:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Failed to submit token' });
+    }
+  });
+
   // Direct endpoints for /api/save-token and /api/upload-token
   app.post(['/api/save-token', '/api/token/save-token'], async (req, res) => {
     try {
@@ -380,7 +392,7 @@ async function startServer() {
   const workerUrl =
     process.env.GLOBAL_TOKEN_WORKER_URL ||
     process.env.CLOUDFLARE_WORKER_URL ||
-    'https://rough-meadow-6435.happyiyate.workers.dev/';
+    'https://rough-meadow-6435.abc123.workers.dev/';
 
   async function fetchWorkerSafe(payload: any, timeoutMs = 8000): Promise<{ ok: boolean; status: number; data: any }> {
     const controller = new AbortController();
@@ -595,7 +607,16 @@ async function startServer() {
         });
       }
 
-      // Default fallback if responseData is available or empty
+      // Default fallback: if remote worker returned an error/unreachable, route action to local token backend
+      const tokenBackendRes = await handleTokenRequest(payload).catch(() => null);
+      if (tokenBackendRes) {
+        return res.status(200).json({
+          ok: true,
+          status: 200,
+          result: tokenBackendRes,
+        });
+      }
+
       return res.status(200).json({
         ok: true,
         status: 200,

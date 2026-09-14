@@ -29,7 +29,7 @@ export interface TokenBackendResponse {
   token?: any;
   count?: number;
   userId?: string;
-  saved?: any[];
+  saved?: any[] | number;
   rejected?: any[];
   reward?: { amount: number; symbol: string; credited: boolean };
   notification?: { id: string; title: string; message: string; type: string; timestamp: string };
@@ -280,24 +280,77 @@ export async function handleTokenRequest(body: TokenBackendRequest): Promise<Tok
     return { success: !!token, found: !!token, token: token || null, source: 'local_store' };
   }
 
+  // 1. verifyTokensBatch — Check Before Saving
   if (action === 'verifyTokensBatch') {
     const inputTokens: Array<{ blockchain: string; contractAddress: string }> = Array.isArray(body.tokens)
       ? body.tokens
-      : body.contractAddress ? [{ blockchain: body.blockchain || 'ethereum', contractAddress: body.contractAddress }] : [];
+      : body.contractAddress
+        ? [{ blockchain: body.blockchain || 'ethereum', contractAddress: body.contractAddress }]
+        : [];
+
     const results = inputTokens.map((item) => {
       const targetChain = String(item.blockchain || 'ethereum').trim().toLowerCase();
       const targetAddress = String(item.contractAddress || '').trim().toLowerCase();
       const found = globalTokenStore.getByAddress(targetAddress, targetChain);
-      return { blockchain: item.blockchain || 'ethereum', contractAddress: item.contractAddress, exists: !!found, ownedBy: null, error: found ? 'Token already exists' : null };
+      return {
+        blockchain: item.blockchain || 'ethereum',
+        contractAddress: item.contractAddress,
+        exists: !!found,
+        ownedBy: found ? (found.userId || 'registered_user') : null,
+        error: found ? 'Token already exists' : null,
+      };
     });
+
     return {
-      success: true, total: results.length,
+      success: true,
+      total: results.length,
       existed: results.filter((r) => r.exists).length,
       notExisted: results.filter((r) => !r.exists).length,
-      results, source: 'local_store',
+      results,
+      source: 'local_store',
     };
   }
 
+  // 3. POST /submit or action: 'submit' — Save a Single Token
+  if (action === 'submit' || action === 'submitSingleToken') {
+    const userId = body.userId || (body as any).user_id || 'anonymous_user';
+    const contractAddress = String(body.contractAddress || (body as any).address || '').trim();
+    if (!contractAddress) {
+      return { success: false, error: 'contractAddress is required', message: 'Contract address is required.' };
+    }
+
+    const singleToken = {
+      name: body.name || body.tokenName || body.symbol || 'Unknown Token',
+      symbol: (body.symbol || body.tokenSymbol || 'TOK').toUpperCase(),
+      contractAddress,
+      blockchain: body.blockchain || 'ethereum',
+      logoUrl: body.logoUrl || (body as any).logo_url || '',
+      submittedAt: new Date().toISOString(),
+      updatedAt: null,
+      verified: false,
+      userId,
+    };
+
+    const { saved } = globalTokenStore.saveTokens(userId, [singleToken]);
+    const savedRecord = saved[0] || singleToken;
+
+    return {
+      success: true,
+      token: {
+        name: savedRecord.name,
+        symbol: savedRecord.symbol,
+        contractAddress: savedRecord.contractAddress,
+        blockchain: savedRecord.blockchain,
+        logoUrl: savedRecord.logoUrl || '',
+        submittedAt: savedRecord.submittedAt || new Date().toISOString(),
+        updatedAt: savedRecord.updatedAt || null,
+        verified: savedRecord.verified ?? false,
+      },
+      source: 'local_store',
+    };
+  }
+
+  // 2. batchSaveTokens — Save Multiple Tokens at Once
   if (action === 'saveToken' || action === 'batchSaveTokens' || action === 'save-token' || action === 'uploadTokens') {
     const userId = body.userId || (body as any).user_id || 'anonymous_user';
     let rawTokens: any[] = [];
@@ -315,6 +368,9 @@ export async function handleTokenRequest(body: TokenBackendRequest): Promise<Tok
       blockchainSymbol: t.blockchainSymbol || t.chainSymbol || 'MATIC',
       chainId: t.chainId ?? t.chain_id ?? 137,
       logoUrl: t.logoUrl || t.logo_url || t.metadata?.logoUrl || '',
+      submittedAt: t.submittedAt || new Date().toISOString(),
+      updatedAt: null,
+      verified: t.verified ?? false,
     }));
 
     if (BACKEND_CONFIG.forwardToRemote) {
@@ -325,15 +381,45 @@ export async function handleTokenRequest(body: TokenBackendRequest): Promise<Tok
     const { saved, rejected } = globalTokenStore.saveTokens(userId, normalizedTokens);
     const isPartial = rejected.length > 0 && saved.length > 0;
     const isSuccess = saved.length > 0;
+
+    // Calculate blockchains summary: [{ blockchain, added, total }]
+    const chainCounts: Record<string, { added: number; total: number }> = {};
+    saved.forEach((t) => {
+      const chain = (t.blockchain || 'ethereum').toLowerCase();
+      if (!chainCounts[chain]) chainCounts[chain] = { added: 0, total: 0 };
+      chainCounts[chain].added += 1;
+    });
+
+    const allStoreTokens = globalTokenStore.getAll();
+    allStoreTokens.forEach((t) => {
+      const chain = (t.blockchain || 'ethereum').toLowerCase();
+      if (chainCounts[chain]) {
+        chainCounts[chain].total += 1;
+      }
+    });
+
+    const blockchainsSummary = Object.keys(chainCounts).map((chain) => ({
+      blockchain: chain,
+      added: chainCounts[chain].added,
+      total: chainCounts[chain].total || chainCounts[chain].added,
+    }));
+
     return {
-      success: isSuccess, partial: isPartial,
+      success: isSuccess,
+      userId,
+      saved: saved.length,
+      blockchains: blockchainsSummary,
+      partial: isPartial,
       message: isSuccess ? `Successfully registered ${saved.length} token(s) into the directory.` : 'Failed to save token(s).',
-      saved, rejected,
-      reward: isSuccess ? { amount: 50, symbol: 'CARE', credited: true } : undefined,
+      savedTokens: saved,
+      rejected,
+      reward: isSuccess ? { amount: saved.length * 15, symbol: 'TC', credited: true } : undefined,
       notification: isSuccess ? {
-        id: `notif-${Date.now()}`, title: 'Token Successfully Published',
-        message: `Your token ${saved[0]?.symbol || ''} has been registered and verified for Web3 donations.`,
-        type: 'token_saved', timestamp: new Date().toISOString(),
+        id: `notif-${Date.now()}`,
+        title: 'Tokens Successfully Saved',
+        message: `${saved.length} token(s) have been verified and saved to TokenCare.`,
+        type: 'token_saved',
+        timestamp: new Date().toISOString(),
       } : undefined,
       source: 'local_store',
     };
