@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Box,
   Search,
@@ -30,6 +30,10 @@ import {
   calculateTokenUsdValue,
   parseCleanNumber,
 } from '../utils/numberFormatting';
+import {
+  getAllTokensLocal,
+  storedTokenToSubmittedToken,
+} from '../services/localTokenStore';
 
 interface MyTokensViewProps {
   tokens: SubmittedToken[];
@@ -176,13 +180,39 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
   const [selectedTokenDetails, setSelectedTokenDetails] = useState<any | null>(null);
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
+  const [localTokenRevision, setLocalTokenRevision] = useState(0);
 
-  // Map real user tokens from database reading total_supply column properly
+  useEffect(() => {
+    const handleUpdate = () => {
+      setLocalTokenRevision((r) => r + 1);
+    };
+    window.addEventListener('tokencare_local_tokens_updated', handleUpdate);
+    window.addEventListener('tokencare_saved_tokens_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('tokencare_local_tokens_updated', handleUpdate);
+      window.removeEventListener('tokencare_saved_tokens_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
+
+  // Map real user tokens combining App tokens prop with device localTokenStore
   const mappedRealTokens = useMemo(() => {
     const seen = new Set<string>();
     const seenIds = new Set<string>();
 
-    return tokens
+    // Read device-local tokens directly from localTokenStore
+    let localStoredTokens: SubmittedToken[] = [];
+    try {
+      const stored = getAllTokensLocal();
+      if (Array.isArray(stored)) {
+        localStoredTokens = stored.map((s, i) => storedTokenToSubmittedToken(s, i));
+      }
+    } catch {}
+
+    const combinedList = [...tokens, ...localStoredTokens];
+
+    return combinedList
       .filter((t) => {
         if (!t) return false;
         const chain = String(t.chainId || '').trim().toLowerCase();
@@ -238,7 +268,7 @@ export const MyTokensView: React.FC<MyTokensViewProps> = ({
           rawToken: t,
         };
       });
-  }, [tokens]);
+  }, [tokens, localTokenRevision]);
 
   const displayList = mappedRealTokens.length > 0 ? mappedRealTokens : DEFAULT_SAMPLE_TOKENS;
 

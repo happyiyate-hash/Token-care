@@ -696,12 +696,20 @@ export default function App() {
       }
     };
 
+    const handleLocalTokensUpdated = (e: any) => {
+      if (currentUser?.id) {
+        performBackgroundSync(currentUser, false);
+      }
+    };
+
     window.addEventListener('tokencare_rewards_updated', handleRewardsUpdated);
     window.addEventListener('tokencare_notifications_updated', handleNotificationsUpdated);
+    window.addEventListener('tokencare_local_tokens_updated', handleLocalTokensUpdated);
 
     return () => {
       window.removeEventListener('tokencare_rewards_updated', handleRewardsUpdated);
       window.removeEventListener('tokencare_notifications_updated', handleNotificationsUpdated);
+      window.removeEventListener('tokencare_local_tokens_updated', handleLocalTokensUpdated);
     };
   }, [currentUser]);
 

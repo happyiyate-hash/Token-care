@@ -68,6 +68,18 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
 
   useEffect(() => {
     initGlobalExploreDirectory((freshTokens) => setCachedDirectory(freshTokens));
+
+    const handleLocalUpdate = () => {
+      initGlobalExploreDirectory((freshTokens) => setCachedDirectory(freshTokens));
+    };
+
+    window.addEventListener('tokencare_local_tokens_updated', handleLocalUpdate);
+    window.addEventListener('tokencare_saved_tokens_updated', handleLocalUpdate);
+
+    return () => {
+      window.removeEventListener('tokencare_local_tokens_updated', handleLocalUpdate);
+      window.removeEventListener('tokencare_saved_tokens_updated', handleLocalUpdate);
+    };
   }, [propTokens]);
 
   const allTokens = useMemo(() => {

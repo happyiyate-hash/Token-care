@@ -12,6 +12,15 @@ import { getChainInfo } from '../constants/chains';
 import { extractBackendErrorMessage, notifyBackendError } from './toastManager';
 import { getRewardWallet, recordBatchTokenSubmissionReward } from './storage';
 import { createNotificationInSupabase } from '../lib/supabase';
+import {
+  verifyTokensBatchLocal,
+  batchSaveTokensLocal,
+  submitSingleTokenLocal,
+  getAllTokensLocal,
+  getTokensByUserLocal,
+  storedTokenToSubmittedToken,
+  StoredLocalToken,
+} from './localTokenStore';
 
 export interface SavedTokenItem {
   id: string;
@@ -333,73 +342,9 @@ export async function verifyTokensBatch(
     };
   }
 
-  const payload: VerifyTokensBatchRequest = {
-    action: 'verifyTokensBatch',
-    tokens: tokensToVerify.map((t) => ({
-      blockchain: (t.blockchain || 'ethereum').toLowerCase(),
-      contractAddress: (t.contractAddress || '').trim(),
-    })),
-  };
-
-  const tryEndpoints = [
-    '/api/token',
-    '/api/worker-proxy',
-    CLOUDFLARE_WORKER_URL,
-    SUPABASE_EDGE_FUNCTION_URL,
-    '/api/save-token',
-  ];
-
-  for (const endpoint of tryEndpoints) {
-    try {
-      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timeout = setTimeout(() => controller?.abort(), 9000);
-
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller?.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (res.ok) {
-        const json = await res.json().catch(() => null);
-        if (json && (json.success !== false || json.results)) {
-          return {
-            success: true,
-            total: json.total ?? json.results?.length ?? tokensToVerify.length,
-            existed: json.existed ?? json.results?.filter((r: any) => r.exists).length ?? 0,
-            notExisted: json.notExisted ?? json.results?.filter((r: any) => !r.exists).length ?? 0,
-            results: json.results || tokensToVerify.map((t) => ({
-              blockchain: t.blockchain,
-              contractAddress: t.contractAddress,
-              exists: false,
-              ownedBy: null,
-              error: null,
-            })),
-          };
-        }
-      }
-    } catch (err) {
-      console.debug(`[SavedTokensService] verifyTokensBatch endpoint ${endpoint} note:`, err);
-    }
-  }
-
-  // Fallback verification results if network/endpoint is unavailable
-  return {
-    success: true,
-    total: tokensToVerify.length,
-    existed: 0,
-    notExisted: tokensToVerify.length,
-    results: tokensToVerify.map((t) => ({
-      blockchain: t.blockchain,
-      contractAddress: t.contractAddress,
-      exists: false,
-      ownedBy: null,
-      error: null,
-    })),
-  };
+  // Execute verification 100% locally directly on the user's device
+  const localResult = verifyTokensBatchLocal(tokensToVerify);
+  return localResult;
 }
 
 /**
@@ -428,8 +373,11 @@ export async function batchSaveTokensToBackend(
     blockchain: string;
     logoUrl?: string;
     chainId?: number | string;
+    decimals?: number;
+    totalSupply?: string | number;
+    priceUsd?: number;
   }>
-): Promise<{ success: boolean; message?: string; error?: string; saved?: any[]; rejected?: any[]; responseData?: any }> {
+): Promise<{ success: boolean; message?: string; error?: string; saved?: any[]; rejected?: any[]; responseData?: any; reward?: any }> {
   if (!tokens || tokens.length === 0) {
     return { success: false, error: 'No tokens provided for batch save.' };
   }
@@ -438,133 +386,46 @@ export async function batchSaveTokensToBackend(
     return { success: false, error: `Batch save limit is ${MAX_SAVED_TOKENS} tokens maximum.` };
   }
 
-  const payload: BatchSaveTokensRequest = {
-    action: 'batchSaveTokens',
-    userId: userId || 'anonymous_user',
-    tokens: tokens.map((t) => {
-      const cleanToken: any = {
-        name: t.name || 'Token',
-        symbol: (t.symbol || 'TOK').toUpperCase(),
-        contractAddress: t.contractAddress.trim(),
-        blockchain: (t.blockchain || 'ethereum').toLowerCase(),
-      };
-      if (t.logoUrl) {
-        cleanToken.logoUrl = t.logoUrl;
-      }
-      return cleanToken;
-    }),
-  };
+  // Execute batch save directly on client device (zero remote server calls)
+  const localRes = batchSaveTokensLocal(userId, tokens);
 
-  // Obtain bearer auth token from active Supabase session if available
-  let authBearer = '';
-  try {
-    const rawSbAuth = localStorage.getItem('sb-pqqomaveycjeorgurpev-auth-token');
-    if (rawSbAuth) {
-      const parsed = JSON.parse(rawSbAuth);
-      if (parsed?.access_token) {
-        authBearer = `Bearer ${parsed.access_token}`;
-      }
-    }
-  } catch {}
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (authBearer) {
-    headers['Authorization'] = authBearer;
-  }
-
-  const tryEndpoints = [
-    '/api/token',
-    '/api/worker-proxy',
-    CLOUDFLARE_WORKER_URL,
-    SUPABASE_EDGE_FUNCTION_URL,
-    '/api/save-token',
-  ];
-
-  for (const endpoint of tryEndpoints) {
+  // Credit 15 TC tokens per valuable token directly on the device
+  let rewardResult: any = null;
+  if (localRes.saved.length > 0) {
     try {
-      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timeout = setTimeout(() => controller?.abort(), 12000);
-
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-        signal: controller?.signal,
-      });
-
-      clearTimeout(timeout);
-
-      let json: any = null;
-      let rawText = '';
-      try {
-        rawText = await res.text();
-        if (rawText && (rawText.trim().startsWith('{') || rawText.trim().startsWith('['))) {
-          json = JSON.parse(rawText);
-        }
-      } catch {
-        json = null;
-      }
-
-      // Check if this endpoint succeeded
-      if (res.ok && json && json.success !== false) {
-        return {
-          success: true,
-          message: json.message || `Successfully registered ${tokens.length} token(s).`,
-          saved: json.saved || tokens,
-          rejected: json.rejected || [],
-          responseData: json,
-        };
-      }
-
-      // If the edge function or backend returned an explicit failure/error
-      if (!res.ok || (json && json.success === false) || (json && json.error)) {
-        const exactErrorMessage = extractBackendErrorMessage(res.status, json || rawText);
-        
-        console.error('[batchSaveTokens] Exact Edge Function error response:', {
-          endpoint,
-          status: res.status,
-          exactErrorMessage,
-          rawResponse: json || rawText,
-        });
-
-        // Trigger toast with the exact error details
-        notifyBackendError(res.status, json || { message: exactErrorMessage, raw: rawText }, 'Edge Function: save-token-batch');
-
-        return {
-          success: false,
-          error: exactErrorMessage,
-          message: exactErrorMessage,
-          saved: json?.saved,
-          rejected: json?.rejected,
-          responseData: json || rawText,
-        };
-      }
-    } catch (err: any) {
-      console.warn(`[SavedTokensService] batchSaveTokens endpoint ${endpoint} note:`, err?.message || err);
-      if (endpoint === SUPABASE_EDGE_FUNCTION_URL) {
-        // If it's a network/fetch exception directly to the Edge function, provide exact exception
-        const exactErrorMessage = err?.message || 'Failed to connect to Supabase Edge Function.';
-        console.error('[batchSaveTokens] Edge Function network exception:', err);
-        return {
-          success: false,
-          error: exactErrorMessage,
-          message: exactErrorMessage,
-        };
-      }
+      const rewardSummary = await creditTokensAndNotifyUser(
+        userId,
+        localRes.saved.map((s) => ({
+          name: s.name,
+          symbol: s.symbol,
+          contractAddress: s.contractAddress,
+          blockchain: s.blockchain,
+          logoUrl: s.logoUrl,
+        }))
+      );
+      rewardResult = {
+        amount: rewardSummary.totalRewardedTokens,
+        symbol: 'TC',
+        credited: true,
+      };
+    } catch (e) {
+      console.warn('[batchSaveTokensToBackend] Reward processing note:', e);
     }
   }
 
   return {
-    success: false,
-    error: 'Failed to complete batch token save across endpoints.',
+    success: true,
+    message: localRes.message,
+    saved: localRes.saved,
+    rejected: localRes.rejected,
+    reward: rewardResult,
+    responseData: localRes,
   };
 }
 
 /**
  * Function 3: Save a Single Token
- * POST /submit or action: "submit"
+ * Executed 100% locally directly on user's device
  */
 export async function submitSingleTokenToBackend(
   userId: string,
@@ -574,82 +435,43 @@ export async function submitSingleTokenToBackend(
     contractAddress: string;
     blockchain: string;
     logoUrl?: string;
+    chainId?: number | string;
+    decimals?: number;
+    totalSupply?: string | number;
+    priceUsd?: number;
   }
 ): Promise<{ success: boolean; token?: any; error?: string }> {
-  const payload = {
-    action: 'submit',
-    userId: userId || 'anonymous_user',
-    name: token.name,
-    symbol: (token.symbol || 'TOK').toUpperCase(),
-    contractAddress: token.contractAddress.trim(),
-    blockchain: (token.blockchain || 'ethereum').toLowerCase(),
-    logoUrl: token.logoUrl || '',
-  };
-
-  const endpoints = ['/submit', '/api/submit', '/api/token', `${CLOUDFLARE_WORKER_URL}submit`, CLOUDFLARE_WORKER_URL, '/api/save-token'];
-  for (const endpoint of endpoints) {
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        const json = await res.json().catch(() => null);
-        if (json && json.success !== false) {
-          return { success: true, token: json.token || payload };
-        }
-      }
-    } catch {}
+  try {
+    const res = submitSingleTokenLocal(userId, token);
+    return { success: true, token: res.token };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to submit token on device.' };
   }
-  return { success: false, error: 'Failed to submit token to backend.' };
 }
 
 /**
  * Function 4: Get Every Token
- * POST { action: "getAllTokens" }
+ * Returns all tokens stored directly on the user's device
  */
 export async function getAllTokensFromBackend(): Promise<any[]> {
-  const endpoints = ['/api/token', '/api/worker-proxy', CLOUDFLARE_WORKER_URL, '/backend', '/api/token-backend-gateway'];
-  for (const endpoint of endpoints) {
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'getAllTokens' }),
-      });
-      if (res.ok) {
-        const json = await res.json().catch(() => null);
-        const list = json?.tokens || json?.result?.tokens || (Array.isArray(json) ? json : []);
-        if (Array.isArray(list)) return list;
-      }
-    } catch {}
+  try {
+    return getAllTokensLocal();
+  } catch {
+    return [];
   }
-  return [];
 }
 
 /**
  * Function 5: Get Tokens for One User
- * POST { action: "getTokensByUser", userId: "user123" }
+ * Returns tokens for user stored directly on the user's device
  */
 export async function getTokensByUserFromBackend(userId: string): Promise<any[]> {
   if (!userId?.trim()) return [];
-  const endpoints = ['/api/token', '/api/worker-proxy', CLOUDFLARE_WORKER_URL, '/backend', '/api/token-backend-gateway'];
-  for (const endpoint of endpoints) {
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'getTokensByUser', userId: userId.trim() }),
-      });
-      if (res.ok) {
-        const json = await res.json().catch(() => null);
-        const list = json?.tokens || json?.result?.tokens || (Array.isArray(json) ? json : []);
-        if (Array.isArray(list)) return list;
-      }
-    } catch {}
+  try {
+    return getTokensByUserLocal(userId.trim());
+  } catch {
+    return [];
   }
-  return [];
 }
 
 /**
