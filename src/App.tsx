@@ -450,8 +450,8 @@ export default function App() {
 
       let updatedWallet = wallet;
       if (freshProfile) {
-        const bal = Number(freshProfile.total_reward_balance || 0);
-        const unclaimed = Number(freshProfile.unclaimed_reward_balance || bal);
+        const unclaimed = Number(freshProfile.unclaimed_reward_balance ?? freshProfile.total_reward_balance ?? 0);
+        const bal = Number(freshProfile.total_reward_balance ?? unclaimed);
         updatedWallet = {
           ...wallet,
           totalTokens: bal,

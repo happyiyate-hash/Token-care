@@ -1443,7 +1443,15 @@ export async function uploadAvatarToSupabaseStorage(
 export async function getUserWithdrawalAddress(userId: string): Promise<string | null> {
   const supabase = getSupabase();
 
-  // 1. Canonical source: production user_addresses.address primary row.
+  // 1. Check profiles table wallet_address column first
+  try {
+    const { data } = await supabase.from('profiles').select('wallet_address').eq('id', userId).maybeSingle();
+    if (data?.wallet_address && /^0x[a-fA-F0-9]{40}$/.test(data.wallet_address.trim())) {
+      return data.wallet_address.trim();
+    }
+  } catch {}
+
+  // 2. Try user_addresses table
   try {
     const { data, error } = await supabase
       .from('user_addresses')
@@ -1454,14 +1462,6 @@ export async function getUserWithdrawalAddress(userId: string): Promise<string |
       .maybeSingle();
     if (!error && data?.address && /^0x[a-fA-F0-9]{40}$/.test(data.address.trim())) {
       return data.address.trim();
-    }
-  } catch {}
-
-  // 2. Compatibility fallback for profiles.wallet_address.
-  try {
-    const { data } = await supabase.from('profiles').select('wallet_address').eq('id', userId).maybeSingle();
-    if (data?.wallet_address && /^0x[a-fA-F0-9]{40}$/.test(data.wallet_address.trim())) {
-      return data.wallet_address.trim();
     }
   } catch {}
 
