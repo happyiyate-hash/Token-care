@@ -146,7 +146,7 @@ async function detectWithGeckoTerminal(address: string): Promise<DetectedChain |
       .filter(Boolean)
       .map((id: string) => resolveKnownChain(id, 'geckoterminal'))
       .filter((chain: DetectedChain) => !chain.isUnknown);
-    const unique = [...new Map(networks.map((c) => [c.chainId, c])).values()];
+    const unique = Array.from(new Map<string, DetectedChain>(networks.map((c) => [c.chainId, c])).values());
     return unique.length === 1 ? unique[0] : null;
   } catch {
     return null;

@@ -152,11 +152,36 @@ export const NotificationCenterView: React.FC<NotificationCenterViewProps> = ({ 
   const counts = { all: notifications.length, rewards: notifications.filter(n => category(n) === 'rewards').length, transactions: notifications.filter(n => category(n) === 'transactions').length, system: notifications.filter(n => category(n) === 'system').length };
 
   const iconFor = (n: AppNotification) => {
-    const type = (n.type || '').toLowerCase(); const title = (n.title || '').toLowerCase();
+    const type = (n.type || '').toLowerCase();
+    const title = (n.title || '').toLowerCase();
+    const rawIcon = (n.icon || '').toLowerCase();
+
+    // Reward from specific token or submission: 💰
+    if (
+      rawIcon === '💰' ||
+      rawIcon === 'moneybag' ||
+      type.includes('token_saved') ||
+      type.includes('reward') ||
+      title.includes('token saved') ||
+      title.includes('+15 tc') ||
+      title.includes('reward')
+    ) {
+      return <span className="text-sm leading-none select-none">💰</span>;
+    }
+
+    // Withdrawal request made or approved: 💸
+    if (
+      rawIcon === '💸' ||
+      rawIcon === 'money_with_wings' ||
+      type.includes('withdraw') ||
+      title.includes('withdraw') ||
+      title.includes('approved')
+    ) {
+      return <span className="text-sm leading-none select-none">💸</span>;
+    }
+
     if (type.includes('security') || type.includes('login') || title.includes('security') || title.includes('login')) return <ShieldCheck className="w-3.5 h-3.5" />;
-    if (type.includes('reward') || title.includes('reward')) return <Coins className="w-3.5 h-3.5" />;
     if (title.includes('welcome')) return <Gift className="w-3.5 h-3.5" />;
-    if (type.includes('withdraw') || title.includes('approved')) return <ArrowDown className="w-3.5 h-3.5" />;
     if (type.includes('failed') || title.includes('rejected')) return <ArrowUp className="w-3.5 h-3.5" />;
     if (title.includes('token')) return <FileText className="w-3.5 h-3.5" />;
     return <Bell className="w-3.5 h-3.5" />;

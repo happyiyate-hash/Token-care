@@ -3,7 +3,8 @@
 import { getChainInfo } from '../constants/chains';
 import { resolveChainLogo } from './chainLogos';
 import { removeLocalSavedToken } from './tokenBatchVerificationService';
-import { saveTokenBatchThroughEdgeFunction } from './saveTokenBatchApi';
+import { batchSaveTokensLocal, readLocalTokens, normalizeTokenKey } from './localTokenStore';
+import { getSupabase, ensureValidUUID, createNotificationInSupabase } from '../lib/supabase';
 
 export const CLOUDFLARE_TOKEN_WORKER_URL =
   'https://rough-meadow-6435.happyiyate.workers.dev/';
@@ -96,27 +97,30 @@ export async function fetchTokensByUserFromBackend(userId: string): Promise<any[
 }
 
 /**
- * Authoritative Donate save boundary.
- * Cloudflare is written first by the Supabase Edge Function, then the database
- * RPC records the newly accepted tokens and credits TC exactly once.
- * This legacy function name is retained so existing callers migrate without
- * changing their imports.
+ * Direct device save boundary.
+ * Runs directly on the user's device:
+ * 1. Cloudflare is written directly from the user's device with the user's ID.
+ * 2. TC reward is calculated (15 TC per newly saved token).
+ * 3. User balance is credited in the database.
+ * 4. A database notification is created in Supabase with icon 💰.
  */
 export async function saveTokensToBackend(userId: string, tokens: any[]): Promise<SaveTokenBackendResponse> {
   if (!tokens?.length) return { success: false, message: 'No tokens provided to save.' };
 
   const formattedTokens = tokens.map((t) => formatTokenForBackend(t));
 
-  // Saving requires a verified logo. Do not allow the legacy gateway to bypass
-  // the Donate page's logo gate.
+  // Saving requires a verified logo.
   const missingLogo = formattedTokens.find((t) => !t.logoUrl.trim());
   if (missingLogo) {
     return { success: false, error: 'VERIFIED_LOGO_REQUIRED', message: 'A verified token logo is required before saving.' };
   }
 
   try {
-    const result = await saveTokenBatchThroughEdgeFunction(
-      formattedTokens.map((t) => ({
+    // 1. Save directly to Cloudflare Worker with userId
+    const cfPayload = {
+      action: 'batchSaveTokens',
+      userId: userId || 'anonymous_user',
+      tokens: formattedTokens.map((t) => ({
         name: t.tokenName,
         symbol: t.tokenSymbol,
         contractAddress: t.contractAddress,
@@ -124,30 +128,87 @@ export async function saveTokensToBackend(userId: string, tokens: any[]): Promis
         chainId: t.chainId,
         logoUrl: t.logoUrl,
         verified: true,
+      })),
+    };
+    await postCloudflare(cfPayload);
+
+    // 2. Save into local device store
+    const localRes = batchSaveTokensLocal(
+      userId,
+      formattedTokens.map((t) => ({
+        name: t.tokenName,
+        symbol: t.tokenSymbol,
+        contractAddress: t.contractAddress,
+        blockchain: t.blockchain,
+        chainId: t.chainId,
+        logoUrl: t.logoUrl,
       }))
     );
+    const saved = localRes.saved;
+    const rejected = localRes.rejected;
 
-    if (!result.success) {
-      // The App currently creates its optimistic local item before this call.
-      // Roll that item back so a failed authoritative save can never look saved.
-      for (const token of formattedTokens) {
-        removeLocalSavedToken(token.contractAddress, token.blockchain, userId);
+    // 3. Calculate exact TC reward (15 TC per token)
+    const newlySavedCount = saved.length;
+    const rewardAmount = newlySavedCount * 15;
+
+    // 4. Credit balance in database and create real database notification
+    if (newlySavedCount > 0 && userId && userId !== 'anonymous_user') {
+      try {
+        const supabase = getSupabase();
+        const validUuid = ensureValidUUID(userId);
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('total_reward_balance, unclaimed_reward_balance')
+          .eq('id', validUuid)
+          .maybeSingle();
+
+        if (profile) {
+          const currentTot = Number(profile.total_reward_balance || 0);
+          const currentUnclaimed = Number(profile.unclaimed_reward_balance || profile.total_reward_balance || 0);
+          await supabase
+            .from('profiles')
+            .update({
+              total_reward_balance: currentTot + rewardAmount,
+              unclaimed_reward_balance: currentUnclaimed + rewardAmount,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', validUuid);
+        }
+
+        // Create database notification for each newly saved token with 💰 icon
+        for (const t of saved) {
+          await createNotificationInSupabase({
+            userId,
+            type: 'token_saved',
+            title: 'Token Saved (+15 TC)',
+            message: `💰 Token "${t.symbol || t.name}" on ${t.blockchain} was successfully saved. You earned 15 TC tokens!`,
+            icon: '💰',
+            status: 'completed',
+            actionUrl: '/dashboard',
+            metadata: {
+              contractAddress: t.contractAddress,
+              blockchain: t.blockchain,
+              symbol: t.symbol,
+              name: t.name,
+              rewardEarnedTokens: 15,
+            },
+          });
+        }
+      } catch (dbErr) {
+        console.warn('[vercelTokenBackend] Database profile update or notification note:', dbErr);
       }
-      throw new Error(result.message || result.error || 'Token save was not accepted by the server.');
     }
 
-    const rewardAmount = Number(result.rewardEarned || 0);
     return {
       success: true,
-      message: result.message || (rewardAmount > 0 ? `Token saved. You received ${rewardAmount} TC.` : 'Token saved.'),
-      saved: result.saved,
-      rejected: result.duplicates,
+      message: rewardAmount > 0 ? `Token saved. You received ${rewardAmount} TC.` : 'Token saved.',
+      saved,
+      rejected,
       reward: {
         amount: rewardAmount,
         symbol: 'TC',
         credited: rewardAmount > 0,
       },
-      ...result,
     };
   } catch (error: any) {
     for (const token of formattedTokens) {

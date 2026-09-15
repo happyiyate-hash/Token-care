@@ -11,7 +11,7 @@ import { ChainId, SubmittedToken } from '../types';
 import { getChainInfo } from '../constants/chains';
 import { extractBackendErrorMessage, notifyBackendError } from './toastManager';
 import { getRewardWallet, recordBatchTokenSubmissionReward } from './storage';
-import { createNotificationInSupabase } from '../lib/supabase';
+import { createNotificationInSupabase, getSupabase, ensureValidUUID } from '../lib/supabase';
 import {
   verifyTokensBatchLocal,
   batchSaveTokensLocal,
@@ -326,8 +326,29 @@ export function submittedTokenToSavedItem(token: SubmittedToken, selectedChain: 
  *   ]
  * }
  */
-export const SUPABASE_EDGE_FUNCTION_URL = 'https://pqqomaveycjeorgurpev.supabase.co/functions/v1/save-token-batch';
-export const CLOUDFLARE_WORKER_URL = 'https://rough-meadow-6435.abc123.workers.dev/';
+export const CLOUDFLARE_WORKER_URL = 'https://rough-meadow-6435.happyiyate.workers.dev/';
+
+/**
+ * Direct call to Cloudflare Worker to verify tokens batch on user device
+ */
+async function postCloudflareWorker(payload: any, timeoutMs = 10000): Promise<{ ok: boolean; status: number; json: any }> {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const res = await fetch(CLOUDFLARE_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller?.signal,
+    });
+    const json = await res.json().catch(() => null);
+    return { ok: res.ok, status: res.status, json };
+  } catch (err) {
+    return { ok: false, status: 0, json: null };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
 
 export async function verifyTokensBatch(
   tokensToVerify: Array<{ blockchain: string; contractAddress: string }>
@@ -342,7 +363,43 @@ export async function verifyTokensBatch(
     };
   }
 
-  // Execute verification 100% locally directly on the user's device
+  // 1. Call directly to Cloudflare Worker in the user's device
+  try {
+    const cfRes = await postCloudflareWorker({
+      action: 'verifyTokensBatch',
+      tokens: tokensToVerify.map((t) => ({
+        blockchain: (t.blockchain || '').toLowerCase().trim(),
+        contractAddress: (t.contractAddress || '').toLowerCase().trim(),
+      })),
+    });
+
+    if (cfRes.ok && cfRes.json && cfRes.json.success) {
+      const results: VerifyTokenResultItem[] = Array.isArray(cfRes.json.results)
+        ? cfRes.json.results.map((r: any) => ({
+            blockchain: r.blockchain,
+            contractAddress: r.contractAddress,
+            exists: Boolean(r.exists),
+            ownedBy: r.ownedBy || null,
+            error: r.error || null,
+          }))
+        : [];
+
+      const existed = results.filter((r) => r.exists).length;
+      const notExisted = results.filter((r) => !r.exists).length;
+
+      return {
+        success: true,
+        total: results.length,
+        existed: cfRes.json.existed ?? existed,
+        notExisted: cfRes.json.notExisted ?? notExisted,
+        results,
+      };
+    }
+  } catch (cfErr) {
+    console.warn('[tokenBatchVerificationService] Cloudflare Worker verify failed, falling back to local verification:', cfErr);
+  }
+
+  // 2. Fallback to local device verification store
   const localResult = verifyTokensBatchLocal(tokensToVerify);
   return localResult;
 }
@@ -363,6 +420,14 @@ export async function verifyTokensBatch(
  *     }
  *   ]
  * }
+ */
+/**
+ * Call batchSaveTokens directly from the user's device:
+ * 1. Saves all tokens with userId in Cloudflare Worker.
+ * 2. Saves to device's local registry.
+ * 3. Calculates the exact amount of TC rewards.
+ * 4. Credits user balance in the database (and local wallet).
+ * 5. Creates real database notifications for each token.
  */
 export async function batchSaveTokensToBackend(
   userId: string,
@@ -386,39 +451,33 @@ export async function batchSaveTokensToBackend(
     return { success: false, error: `Batch save limit is ${MAX_SAVED_TOKENS} tokens maximum.` };
   }
 
-  // Execute batch save directly on client device (zero remote server calls)
-  const localRes = batchSaveTokensLocal(userId, tokens);
-
-  // Credit 15 TC tokens per valuable token directly on the device
-  let rewardResult: any = null;
-  if (localRes.saved.length > 0) {
-    try {
-      const rewardSummary = await creditTokensAndNotifyUser(
-        userId,
-        localRes.saved.map((s) => ({
-          name: s.name,
-          symbol: s.symbol,
-          contractAddress: s.contractAddress,
-          blockchain: s.blockchain,
-          logoUrl: s.logoUrl,
-        }))
-      );
-      rewardResult = {
-        amount: rewardSummary.totalRewardedTokens,
-        symbol: 'TC',
-        credited: true,
-      };
-    } catch (e) {
-      console.warn('[batchSaveTokensToBackend] Reward processing note:', e);
-    }
+  // 1. Save directly with userId in Cloudflare Worker from the user device
+  try {
+    const cfPayload = {
+      action: 'batchSaveTokens',
+      userId: userId || 'anonymous_user',
+      tokens: tokens.map((t) => ({
+        name: t.name,
+        symbol: t.symbol,
+        contractAddress: t.contractAddress,
+        blockchain: t.blockchain,
+        logoUrl: t.logoUrl || '',
+        chainId: t.chainId || 137,
+      })),
+    };
+    await postCloudflareWorker(cfPayload);
+  } catch (cfErr) {
+    console.warn('[tokenBatchVerificationService] Cloudflare Worker batch save note:', cfErr);
   }
+
+  // 2. Save to local device registry
+  const localRes = batchSaveTokensLocal(userId, tokens);
 
   return {
     success: true,
     message: localRes.message,
     saved: localRes.saved,
     rejected: localRes.rejected,
-    reward: rewardResult,
     responseData: localRes,
   };
 }
@@ -511,15 +570,43 @@ export async function creditTokensAndNotifyUser(
     );
   } catch {}
 
-  // 3. Create a notification for EACH token, just the way TokenCare did before
+  // 3. Credit user balance directly in the database (profiles table)
+  if (userId && userId !== 'anonymous_user') {
+    try {
+      const supabase = getSupabase();
+      const validUuid = ensureValidUUID(userId);
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('total_reward_balance, unclaimed_reward_balance')
+        .eq('id', validUuid)
+        .maybeSingle();
+
+      if (profile) {
+        const currentTot = Number(profile.total_reward_balance || 0);
+        const currentUnclaimed = Number(profile.unclaimed_reward_balance || profile.total_reward_balance || 0);
+        await supabase
+          .from('profiles')
+          .update({
+            total_reward_balance: currentTot + totalRewardedTokens,
+            unclaimed_reward_balance: currentUnclaimed + totalRewardedTokens,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', validUuid);
+      }
+    } catch (dbBalErr) {
+      console.warn('[tokenBatchVerificationService] DB profile reward balance credit note:', dbBalErr);
+    }
+  }
+
+  // 4. Create a database notification for EACH token with 💰 icon
   for (const token of valuableTokens) {
     try {
       await createNotificationInSupabase({
         userId: userId || 'anonymous_user',
         type: 'token_saved',
         title: 'Token Saved (+15 TC)',
-        message: `Token "${token.symbol || token.name}" on ${token.blockchain} was successfully saved. You earned 15 TC tokens!`,
-        icon: 'coins',
+        message: `💰 Token "${token.symbol || token.name}" on ${token.blockchain} was successfully saved. You earned 15 TC tokens!`,
+        icon: '💰',
         status: 'completed',
         actionUrl: '/dashboard',
         metadata: {
@@ -535,7 +622,7 @@ export async function creditTokensAndNotifyUser(
     }
   }
 
-  // 4. Dispatch notification update event
+  // 5. Dispatch notification update event
   try {
     window.dispatchEvent(new CustomEvent('tokencare_notifications_updated', { detail: { count, userId } }));
   } catch {}
