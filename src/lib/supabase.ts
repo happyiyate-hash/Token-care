@@ -234,33 +234,19 @@ export async function findUserTokenInSupabase(
       };
     }
 
-    // 2. Fallback query if RPC isn't available
+    // 2. Fallback query: the production schema stores ownership directly on tokens.user_id.
     if (userId) {
-      const { data: utData } = await supabase
-        .from('user_tokens')
-        .select('id, token_id, tokens!inner(*)')
-        .eq('user_id', userId)
-        .eq('tokens.chain_id', cleanChain)
-        .ilike('tokens.contract_address', cleanAddress)
-        .maybeSingle();
-
-      if (utData) {
-        return {
-          exists: true,
-          userTokenId: utData.id,
-          tokenId: utData.token_id,
-          tokenData: utData.tokens,
-        };
-      }
-
-      // Legacy query fallback on tokens table directly
-      const { data: tokenData } = await supabase
+      const { data: tokenData, error: tokenError } = await supabase
         .from('tokens')
         .select('*')
         .eq('user_id', userId)
         .eq('chain_id', cleanChain)
         .ilike('contract_address', cleanAddress)
         .maybeSingle();
+
+      if (tokenError) {
+        console.warn('[Supabase] user token lookup failed:', tokenError.message);
+      }
 
       if (tokenData) {
         return {
@@ -531,7 +517,6 @@ export async function removeUserTokenFromSupabase(
       return { success: true };
     }
 
-    await supabase.from('user_tokens').delete().eq('user_id', activeUserId).eq('token_id', tokenId);
     await supabase.from('tokens').delete().eq('id', tokenId).eq('user_id', activeUserId);
 
     const freshTokens = await fetchTokensFromSupabase(activeUserId);
@@ -1343,33 +1328,61 @@ export async function saveUserWithdrawalAddress(
     console.warn('LocalStorage save error for address:', e);
   }
 
-  // 3. Upsert into 'user_addresses' table
+  // 3. Persist to the production user_addresses schema. There is no unique
+  // constraint on user_id, so update the existing primary row or insert one.
   try {
-    const { error } = await supabase
+    const now = new Date().toISOString();
+    const { data: existing, error: findError } = await supabase
       .from('user_addresses')
-      .upsert(
-        {
-          user_id: userId,
-          wallet_address: cleanAddr,
-          chain_id: '137',
-          verified: true,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id' }
-      );
+      .select('id')
+      .eq('user_id', userId)
+      .eq('chain_id', '137')
+      .eq('is_primary', true)
+      .maybeSingle();
 
-    if (error && error.code !== '42P01') {
-      console.warn('user_addresses table upsert notice:', error.message);
+    if (findError) throw findError;
+
+    if (existing?.id) {
+      const { error } = await supabase
+        .from('user_addresses')
+        .update({ address: cleanAddr, is_primary: true, updated_at: now })
+        .eq('id', existing.id)
+        .eq('user_id', userId);
+      if (error) throw error;
+    } else {
+      // Keep one primary address per user/chain.
+      await supabase
+        .from('user_addresses')
+        .update({ is_primary: false, updated_at: now })
+        .eq('user_id', userId)
+        .eq('chain_id', '137');
+
+      const { error } = await supabase
+        .from('user_addresses')
+        .insert({
+          user_id: userId,
+          address: cleanAddr,
+          chain_id: '137',
+          is_primary: true,
+          created_at: now,
+          updated_at: now,
+        });
+      if (error) throw error;
     }
-  } catch (dbErr) {
-    console.warn('Supabase user_addresses save note:', dbErr);
+  } catch (dbErr: any) {
+    console.error('[Supabase] Failed to persist user_addresses row:', dbErr);
+    return { success: false, error: dbErr?.message || 'Failed to save withdrawal address.' };
   }
 
-  // Also sync address directly into profiles table (wallet_address column)
+  // Keep profiles.wallet_address synchronized for older consumers.
   try {
-    await supabase.from('profiles').update({ wallet_address: cleanAddr, updated_at: new Date().toISOString() }).eq('id', userId);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ wallet_address: cleanAddr, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+    if (error) console.warn('[Supabase] Profile wallet_address sync notice:', error.message);
   } catch (e) {
-    console.warn('Profile wallet_address sync note:', e);
+    console.warn('[Supabase] Profile wallet_address sync note:', e);
   }
 
   return { success: true, address: cleanAddr };
@@ -1430,17 +1443,23 @@ export async function uploadAvatarToSupabaseStorage(
 export async function getUserWithdrawalAddress(userId: string): Promise<string | null> {
   const supabase = getSupabase();
 
-  // 1. Try DB profiles table (wallet_address column)
+  // 1. Canonical source: production user_addresses.address primary row.
   try {
-    const { data } = await supabase.from('profiles').select('wallet_address').eq('id', userId).maybeSingle();
-    if (data?.wallet_address && /^0x[a-fA-F0-9]{40}$/.test(data.wallet_address.trim())) {
-      return data.wallet_address.trim();
+    const { data, error } = await supabase
+      .from('user_addresses')
+      .select('address')
+      .eq('user_id', userId)
+      .eq('chain_id', '137')
+      .eq('is_primary', true)
+      .maybeSingle();
+    if (!error && data?.address && /^0x[a-fA-F0-9]{40}$/.test(data.address.trim())) {
+      return data.address.trim();
     }
   } catch {}
 
-  // 2. Try DB user_addresses table
+  // 2. Compatibility fallback for profiles.wallet_address.
   try {
-    const { data } = await supabase.from('user_addresses').select('wallet_address').eq('user_id', userId).maybeSingle();
+    const { data } = await supabase.from('profiles').select('wallet_address').eq('id', userId).maybeSingle();
     if (data?.wallet_address && /^0x[a-fA-F0-9]{40}$/.test(data.wallet_address.trim())) {
       return data.wallet_address.trim();
     }

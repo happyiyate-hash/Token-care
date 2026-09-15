@@ -458,6 +458,10 @@ export default function App() {
           totalUsd: bal * REWARD_RATE_USD,
           unclaimedTokens: unclaimed,
           unclaimedUsd: unclaimed * REWARD_RATE_USD,
+          claimedTokens: Math.max(0, bal - unclaimed),
+          claimedUsd: Math.max(0, bal - unclaimed) * REWARD_RATE_USD,
+          walletAddress: freshProfile.wallet_address || wallet.walletAddress || '',
+          isConnected: true,
         };
         setWallet(updatedWallet);
       }
@@ -792,12 +796,17 @@ export default function App() {
       if (profile) {
         setUserProfile(profile);
         const bal = Number(profile.total_reward_balance || 0);
+        const unclaimed = Number(profile.unclaimed_reward_balance ?? bal);
         setWallet((prev) => ({
           ...prev,
           totalTokens: bal,
           totalUsd: bal * REWARD_RATE_USD,
-          unclaimedTokens: Number(profile.unclaimed_reward_balance || bal),
-          unclaimedUsd: Number(profile.unclaimed_reward_balance || bal) * REWARD_RATE_USD,
+          unclaimedTokens: unclaimed,
+          unclaimedUsd: unclaimed * REWARD_RATE_USD,
+          claimedTokens: Math.max(0, bal - unclaimed),
+          claimedUsd: Math.max(0, bal - unclaimed) * REWARD_RATE_USD,
+          walletAddress: profile.wallet_address || prev.walletAddress || '',
+          isConnected: true,
         }));
       }
     } catch (e) {
